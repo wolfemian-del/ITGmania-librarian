@@ -28,6 +28,7 @@ __all__ = [
     "distribution_summary_stats",
 ]
 
+
 class ChartBar(NamedTuple):
     """One row of the distribution chart, in the chart's own coordinates, as the click handler needs it."""
     y_min: float
@@ -35,6 +36,7 @@ class ChartBar(NamedTuple):
     label: str
     token: str | tuple  # the filter value(s) a click applies; "" when the row cannot be clicked
     click_width: float = float("inf")  # a click to the right of this x does nothing
+
 
 def chart_bars(items, *, min_click_fraction: float, bar_height: float, axis_headroom: float):
     """Turn aggregate rows into clickable chart bars, with the chart's x-axis limit.
@@ -58,6 +60,7 @@ def chart_bars(items, *, min_click_fraction: float, bar_height: float, axis_head
             token if count > 0 or is_active else "", max(count, min_click_width)))
     return bars, axis_max
 
+
 def chart_bar_at(bars, x, y):
     """The bar a chart click at data coordinates (x, y) lands on, or None.
 
@@ -73,6 +76,7 @@ def chart_bar_at(bars, x, y):
         if bar.y_min <= y <= bar.y_max and 0 <= x <= bar.click_width:
             return bar if bar.token and bar.label != "?" else None
     return None
+
 
 def chart_click_decision(metric: str, token, diff_filter: str, query: str):
     """What a click on a chart bar writes: (difficulty, query), None for a variable it does not write.
@@ -93,6 +97,7 @@ def chart_click_decision(metric: str, token, diff_filter: str, query: str):
     return None, replace_search_directive(
         query, CHART_FILTER_FIELDS[metric], None if already_active else token)
 
+
 def chart_clear_decision(diff_filter: str, query: str):
     """What clearing every chart filter writes: (difficulty, query), or None when nothing is active.
 
@@ -110,6 +115,7 @@ def chart_clear_decision(diff_filter: str, query: str):
         stripped = replace_search_directive(stripped, CHART_FILTER_FIELDS[metric], None)
     difficulty = "All difficulties" if any(metric == "Difficulty" for metric, _ in active) else None
     return difficulty, stripped
+
 
 def aggregate_meter_distribution(rows: list[dict], active_val: str | None = None) -> list[tuple[str, int, str, bool]]:
     """Aggregate row counts per meter level.
@@ -160,6 +166,7 @@ def aggregate_meter_distribution(rows: list[dict], active_val: str | None = None
 
     return result
 
+
 def aggregate_difficulty_distribution(rows: list[dict], active_val: str | None = None) -> list[tuple[str, int, str, bool]]:
     """Aggregate row counts per difficulty tier in canonical DIFFICULTY_ORDER.
 
@@ -191,9 +198,9 @@ def aggregate_difficulty_distribution(rows: list[dict], active_val: str | None =
 
     return result
 
+
 # (bar label, bpm: directive values that select the bar). Each range is half-open [low, high), so a
 # chart at exactly 140 BPM belongs to 140-159 only, and a chart at 139.5 belongs to 120-139.
-
 BPM_BINS = (
     ("<120", ("<120",)),
     ("120-139", (">=120", "<140")),
@@ -202,6 +209,7 @@ BPM_BINS = (
     ("180-199", (">=180", "<200")),
     ("200+", (">=200",)),
 )
+
 
 def _bpm_range(row: dict) -> tuple[float, float] | None:
     """Return a row's (bpm_min, bpm_max), or None when either is missing or not a number."""
@@ -212,6 +220,7 @@ def _bpm_range(row: dict) -> tuple[float, float] | None:
         return float(low), float(high)
     except (TypeError, ValueError):
         return None
+
 
 def aggregate_bpm_distribution(
     rows: list[dict], active_val: str | None = None
@@ -249,6 +258,7 @@ def aggregate_bpm_distribution(
         result.append(("?", missing_count, "", False))
 
     return result
+
 
 def distribution_summary_stats(metric: str, rows: list[dict]) -> str:
     """Calculate summary statistics for the active distribution metric on current visible rows.
