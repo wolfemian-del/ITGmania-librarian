@@ -21,14 +21,16 @@ names this file defines.
 
 import unittest
 
+import library_constants
 import library_data
+import library_format
 
 
 class ImportSurfaceTests(unittest.TestCase):
-    def _assert_resolve(self, names):
+    def _assert_resolve(self, names, module=library_data):
         for name in names:
             with self.subTest(name=name):
-                self.assertIsNotNone(getattr(library_data, name, None))
+                self.assertIsNotNone(getattr(module, name, None))
 
     def test_constants_names_resolve(self):
         # Re-pointed to library_constants.py at Step 2.
@@ -43,7 +45,7 @@ class ImportSurfaceTests(unittest.TestCase):
             "RADAR_FIELDS",
             "TAP_FIELDS",
             "TECH_FIELDS",
-        ))
+        ), module=library_constants)
 
     def test_format_names_resolve(self):
         # Re-pointed to library_format.py at Step 2.
@@ -58,7 +60,7 @@ class ImportSurfaceTests(unittest.TestCase):
             "parse_bpms",
             "split_path",
             "tag_map",
-        ))
+        ), module=library_format)
 
     def test_sources_names_resolve(self):
         # Re-pointed to library_sources.py at Step 3.
