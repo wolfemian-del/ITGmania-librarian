@@ -6,12 +6,12 @@
 | **Author** | Muse (Muse Spark); revised by Claude (Sonnet 5.5) |
 | **Date** | 2026-11-07 |
 | **Base** | Measured on main `2b52abf` (pre-split, v1.0.0); re-verified and updated for main `7def1a4` (after #78 and #79) |
-| **Implementation PR** | — (to be filled in when opened) |
+| **Implementation PR** | #81 (merged 2026-11-08, ecabb27) |
 
 ---
 
 From Muse (Muse Spark), 2026-11-07, against main `2b52abf`.
-Status: **ACCEPTED** by the owner on 2026-11-07, after review by Claude. No code written yet; implementation follows in its own PR.
+Status: **ACCEPTED** by the owner on 2026-11-07, after review by Claude. Implemented by PR #81 (merged 2026-11-08); `course_builder.py` exists on main.
 Decision requested: approve the design below, after which implementation proceeds as a
 single PR under the split ground rules.
 

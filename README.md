@@ -2,6 +2,10 @@
 
 A small Windows-friendly desktop app for browsing ITGmania cached charts alongside a player's `Stats.xml`. It runs on Python's standard library alone (including Tkinter), so no package installation is required. One optional package, `matplotlib`, adds the distribution charts (see below).
 
+![The library window, showing the song table with scores and grades](docs/images/main-window.png)
+
+The screenshot above is a Linux render of the main window with a small synthetic library. The table shows the chart list with scores; the search bar and filters are at the top, and the Distribution button at the top right opens the collapsible side panel.
+
 ## Run
 
 Install Python 3.10 or newer with Tcl/Tk, then run:
@@ -63,11 +67,11 @@ The app remembers the selected data paths, the Pack/Type/Difficulty filter selec
 
 ## Changing the look
 
-Every color and font the window uses is defined, with a note on what it is for, in `theme.py`. To restyle the app, edit the values there and restart it; the window code only refers to the names (for example `theme.BG_WINDOW`), and a test fails if a color or font is typed directly into the window code (`library_visualizer.py`, `course_builder.py`, `row_tints.py`, `advanced_search.py`, or `distribution_panel.py`) again. `theme.DIFFICULTY_COLORS` controls both the distribution chart bars and the song table row tints. Row heights, panel widths, and window sizes are likewise fixed numbers in `theme.py`, so a much larger font may also need those adjusted. Those numbers are in 100% units: on Windows the app declares itself DPI-aware, so at 125% or 150% display scaling they are scaled up and the text stays sharp instead of being bitmap-stretched, and the sizes and positions the app remembers are stored in 100% units, so they come back the same at any scale.
+Every color and font the window uses is defined, with a note on what it is for, in `theme.py`. To restyle the app, edit the values there and restart it; the window code only refers to the names (for example `theme.BG_WINDOW`), and a test fails if a color or font is typed directly into the window code again (the nine window-source files listed as `WINDOW_SOURCES` in `tests/test_theme.py`). `theme.DIFFICULTY_COLORS` controls both the distribution chart bars and the song table row tints. Row heights, panel widths, and window sizes are likewise fixed numbers in `theme.py`, so a much larger font may also need those adjusted. Those numbers are in 100% units: on Windows the app declares itself DPI-aware, so at 125% or 150% display scaling they are scaled up and the text stays sharp instead of being bitmap-stretched, and the sizes and positions the app remembers are stored in 100% units, so they come back the same at any scale.
 
 ## Development checks
 
-Run the parser and course-append regression tests with:
+Run the test suite with:
 
 ```powershell
 python -m unittest discover -s tests
@@ -83,25 +87,7 @@ ruff check .
 
 `theme.py` holds the colors and fonts; `tests/test_theme.py` checks the window code uses it.
 
-The UI-independent data helpers live in nine Tk-free modules, listed below; their tests exercise them without importing Tkinter. The shared column and grade tables live in `library_constants.py`, and the formatting and sort-key helpers live in `library_format.py`, with their tests in `tests/test_library_format.py`. The scores, cache, and path helpers live in `library_sources.py`, with their tests in `tests/test_library_sources.py`. The window geometry and DPI helpers live in `library_geometry.py`, and the .crs text-format helpers live in `library_course.py`, with their tests in `tests/test_library_geometry.py` and `tests/test_library_course.py`. The search language lives in `library_search.py`, with its tests in `tests/test_library_search.py`. The Advanced Search dialog's query conversion lives in `library_dialog_query.py`, with its tests in `tests/test_library_dialog_query.py`. The distribution charts live in `library_distribution.py`, with their tests in `tests/test_distribution.py`. Persistence lives in `library_stores.py`, with its tests in `tests/test_snapshot_store.py` and `tests/test_settings_store.py`. Course formatting, parsing, trailing-modifier detection, and field validation live there so CRS features can grow without pulling in the Tk UI; the app-side wiring tests stay in `tests/test_library_visualizer.py`.
-
-| Module | What it holds | Tests |
-| --- | --- | --- |
-| `library_constants.py` | the shared column and grade tables | `tests/test_import_surface.py` |
-| `library_format.py` | formatting and sort-key helpers | `tests/test_library_format.py` |
-| `library_sources.py` | scores, cache, and path helpers | `tests/test_library_sources.py` |
-| `library_geometry.py` | window geometry and DPI helpers | `tests/test_library_geometry.py` |
-| `library_course.py` | .crs text-format helpers | `tests/test_library_course.py` |
-| `library_search.py` | the search language | `tests/test_library_search.py` |
-| `library_dialog_query.py` | Advanced Search dialog query conversion | `tests/test_library_dialog_query.py` |
-| `library_distribution.py` | the distribution charts | `tests/test_distribution.py` |
-| `library_stores.py` | persistence (snapshot and settings stores) | `tests/test_snapshot_store.py`, `tests/test_settings_store.py` |
-
-The Build-a-course dialog is a separate component in `course_builder.py`, constructed by the main window with the few things it needs (its parent window, the status variable, the button factory, a way to read the table's selected rows, a way to read every row in the library, the remembered window geometry, a callback that reports the geometry when the window closes, and the display scale factor); its tests are in `tests/test_course_builder.py`.
-
-The Advanced Search dialog is likewise a separate component in `advanced_search.py`, constructed by the main window with its parent window, the three widget factories, the search variable it edits, the remembered window geometry, a callback that reports the geometry when the window closes, and the display scale factor; its tests are in `tests/test_advanced_search.py`.
-
-The distribution panel beside the table is a separate component in `distribution_panel.py`, constructed by the main window with the button factory, the four variables it shares with the window (the search and difficulty variables, its show/hide variable, and its metric selector), a way to pull rows when the chart's own metric is the active filter, a callback that applies a chart click or Clear as one batched filter change, the settings save, and the display scale factor; its tests are in `tests/test_ui_distribution.py`. The Data paths dialog is likewise a separate component in `data_paths_dialog.py`, constructed by the main window with its parent window, the two path variables it edits, a zero-argument load callback, the settings save, the entry and button factories, the display scale factor, and a callable that reports whether the paths match the loaded snapshot; its headless tests are in `tests/test_data_paths_dialog.py`, and the live dialog tests stay in `tests/test_library_visualizer.py`. The two dialogs and the panel persist differently by design: a dialog's geometry is a value passed in and a callback reporting it back out, while the panel's variables are shared objects, because the View menu and the settings save both bind them directly. The load/sync engine is likewise a separate component in `library_loader.py`, constructed by the main window with the snapshot store, the two path variables, the status variable, the progress bar, the Load button, a callable that enables or disables File → Sync scores, the callbacks that report a finished load or sync and a load that found nothing, the Data paths dialog, the settings save, the root window, a callback that reports discarded settings, and whether saved settings contained path keys; it owns the loaded rows, the snapshot-summary counters, the scan/sync workers, the result queue, and the generation counters, and the main window reads the rows through it and keeps only thin `load_data` / `sync_scores` delegation; its headless tests are in `tests/test_library_loader.py`, and the live load-progress tests stay in `tests/test_library_visualizer.py`. The filter pipeline is likewise a separate component in `library_filter.py`, constructed by the main window with the five filter variables, the search entry, the three dropdown widgets, and the root window; it owns the rows it filters, the variable traces, and the search debounce, and the main window subscribes its table refresh to the filter's change notification; its headless tests are in `tests/test_library_filter.py`, and the live filter tests stay in `tests/test_library_visualizer.py`. The song table is likewise a separate component in `library_table.py`, constructed by the main window with the table frame, the filter, the display scale factor, the column and group visibility objects the View menu binds, the saved column order, widths, and sort keys, the count label, the settings save, and a callable that pushes the visible rows to the distribution panel; it owns the sort keys, the column order and widths, and the row tinting, the table reads the rows through the filter, which is the single holder of the rows inside the UI, and the main window subscribes its refresh to the filter's change notification, and it exposes the layout and the selected and library rows the main window reads back; its headless tests are in `tests/test_library_table.py`, and the live selection tests stay in `tests/test_library_visualizer.py` (the drag and sort-click tests are headless in the same file).
+The code is laid out in `docs/ARCHITECTURE.md`: a layer diagram, a table of all 19 modules with what each holds and its tests, and how the pieces fit together. `library_visualizer.py` is the entry point; the other files are imported by it.
 
 ## License
 
