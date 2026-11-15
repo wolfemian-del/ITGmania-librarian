@@ -1,5 +1,18 @@
 # Changelog
 
+## 1.3.0 - 2026-11-15
+
+### Scores sync
+- New File → Sync scores from Stats.xml: after a play session, refresh just the score columns from Stats.xml without re-parsing the cache (about 4–5 seconds instead of about 20 at 35k charts). It only updates scores for songs already in the library — new songs still need Load / refresh. When Stats.xml is newer than the saved library, the status line says so at startup.
+- Edit charts that have both a `#DESCRIPTION` and a different `#CHARTNAME` now keep the right score across syncs (before, the sync could blank the score or show a sibling Edit's score). The snapshot format bumps from version 3 to 4, so snapshots written before this fix are discarded and rebuilt with the correction — no saved library keeps the old wrong behaviour.
+- The sync now refuses with a clear message, changing nothing, when the selected Stats.xml contains no scores at all (a fresh profile, or the wrong file) or holds scores for other songs (a profile from another install) — instead of blanking every score and reporting success. If Stats.xml changes while a sync is running, the snapshot is not saved, so the startup hint fires and you re-sync for the latest scores. One bad row in a hand-edited snapshot no longer fails the whole sync.
+
+### Library table
+- The distribution panel's bars now show the rows they say they show: clicking a "nan" meter bar shows the NaN-meter charts instead of emptying the table, clicking a Difficulty bar shows all the rows it counts even when a difficulty name differs only by capitalisation or surrounding spaces, and clicking a high-precision meter bar (like 11.123456789) shows its chart instead of no rows.
+
+### Other
+- The app's internals were reorganised in two steps: the main window's loading, filtering and table code now live in their own components, and the data helpers were split into nine focused modules. These moves were not intended to change behavior.
+
 ## 1.2.1 - 2026-11-12
 
 ### Library table

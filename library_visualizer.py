@@ -15,7 +15,7 @@ except ImportError:
 from pathlib import Path
 
 # The release number, shown in Help > About. Keep it equal to the newest heading in CHANGELOG.md (a test checks).
-__version__ = "1.2.1"
+__version__ = "1.3.0"
 
 import theme
 from advanced_search import AdvancedSearch
