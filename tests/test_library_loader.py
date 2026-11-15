@@ -16,7 +16,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
-import library_data
+import library_sources as sources
+import library_stores as stores
 import library_loader as loader
 import library_table as table_module
 import library_visualizer as app
@@ -95,8 +96,8 @@ class LibrarySnapshotTests(unittest.TestCase):
         # (library_cache_path was a LibraryApp property; here it is a
         # plain attribute on the loader instance).
         instance.library_cache_path = settings_path.with_name("library_cache.json")
-        instance.snapshot_store = library_data.SnapshotStore(
-            instance.library_cache_path, app.HEADERS, library_data.LIBRARY_CACHE_SCHEMA_VERSION)
+        instance.snapshot_store = stores.SnapshotStore(
+            instance.library_cache_path, app.HEADERS, stores.LIBRARY_CACHE_SCHEMA_VERSION)
         return instance
 
     @staticmethod
@@ -296,7 +297,7 @@ class LibrarySnapshotTests(unittest.TestCase):
             instance.snapshot_store.write(cache_dir, stats_file, [self.sample_row()], 1, 0, 0, False)
             with instance.library_cache_path.open("r+", encoding="utf-8") as handle:
                 payload = json.load(handle)
-                payload["schema_version"] = library_data.LIBRARY_CACHE_SCHEMA_VERSION + 1
+                payload["schema_version"] = stores.LIBRARY_CACHE_SCHEMA_VERSION + 1
                 handle.seek(0)
                 json.dump(payload, handle)
                 handle.truncate()
@@ -499,7 +500,7 @@ class DiscardedSettingsStatusTests(unittest.TestCase):
         # bound to a bare app instance sharing this status line and
         # settings store (the settings store stays in the shell).
         fake_app = object.__new__(app.LibraryApp)
-        fake_app._settings_store = library_data.SettingsStore(Path("settings.json"))
+        fake_app._settings_store = stores.SettingsStore(Path("settings.json"))
         fake_app._settings_store.last_read_error = "Expecting value: line 1 column 1 (char 0)"
         fake_app.status = instance.status
         instance.report_discarded_settings = (
@@ -523,7 +524,7 @@ class DiscardedSettingsStatusTests(unittest.TestCase):
         instance.progress = Mock()
         instance.load_cached_data = Mock()
         instance._load_generation = 1
-        instance._settings_store = library_data.SettingsStore(Path("settings.json"))
+        instance._settings_store = stores.SettingsStore(Path("settings.json"))
         instance._settings_store.last_read_error = "Expecting value: line 1 column 1 (char 0)"
         instance.status = _StubStatus("Loading…")
 
@@ -614,8 +615,8 @@ class RefreshGenerationTests(unittest.TestCase):
             # The slow-write seam re-anchors on the store's write (proposal
             # 0008, Revision 3): the worker calls store.write, so the test
             # wraps that method on the instance's own store.
-            store = library_data.SnapshotStore(
-                instance.library_cache_path, app.HEADERS, library_data.LIBRARY_CACHE_SCHEMA_VERSION)
+            store = stores.SnapshotStore(
+                instance.library_cache_path, app.HEADERS, stores.LIBRARY_CACHE_SCHEMA_VERSION)
             real_write = store.write
             old_is_saving, new_has_saved = threading.Event(), threading.Event()
 
@@ -915,9 +916,9 @@ class ScoresSyncTests(unittest.TestCase):
         instance._load_generation = 1
         instance._snapshot_lock = threading.Lock()
         instance._load_results = queue.Queue()
-        instance.snapshot_store = library_data.SnapshotStore(
+        instance.snapshot_store = stores.SnapshotStore(
             root / "library_cache.json", app.HEADERS,
-            library_data.LIBRARY_CACHE_SCHEMA_VERSION)
+            stores.LIBRARY_CACHE_SCHEMA_VERSION)
         instance.root = Mock()
         instance.rows = rows
         return instance
@@ -926,8 +927,8 @@ class ScoresSyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache_dir, stats_file = self._write_song(root)
-            rows, _ = library_data.parse_cache_file(
-                cache_dir / "song.cache", library_data.stats_index(stats_file))
+            rows, _ = sources.parse_cache_file(
+                cache_dir / "song.cache", sources.stats_index(stats_file))
             self.assertEqual(rows[0]["Score"], 900000)
             self._fresh_stats(stats_file)
             instance = self._sync_instance(root, rows)
@@ -961,9 +962,9 @@ class ScoresSyncTests(unittest.TestCase):
             cache_dir, stats_file = self._write_song(root)
             # No scores yet: the chart parses unscored.
             stats_file.write_text("<Stats/>", encoding="utf-8")
-            rows, _ = library_data.parse_cache_file(
+            rows, _ = sources.parse_cache_file(
                 cache_dir / "song.cache",
-                library_data.stats_index(stats_file))
+                sources.stats_index(stats_file))
             self.assertEqual(rows[0]["Grade"], "")
             self._fresh_stats(stats_file)
             # A bare app with a real filter, wired to a loader holding
@@ -988,8 +989,8 @@ class ScoresSyncTests(unittest.TestCase):
             instance.scored_var.set(True)
             self.assertEqual(instance._filter.filter_rows(), [])
             # The real merge, then the real sync branch of the handoff.
-            changed = library_data.merge_scores(
-                rows, library_data.stats_index(stats_file))
+            changed = sources.merge_scores(
+                rows, sources.stats_index(stats_file))
             self.assertEqual(changed, 1)
             instance._on_library_changed(rows, True)
             # The filter still holds the loader's list, and the
@@ -1001,8 +1002,8 @@ class ScoresSyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache_dir, stats_file = self._write_song(root)
-            rows, _ = library_data.parse_cache_file(
-                cache_dir / "song.cache", library_data.stats_index(stats_file))
+            rows, _ = sources.parse_cache_file(
+                cache_dir / "song.cache", sources.stats_index(stats_file))
             self._fresh_stats(stats_file)
             instance = self._sync_instance(root, rows)
             instance._load_generation = 2  # a newer Load / refresh exists
@@ -1015,8 +1016,8 @@ class ScoresSyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache_dir, stats_file = self._write_song(root)
-            rows, _ = library_data.parse_cache_file(
-                cache_dir / "song.cache", library_data.stats_index(stats_file))
+            rows, _ = sources.parse_cache_file(
+                cache_dir / "song.cache", sources.stats_index(stats_file))
             stats_file.write_text("<Stats><SongScores>", encoding="utf-8")
             instance = self._sync_instance(root, rows)
             instance._sync_scores_worker(cache_dir, stats_file, rows, generation=1)
@@ -1199,8 +1200,8 @@ class ScoresSyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache_dir, stats_file = self._write_song(root)
-            rows, _ = library_data.parse_cache_file(
-                cache_dir / "song.cache", library_data.stats_index(stats_file))
+            rows, _ = sources.parse_cache_file(
+                cache_dir / "song.cache", sources.stats_index(stats_file))
             # A bogus encoding in the XML declaration raises LookupError,
             # which is neither ParseError nor OSError.
             stats_file.write_bytes(b'<?xml version="1.0" encoding="not-a-real-codec"?><Stats/>')
@@ -1218,8 +1219,8 @@ class ScoresSyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache_dir, stats_file = self._write_song(root)
-            rows, _ = library_data.parse_cache_file(
-                cache_dir / "song.cache", library_data.stats_index(stats_file))
+            rows, _ = sources.parse_cache_file(
+                cache_dir / "song.cache", sources.stats_index(stats_file))
             missing = root / "Stats-gone.xml"
             instance = self._sync_instance(root, rows)
             instance._sync_scores_worker(cache_dir, missing, rows, generation=1)
@@ -1237,8 +1238,8 @@ class ScoresSyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache_dir, stats_file = self._write_song(root)
-            rows, _ = library_data.parse_cache_file(
-                cache_dir / "song.cache", library_data.stats_index(stats_file))
+            rows, _ = sources.parse_cache_file(
+                cache_dir / "song.cache", sources.stats_index(stats_file))
             self.assertEqual(rows[0]["Score"], 900000)
             stats_file.write_text("<Stats/>", encoding="utf-8")
             instance = self._sync_instance(root, rows)
@@ -1256,8 +1257,8 @@ class ScoresSyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache_dir, stats_file = self._write_song(root)
-            rows, _ = library_data.parse_cache_file(
-                cache_dir / "song.cache", library_data.stats_index(stats_file))
+            rows, _ = sources.parse_cache_file(
+                cache_dir / "song.cache", sources.stats_index(stats_file))
             stats_file.write_text("<Stats><SongScores/></Stats>", encoding="utf-8")
             instance = self._sync_instance(root, rows)
             instance._sync_scores_worker(cache_dir, stats_file, rows, generation=1)
@@ -1276,8 +1277,8 @@ class ScoresSyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache_dir, stats_file = self._write_song(root)
-            rows, _ = library_data.parse_cache_file(
-                cache_dir / "song.cache", library_data.stats_index(stats_file))
+            rows, _ = sources.parse_cache_file(
+                cache_dir / "song.cache", sources.stats_index(stats_file))
             self.assertEqual(rows[0]["Score"], 900000)
             stats_file.write_text(
                 "<Stats><SongScores><Song Dir='Songs/Pack/Song'>"
@@ -1306,8 +1307,8 @@ class ScoresSyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache_dir, stats_file = self._write_song(root)
-            rows, _ = library_data.parse_cache_file(
-                cache_dir / "song.cache", library_data.stats_index(stats_file))
+            rows, _ = sources.parse_cache_file(
+                cache_dir / "song.cache", sources.stats_index(stats_file))
             self.assertEqual(rows[0]["Score"], 900000)
             stats_file.write_text(
                 "<Stats><SongScores><Song Dir='Songs/OtherPack/OtherSong'>"
@@ -1337,11 +1338,11 @@ class ScoresSyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache_dir, stats_file = self._write_song(root)
-            rows, _ = library_data.parse_cache_file(
-                cache_dir / "song.cache", library_data.stats_index(stats_file))
+            rows, _ = sources.parse_cache_file(
+                cache_dir / "song.cache", sources.stats_index(stats_file))
             self.assertEqual(rows[0]["Score"], 900000)
 
-            real_stats_index = library_data.stats_index
+            real_stats_index = sources.stats_index
 
             def stats_index_then_rewrite(stats_path):
                 scores = real_stats_index(stats_path)
@@ -1373,11 +1374,11 @@ class ScoresSyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             cache_dir, stats_file = self._write_song(root)
-            rows, _ = library_data.parse_cache_file(
-                cache_dir / "song.cache", library_data.stats_index(stats_file))
+            rows, _ = sources.parse_cache_file(
+                cache_dir / "song.cache", sources.stats_index(stats_file))
             self.assertEqual(rows[0]["Score"], 900000)
 
-            real_stats_index = library_data.stats_index
+            real_stats_index = sources.stats_index
 
             def stats_index_then_delete(stats_path):
                 scores = real_stats_index(stats_path)
@@ -1660,7 +1661,7 @@ class LoaderFilterPersistenceTests(unittest.TestCase):
         instance.distribution_metric = Mock(get=Mock(return_value="Meter"))
         instance.course_geometry = None
         instance.advanced_search_geometry = None
-        instance._settings_store = library_data.SettingsStore(instance.settings_path)
+        instance._settings_store = stores.SettingsStore(instance.settings_path)
         instance._settings_store.load()
 
     def test_loaded_keeps_values_that_are_in_the_new_library(self):
@@ -1736,7 +1737,7 @@ class LoaderFilterPersistenceTests(unittest.TestCase):
             # Seed the variable from the real settings file through the
             # real reader, the way __init__ seeds it at startup.
             instance.settings_path = settings_path
-            instance._settings_store = library_data.SettingsStore(settings_path)
+            instance._settings_store = stores.SettingsStore(settings_path)
             seeded = instance._settings_store.load()
             instance.pack_var.set(seeded.get("filter_pack", "All packs"))
             rows = self.rows(("Pack1", "dance-single", "Hard"))
@@ -1765,9 +1766,9 @@ class LoaderFilterPersistenceTests(unittest.TestCase):
             loaded.cache_var.get.return_value = ""
             loaded.stats_var = Mock()
             loaded.stats_var.get.return_value = ""
-            loaded.snapshot_store = library_data.SnapshotStore(
+            loaded.snapshot_store = stores.SnapshotStore(
                 instance.settings_path.with_name("library_cache.json"),
-                app.HEADERS, library_data.LIBRARY_CACHE_SCHEMA_VERSION)
+                app.HEADERS, stores.LIBRARY_CACHE_SCHEMA_VERSION)
             loaded._loaded = Mock()
 
             loaded.load_cached_data()

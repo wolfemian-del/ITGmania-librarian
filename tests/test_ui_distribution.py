@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import distribution_panel as dp
-import library_data as data
+import library_distribution as data
 import library_visualizer as app
 import theme
 

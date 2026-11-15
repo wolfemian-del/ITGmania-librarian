@@ -14,7 +14,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import library_data
+from library_constants import TAP_FIELDS
+from library_geometry import scale_pixels
+from library_stores import SettingsStore
 import library_table as table_module
 import row_tints
 import library_visualizer as app
@@ -169,13 +171,13 @@ class ColumnGroupTests(unittest.TestCase):
         table = self.make_table(app.DEFAULT_VISIBLE_COLUMNS)
         table.group_visibility["Tap judgments"].set(True)  # what Tk does before calling the command
         table.group_visibility_changed("Tap judgments")
-        self.assertTrue(set(library_data.TAP_FIELDS) <= self.shown(table))
+        self.assertTrue(set(TAP_FIELDS) <= self.shown(table))
         table.tree.configure.assert_called_once()
         table._save_settings.assert_called_once()
 
         table.group_visibility["Tap judgments"].set(False)
         table.group_visibility_changed("Tap judgments")
-        self.assertFalse(set(library_data.TAP_FIELDS) & self.shown(table))
+        self.assertFalse(set(TAP_FIELDS) & self.shown(table))
         self.assertEqual(set(table.tree.configure.call_args.kwargs["displaycolumns"]),
                          set(app.DEFAULT_VISIBLE_COLUMNS))
 
@@ -200,7 +202,7 @@ class ColumnGroupTests(unittest.TestCase):
         # reset that restored the order but left the widths dragged
         # would pass the assertions above.
         table.tree.column.assert_any_call(
-            "Title", width=library_data.scale_pixels(130, 1.0))
+            "Title", width=scale_pixels(130, 1.0))
         self.assertFalse(table.group_visibility["Tech counts"].get())
         # "Song & chart" reads unchecked after a reset: Subtitle belongs to
         # the group but starts hidden (issue #49), so the group is never
@@ -560,7 +562,7 @@ class RebindingHazardTests(unittest.TestCase):
         instance.diff_var = Mock(get=Mock(return_value="All difficulties"))
         instance.course_geometry = None
         instance.advanced_search_geometry = None
-        instance._settings_store = library_data.SettingsStore(settings_path)
+        instance._settings_store = SettingsStore(settings_path)
         instance._settings_store.load()
         instance.status = Mock()
         group_visibility = {group: FakeVariable()

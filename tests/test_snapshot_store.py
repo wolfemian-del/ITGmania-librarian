@@ -15,7 +15,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import library_data
+import library_sources
 import library_stores
 from library_stores import SnapshotStore
 
@@ -92,8 +92,8 @@ class SnapshotStoreTests(unittest.TestCase):
                 "#CHARTNAME:Other Name;\n",
                 encoding="utf-8",
             )
-            scores = library_data.stats_index(stats_file)
-            rows, _ = library_data.parse_cache_file(cache_file, scores)
+            scores = library_sources.stats_index(stats_file)
+            rows, _ = library_sources.parse_cache_file(cache_file, scores)
             self.assertEqual(rows[0]["Score"], 950000)
             self.assertEqual(rows[0]["Score description"], "Real Desc")
 
@@ -118,8 +118,8 @@ class SnapshotStoreTests(unittest.TestCase):
                 "</Song></SongScores></Stats>",
                 encoding="utf-8",
             )
-            changed = library_data.merge_scores(
-                restored, library_data.stats_index(stats_file))
+            changed = library_sources.merge_scores(
+                restored, library_sources.stats_index(stats_file))
             self.assertEqual(changed, 1)
             self.assertEqual(restored[0]["Score"], 970000)
             self.assertEqual(restored[0]["Plays"], 9)

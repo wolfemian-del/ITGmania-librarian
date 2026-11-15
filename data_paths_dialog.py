@@ -1,6 +1,6 @@
 """The Data paths dialog: the one place the two library paths are edited.
 
-Tk-side companion to the path helpers in library_data.py. The component
+Tk-side companion to the path helpers in library_sources.py. The component
 owns its dialog; everything it needs from the main window arrives through
 its constructor. It never touches the table, the stores, or the status line.
 """
@@ -16,7 +16,8 @@ except ImportError:
     filedialog = None
 
 import theme
-from library_data import invalid_paths_note, scale_geometry, scale_pixels
+from library_geometry import scale_geometry, scale_pixels
+from library_sources import invalid_paths_note
 
 
 class DataPathsDialog:

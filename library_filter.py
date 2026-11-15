@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import contextlib
 
-from library_data import (
+from library_format import difficulty_sort_key
+from library_search import (
     CHART_FILTER_FIELDS,
-    difficulty_sort_key,
     find_unreadable_directives,
     match_chart_query,
     parse_search_query,
