@@ -267,6 +267,7 @@ class DistributionTests(unittest.TestCase):
             {"Meter": "10.0"},
             {"Meter": "11"},
             {"Meter": "11.5"},
+            {"Meter": 11.123456789},
             {"Meter": ""},
             {"Meter": None},
             {"Meter": "invalid"},
@@ -280,14 +281,17 @@ class DistributionTests(unittest.TestCase):
             query = search.replace_search_directive("", "meter", token)
             parsed = search.parse_search_query(query)
             matched = sum(search.match_chart_query(row, parsed) for row in rows)
-            if label == "nan":
-                # Known divergence, see issue #171: the "nan" bar is
-                # clickable but meter:nan matches no rows (NaN is not
-                # equal to itself), so a click shows 0 rows while the
-                # bar says 2.
-                self.assertEqual(matched, 0, f"bar {label} ({query})")
-                continue
             self.assertEqual(matched, count, f"bar {label} ({query})")
+
+    def test_meter_bar_token_keeps_full_precision(self):
+        # Issue #173: the bar label rounds to six significant digits
+        # (:g), but the filter token keeps the full-precision value, so
+        # a click selects exactly the rows the bar counts.
+        rows = [{"Meter": 11.123456789}, {"Meter": 10}]
+        dist = {label: (count, token)
+                for label, count, token, _ in data.aggregate_meter_distribution(rows)}
+        self.assertEqual(dist["11.1235"], (1, "11.123456789"))
+        self.assertEqual(dist["10"], (1, "10"))
 
     def test_difficulty_bar_count_equals_rows_after_typing_the_diff_directive(self):
         """Every difficulty bar's number must equal the rows the typed diff: directive returns.
@@ -319,14 +323,16 @@ class DistributionTests(unittest.TestCase):
         stand-in variables (no Tk needed: library_filter imports only
         the Tk-free data modules). Zero-count bars are non-clickable in the UI, but
         the decision still applies and yields 0 rows, so they are checked
-        too. The rows use canonical difficulty names: the aggregator folds
-        case and whitespace while the dropdown compares exactly, so odd
-        text is a known divergence the dropdown would show fewer rows
-        for, and it is left out here.
+        too. The rows include odd difficulty text (lowercase, surrounding
+        spaces): the aggregator folds case and whitespace, and the
+        dropdown now folds the same way (issue #172), so those rows
+        count toward the bar and the click shows them too.
         """
         rows = [
             {"Difficulty": "Beginner"},
             {"Difficulty": "Challenge"},
+            {"Difficulty": "challenge"},
+            {"Difficulty": " Challenge "},
             {"Difficulty": "Hard"},
             {"Difficulty": "Custom"},
             {"Difficulty": ""},

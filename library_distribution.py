@@ -154,8 +154,13 @@ def aggregate_meter_distribution(rows: list[dict], active_val: str | None = None
     for m_val in sorted(numeric_keys.keys()):
         label = numeric_keys[m_val]
         count = counts[label]
-        is_active = filter_texts_match(active_val, label) if active_val is not None else False
-        result.append((label, count, label, is_active))
+        # The token is the full-precision value, so a click selects
+        # exactly the rows the bar counts (issue #173); the label stays
+        # the rounded display text. Integer meters are exact already,
+        # so their token is the label.
+        token = label if m_val.is_integer() else str(m_val)
+        is_active = filter_texts_match(active_val, token) if active_val is not None else False
+        result.append((label, count, token, is_active))
 
     if nan_count > 0:
         result.append(("nan", nan_count, "nan",

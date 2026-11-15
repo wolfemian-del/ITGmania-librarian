@@ -30,6 +30,18 @@ class SearchQueryTests(unittest.TestCase):
         self.assertEqual(data.parse_numeric_bound("1:30-2:30", is_duration=True), ("range", 90.0, 150.0))
         self.assertEqual(data.parse_numeric_bound(">2:00", is_duration=True), (">", 120.0))
 
+    def test_meter_nan_matches_nan_rows(self):
+        # Issue #171: meter:nan selects the NaN-meter rows (the "nan"
+        # bar's filter), and only them. NaN is not equal to itself, so
+        # the == branch special-cases a NaN target.
+        nan_row = {"Meter": float("nan")}
+        self.assertTrue(data.match_chart_query(
+            nan_row, data.parse_search_query("meter:nan")))
+        self.assertFalse(data.match_chart_query(
+            {"Meter": 10}, data.parse_search_query("meter:nan")))
+        self.assertFalse(data.match_chart_query(
+            nan_row, data.parse_search_query("meter:10")))
+
     def test_parse_search_query_directives(self):
         q = "Smiley meter:11 bpm:200-300 time:>2:00 diff:Challenge"
         res = data.parse_search_query(q)
