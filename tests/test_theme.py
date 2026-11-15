@@ -87,7 +87,7 @@ class ThemeValuesTests(unittest.TestCase):
                 self.assertTrue(HEX_COLOR.fullmatch(value) or value.isalpha(), f"{name} = {value!r}")
 
     def test_difficulty_colors_cover_every_difficulty(self):
-        from library_data import DIFFICULTY_ORDER
+        from library_constants import DIFFICULTY_ORDER
         for difficulty in DIFFICULTY_ORDER:
             self.assertIn(difficulty, theme.DIFFICULTY_COLORS)
 

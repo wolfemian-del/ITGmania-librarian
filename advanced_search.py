@@ -13,14 +13,13 @@ except ImportError:
     tk = None
 
 import theme
-from library_data import (
-    GRADE_OPTIONS,
-    build_dialog_query,
+from library_constants import GRADE_OPTIONS
+from library_dialog_query import build_dialog_query, split_dialog_query
+from library_geometry import (
     format_geometry,
     parse_course_geometry,
     scale_geometry,
     scale_pixels,
-    split_dialog_query,
 )
 
 

@@ -1,12 +1,10 @@
 """The import-surface pin (Proposal 0010, Step 1).
 
-Every name a production module or a test imports from `library_data`
-today, grouped by the module it is headed to (§4). No move may silently
-drop one: if a name stops resolving from `library_data`, the move PR
-that dropped it fails here before the suite ever reaches the behaviour
-tests. Each move PR re-points the names it moves — the method for that
-module starts importing from the new module instead — and at Step 9,
-when `library_data.py` is deleted, every method imports from its new
+Every name the app consumes from the nine data modules, grouped by the
+module it lives in. The pin was built during the split so no move could
+silently drop a name: if a name stops resolving from its home module,
+this fails before the suite ever reaches the behaviour tests. With
+`library_data.py` deleted at Step 9, every method imports from its new
 module.
 
 The list is built from the names consumers actually import, not from
@@ -22,7 +20,6 @@ names this file defines.
 import unittest
 
 import library_constants
-import library_data
 import library_course
 import library_format
 import library_geometry
@@ -34,7 +31,7 @@ import library_stores
 
 
 class ImportSurfaceTests(unittest.TestCase):
-    def _assert_resolve(self, names, module=library_data):
+    def _assert_resolve(self, names, module):
         for name in names:
             with self.subTest(name=name):
                 self.assertIsNotNone(getattr(module, name, None))

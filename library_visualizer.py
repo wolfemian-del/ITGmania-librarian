@@ -25,21 +25,20 @@ from library_filter import LibraryFilter
 from library_loader import LibraryLoader
 from library_table import LibraryTable
 from distribution_panel import DistributionPanel
-from library_data import (
-    COLUMN_GROUPS,
-    DEFAULT_VISIBLE_COLUMNS,
-    HEADERS,
+from library_constants import COLUMN_GROUPS, DEFAULT_VISIBLE_COLUMNS, HEADERS
+from library_geometry import (
+    declare_dpi_awareness,
+    dpi_scale_factor,
+    scale_geometry,
+    scale_pixels,
+)
+from library_sources import cache_dir_candidates, first_existing_directory
+from library_stores import (
     LIBRARY_CACHE_SCHEMA_VERSION,
     SettingsStore,
     SnapshotStore,
     _settings_file_path,
     _valid_window_geometry,
-    cache_dir_candidates,
-    declare_dpi_awareness,
-    dpi_scale_factor,
-    first_existing_directory,
-    scale_geometry,
-    scale_pixels,
 )
 
 

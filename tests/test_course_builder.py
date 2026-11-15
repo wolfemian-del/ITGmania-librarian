@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import course_builder
-import library_data
+import library_course
 import row_tints
 import theme
 from course_builder import CourseBuilder
@@ -169,9 +169,9 @@ class CourseBuilderValidationTests(unittest.TestCase):
             mock_mb.showinfo.assert_called_once()
             self.assertTrue(out_file.is_file())
             written_content = out_file.read_text(encoding="utf-8")
-            expected_body = library_data.format_new_course(
+            expected_body = library_course.format_new_course(
                 "My Epic Course",
-                library_data.course_song_lines(builder.entries)
+                library_course.course_song_lines(builder.entries)
             )
             self.assertEqual(written_content, expected_body)
             self.assertIn("Saved course with 2 charts", builder._status.set.call_args[0][0])

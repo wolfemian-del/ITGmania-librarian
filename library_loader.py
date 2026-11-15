@@ -23,10 +23,10 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
-from library_data import (
+from library_format import format_refresh_time
+from library_sources import (
     _normalized_source_path,
     any_scores_match,
-    format_refresh_time,
     invalid_paths_note,
     looks_like_song_tree,
     merge_scores,

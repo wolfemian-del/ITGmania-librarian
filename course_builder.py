@@ -1,6 +1,6 @@
 """The Build-a-course dialog: queue charts and save or append .CRS files.
 
-Tk-side companion to the course helpers in library_data.py. The component
+Tk-side companion to the course helpers in library_course.py. The component
 owns its dialog and queue; everything it needs from the main window arrives
 through its constructor.
 """
@@ -19,18 +19,19 @@ except ImportError:
 
 import row_tints
 import theme
-from library_data import (
+from library_course import (
     course_append_bytes,
     course_song_lines,
     find_ambiguous_course_entries,
-    format_duration,
-    format_geometry,
     format_new_course,
-    number,
+    validate_course_fields,
+)
+from library_format import format_duration, number
+from library_geometry import (
+    format_geometry,
     parse_course_geometry,
     scale_geometry,
     scale_pixels,
-    validate_course_fields,
 )
 
 class CourseBuilder:

@@ -7,7 +7,7 @@ shared Tk variables (the app creates them from saved settings and
 keeps saving them), a way to pull rows when the chart's own metric is
 the active filter, a callback that applies a chart filter change as
 one batched update, and the app's settings save. The pure chart
-arithmetic lives in library_data.py; this module is the Tk side.
+arithmetic lives in library_distribution.py; this module is the Tk side.
 """
 
 from __future__ import annotations
@@ -44,8 +44,7 @@ def _load_matplotlib():
     return MATPLOTLIB_AVAILABLE
 
 import theme
-from library_data import (
-    CHART_FILTER_FIELDS,
+from library_distribution import (
     aggregate_bpm_distribution,
     aggregate_difficulty_distribution,
     aggregate_meter_distribution,
@@ -54,9 +53,12 @@ from library_data import (
     chart_clear_decision,
     chart_click_decision,
     distribution_summary_stats,
+)
+from library_geometry import scale_pixels
+from library_search import (
+    CHART_FILTER_FIELDS,
     get_active_chart_filters,
     parse_search_query,
-    scale_pixels,
 )
 
 

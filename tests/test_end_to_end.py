@@ -19,7 +19,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import library_data as data
+import library_search as search
+import library_sources as data
 import library_visualizer as app
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -150,7 +151,7 @@ class FixtureChainTests(unittest.TestCase):
         cls.rows = load_fixture_rows()
 
     def matching(self, query):
-        return [row for row in self.rows if data.match_chart_query(row, query)]
+        return [row for row in self.rows if search.match_chart_query(row, query)]
 
     def test_apostrophe_title_is_searchable(self):
         # #43, end to end: the title comes out of a cache file, not a

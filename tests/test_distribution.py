@@ -317,7 +317,7 @@ class DistributionTests(unittest.TestCase):
         A click sets the Difficulty dropdown through chart_click_decision
         and apply_chart_filter, so this goes through LibraryFilter on
         stand-in variables (no Tk needed: library_filter imports only
-        library_data). Zero-count bars are non-clickable in the UI, but
+        the Tk-free data modules). Zero-count bars are non-clickable in the UI, but
         the decision still applies and yields 0 rows, so they are checked
         too. The rows use canonical difficulty names: the aggregator folds
         case and whitespace while the dropdown compares exactly, so odd
@@ -502,7 +502,7 @@ class ChartClickLogicTests(unittest.TestCase):
     """The chart's pure decision logic, extracted from the window methods (proposal 0005 step 2).
 
     The tuning values are passed as literals, the way the window passes the theme constants,
-    so these tests stay free of theme like library_data itself.
+    so these tests stay free of theme like the data modules they exercise.
     """
 
     ZONE = dict(min_click_fraction=0.15, bar_height=0.68, axis_headroom=1.25)

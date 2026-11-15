@@ -2,6 +2,7 @@ import time
 import unittest
 
 import library_format as data
+from library_constants import GRADE_NAMES, GRADE_OPTIONS
 
 
 class SplitPathTests(unittest.TestCase):
@@ -160,6 +161,9 @@ class GradeSortTests(unittest.TestCase):
         grades = ["S-", "S+", "S", "A+", "A", "D", "★★★★"]
         ordered = sorted(grades, key=data.grade_sort_key)
         self.assertEqual(ordered, ["★★★★", "S+", "S", "S-", "A+", "A", "D"])
+
+    def test_grade_filter_options_are_defined_labels(self):
+        self.assertEqual(GRADE_OPTIONS, tuple(GRADE_NAMES.values()))
 
 
 class NonFiniteFormatTests(unittest.TestCase):

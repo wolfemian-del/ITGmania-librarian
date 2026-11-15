@@ -10,7 +10,8 @@ from unittest.mock import MagicMock, Mock, patch
 
 import data_paths_dialog as dialog
 import distribution_panel as dp
-import library_data
+import library_geometry as geometry
+import library_stores as stores
 import library_visualizer as app
 import theme
 
@@ -63,7 +64,7 @@ class CourseGeometryAppTests(unittest.TestCase):
         instance.diff_var = Mock(get=Mock(return_value="All difficulties"))
         instance.course_geometry = course_geometry
         instance.advanced_search_geometry = None
-        instance._settings_store = library_data.SettingsStore(instance.settings_path)
+        instance._settings_store = stores.SettingsStore(instance.settings_path)
         instance._settings_store.load()
         return instance
 
@@ -195,7 +196,7 @@ class AdvancedSearchGeometryAppTests(unittest.TestCase):
         instance.diff_var = Mock(get=Mock(return_value="All difficulties"))
         instance.course_geometry = None
         instance.advanced_search_geometry = advanced_search_geometry
-        instance._settings_store = library_data.SettingsStore(instance.settings_path)
+        instance._settings_store = stores.SettingsStore(instance.settings_path)
         instance._settings_store.load()
         return instance
 
@@ -290,8 +291,8 @@ class LibrarySnapshotTests(unittest.TestCase):
         instance._loaded = Mock()
         # The snapshot store the delegate reads through (proposal 0008):
         # the path is derived from the settings path, as in __init__.
-        instance._snapshot_store = library_data.SnapshotStore(
-            instance.library_cache_path, app.HEADERS, library_data.LIBRARY_CACHE_SCHEMA_VERSION)
+        instance._snapshot_store = stores.SnapshotStore(
+            instance.library_cache_path, app.HEADERS, stores.LIBRARY_CACHE_SCHEMA_VERSION)
         instance.course_geometry = None
         instance.advanced_search_geometry = None
         return instance
@@ -306,7 +307,7 @@ class LibrarySnapshotTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             instance = self.make_app(root / "settings.json", root / "Cache", root / "Stats.xml")
-            instance._settings_store = library_data.SettingsStore(root / "settings.json")
+            instance._settings_store = stores.SettingsStore(root / "settings.json")
             instance._settings_store.load()
             instance.column_visibility = {col: Mock(get=Mock(return_value=True)) for col in app.HEADERS}
             instance._table = _mock_table()
@@ -481,7 +482,7 @@ class FilterPersistenceTests(unittest.TestCase):
         instance.distribution_metric = Mock(get=Mock(return_value="Meter"))
         instance.course_geometry = None
         instance.advanced_search_geometry = None
-        instance._settings_store = library_data.SettingsStore(instance.settings_path)
+        instance._settings_store = stores.SettingsStore(instance.settings_path)
         instance._settings_store.load()
 
     def test_save_settings_writes_the_filter_keys_and_never_search_text(self):
@@ -550,7 +551,7 @@ class DiscardedSettingsStatusTests(unittest.TestCase):
 
     def test_report_appends_the_message_once_and_keeps_the_snapshot_line(self):
         instance = object.__new__(app.LibraryApp)
-        instance._settings_store = library_data.SettingsStore(Path("settings.json"))
+        instance._settings_store = stores.SettingsStore(Path("settings.json"))
         instance._settings_store.last_read_error = "Expecting value: line 1 column 1 (char 0)"
         instance.status = _StubStatus("Showing saved library snapshot · 3 charts · last refreshed 2026-11-10 08:00.")
 
@@ -563,7 +564,7 @@ class DiscardedSettingsStatusTests(unittest.TestCase):
 
     def test_report_does_nothing_without_a_recorded_failure(self):
         instance = object.__new__(app.LibraryApp)
-        instance._settings_store = library_data.SettingsStore(Path("settings.json"))
+        instance._settings_store = stores.SettingsStore(Path("settings.json"))
         instance.status = _StubStatus("Choose your cache's Songs folder and player Stats.xml, then click Load / refresh.")
 
         instance._report_discarded_settings()
@@ -639,7 +640,7 @@ class LiveDiscardedSettingsTests(unittest.TestCase):
         row = {header: "" for header in app.HEADERS}
         row.update({"Title": "Song", "Pack": "P", "Type": "dance-single",
                     "Difficulty": "Hard", "Meter": 10, "Course path": "P/Song"})
-        payload = {"schema_version": library_data.LIBRARY_CACHE_SCHEMA_VERSION,
+        payload = {"schema_version": stores.LIBRARY_CACHE_SCHEMA_VERSION,
                    "cache_dir": cache_dir, "stats_file": stats_file,
                    "refreshed_at": "2026-11-10T08:00:00-05:00", "files": 1,
                    "skipped_files": 0, "files_without_charts": 0,
@@ -678,7 +679,7 @@ class LiveStartupSnapshotTests(unittest.TestCase):
         row = {header: "" for header in app.HEADERS}
         row.update({"Title": "Song", "Pack": "P", "Type": "dance-single",
                     "Difficulty": "Hard", "Meter": 10, "Course path": "P/Song"})
-        payload = {"schema_version": library_data.LIBRARY_CACHE_SCHEMA_VERSION,
+        payload = {"schema_version": stores.LIBRARY_CACHE_SCHEMA_VERSION,
                    "cache_dir": str(cache_dir), "stats_file": str(stats_file),
                    "refreshed_at": "2026-11-10T08:00:00-05:00", "files": 1,
                    "skipped_files": 0, "files_without_charts": 0,
@@ -723,7 +724,7 @@ class LiveStartupSnapshotTests(unittest.TestCase):
         row = {header: "" for header in app.HEADERS}
         row.update({"Title": "Song", "Pack": "P", "Type": "dance-single",
                     "Difficulty": "Hard", "Meter": 10, "Course path": "P/Song"})
-        payload = {"schema_version": library_data.LIBRARY_CACHE_SCHEMA_VERSION,
+        payload = {"schema_version": stores.LIBRARY_CACHE_SCHEMA_VERSION,
                    "cache_dir": str(cache_dir), "stats_file": str(stats_file),
                    "refreshed_at": "2026-11-10T08:00:00-05:00", "files": 1,
                    "skipped_files": 0, "files_without_charts": 0,
@@ -787,7 +788,7 @@ class LiveDataPathsDialogTests(unittest.TestCase):
             settings_path.write_text(json.dumps(
                 {"cache_dir": str(cache_dir), "stats_file": str(stats_file)}))
         if snapshot_rows is not None:
-            payload = {"schema_version": library_data.LIBRARY_CACHE_SCHEMA_VERSION,
+            payload = {"schema_version": stores.LIBRARY_CACHE_SCHEMA_VERSION,
                        "cache_dir": str(cache_dir), "stats_file": str(stats_file),
                        "refreshed_at": "2026-11-10T08:00:00-05:00", "files": 1,
                        "skipped_files": 0, "files_without_charts": 0,
@@ -1514,7 +1515,7 @@ class PerformanceAndExportTests(unittest.TestCase):
             instance.diff_var = Mock(get=Mock(return_value="All difficulties"))
             instance.course_geometry = None
             instance.advanced_search_geometry = None
-            instance._settings_store = library_data.SettingsStore(settings_path)
+            instance._settings_store = stores.SettingsStore(settings_path)
             instance._settings_store.load()
 
             # First save writes to disk
@@ -1556,7 +1557,7 @@ class PerformanceAndExportTests(unittest.TestCase):
             instance.diff_var = Mock(get=Mock(return_value="All difficulties"))
             instance.course_geometry = None
             instance.advanced_search_geometry = None
-            instance._settings_store = library_data.SettingsStore(settings_path)
+            instance._settings_store = stores.SettingsStore(settings_path)
             instance._settings_store.load()
             instance.status = Mock()
 
@@ -1583,7 +1584,7 @@ class PerformanceAndExportTests(unittest.TestCase):
             instance.diff_var = Mock(get=Mock(return_value="All difficulties"))
             instance.course_geometry = None
             instance.advanced_search_geometry = None
-            instance._settings_store = library_data.SettingsStore(settings_path)
+            instance._settings_store = stores.SettingsStore(settings_path)
             instance._settings_store.load()
 
             # An earlier save in the session (any routine click) populates the dedup snapshot.
@@ -1711,7 +1712,7 @@ class LiveDpiScaleTests(unittest.TestCase):
             # reading it back: an unmapped window still reports 1x1.
             root.update_idletasks()
             factor = application._dpi_scale
-            self.assertEqual(factor, library_data.dpi_scale_factor(root.winfo_fpixels("1i")))
+            self.assertEqual(factor, geometry.dpi_scale_factor(root.winfo_fpixels("1i")))
             self.assertGreater(factor, 0)
             # The exact window size is not asserted here: the window
             # manager clamps it to the screen (the Windows runner's
@@ -1720,10 +1721,10 @@ class LiveDpiScaleTests(unittest.TestCase):
             # tests; the factor reaching the real window is shown by the
             # minimum size and the column width below.
             self.assertEqual(root.minsize(),
-                             (library_data.scale_pixels(theme.WINDOW_MIN_SIZE[0], factor),
-                              library_data.scale_pixels(theme.WINDOW_MIN_SIZE[1], factor)))
+                             (geometry.scale_pixels(theme.WINDOW_MIN_SIZE[0], factor),
+                              geometry.scale_pixels(theme.WINDOW_MIN_SIZE[1], factor)))
             self.assertEqual(application._table.tree.column("Title", "width"),
-                             library_data.scale_pixels(130, factor))
+                             geometry.scale_pixels(130, factor))
         finally:
             root.destroy()
 
