@@ -236,6 +236,46 @@ class DistributionTests(unittest.TestCase):
             matched = sum(data.match_chart_query(row, data.parse_search_query(query)) for row in rows)
             self.assertEqual(matched, count, f"bar {label} ({query})")
 
+    def test_meter_bar_count_equals_rows_after_clicking_the_bar(self):
+        """Every meter bar's number must equal the rows its own filter returns."""
+        rows = [
+            {"Meter": 10},
+            {"Meter": "10.0"},
+            {"Meter": "11"},
+            {"Meter": "11.5"},
+            {"Meter": ""},
+            {"Meter": None},
+            {"Meter": "invalid"},
+            {"Meter": float("nan")},
+        ]
+        for label, count, token, _ in data.aggregate_meter_distribution(rows):
+            if not token or label == "nan":
+                # The "?" bar has no filter, and the "nan" bar counts rows
+                # the search matcher cannot select (NaN is not equal to
+                # itself), so the click-through invariant does not apply.
+                continue
+            query = data.replace_search_directive("", "meter", token)
+            parsed = data.parse_search_query(query)
+            matched = sum(data.match_chart_query(row, parsed) for row in rows)
+            self.assertEqual(matched, count, f"bar {label} ({query})")
+
+    def test_difficulty_bar_count_equals_rows_after_clicking_the_bar(self):
+        """Every difficulty bar's number must equal the rows its own filter returns."""
+        rows = [
+            {"Difficulty": "Beginner"},
+            {"Difficulty": "Challenge"},
+            {"Difficulty": "Challenge"},
+            {"Difficulty": "challenge"},
+            {"Difficulty": "Hard"},
+            {"Difficulty": "Custom"},
+            {"Difficulty": ""},
+        ]
+        for label, count, token, _ in data.aggregate_difficulty_distribution(rows):
+            query = data.replace_search_directive("", "diff", token)
+            parsed = data.parse_search_query(query)
+            matched = sum(data.match_chart_query(row, parsed) for row in rows)
+            self.assertEqual(matched, count, f"bar {label} ({query})")
+
     def test_replace_search_directive_with_several_values(self):
         res = data.replace_search_directive("Smiley bpm:150 meter:11", "bpm", (">=120", "<140"))
         self.assertEqual(res, "Smiley bpm:>=120 bpm:<140 meter:11")

@@ -333,7 +333,7 @@ class SnapshotStoreTests(unittest.TestCase):
             store, path = self.make_store(directory)
             cache_dir = Path(directory) / "Cache"
             stats_file = Path(directory) / "Stats.xml"
-            with patch("library_data.os.replace", side_effect=OSError("locked")):
+            with patch("os.replace", side_effect=OSError("locked")):
                 with self.assertRaises(OSError):
                     store.write(cache_dir, stats_file, [self.sample_row()], 1, 0, 0, False)
             self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
@@ -343,6 +343,20 @@ class SnapshotStoreTests(unittest.TestCase):
         # payload first, the target path second.
         parameters = list(inspect.signature(library_data.write_file_atomically).parameters)
         self.assertEqual(parameters, ["text", "path"])
+
+    def test_failed_replace_leaves_the_old_file_intact(self):
+        # Proposal 0010 Step 1: the shared helper's other half — a write
+        # that fails at os.replace must leave the previous file untouched,
+        # not just leave no temp file behind. Both stores write through
+        # this helper, so this one test pins the behaviour for both.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "library_cache.json"
+            path.write_text("old contents", encoding="utf-8")
+            with patch("os.replace", side_effect=OSError("locked")):
+                with self.assertRaises(OSError):
+                    library_data.write_file_atomically("new contents", path)
+            self.assertEqual(path.read_text(encoding="utf-8"), "old contents")
+            self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
 
     def test_read_rejects_malformed_payload_shapes_as_invalid(self):
         # The invalid branch guards the payload shape as well as the schema
