@@ -24,6 +24,7 @@ import unittest
 import library_constants
 import library_data
 import library_format
+import library_sources
 
 
 class ImportSurfaceTests(unittest.TestCase):
@@ -74,7 +75,7 @@ class ImportSurfaceTests(unittest.TestCase):
             "merge_scores",
             "parse_cache_file",
             "stats_index",
-        ))
+        ), module=library_sources)
 
     def test_geometry_names_resolve(self):
         # Re-pointed to library_geometry.py at Step 4.
