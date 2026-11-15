@@ -54,6 +54,8 @@ GRADE_RANK = {name.casefold(): index for index, name in enumerate(GRADE_NAMES.va
 GRADE_RANK.update({tier.casefold(): index for index, tier in enumerate(GRADE_NAMES)})
 
 
+# GRADE_RANK and DIFFICULTY_RANK are intentionally omitted here:
+# they are consumed only by library_format.
 __all__ = [
     "COLUMN_GROUPS",
     "DEFAULT_VISIBLE_COLUMNS",
