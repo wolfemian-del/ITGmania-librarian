@@ -1,6 +1,9 @@
 import importlib.util
 import unittest
-import library_data as data
+import library_distribution as data
+import library_search as search
+from library_constants import DIFFICULTY_ORDER
+from library_format import number
 from library_filter import LibraryFilter
 
 
@@ -30,60 +33,60 @@ class _StandInEntry:
 class DistributionTests(unittest.TestCase):
     def test_replace_search_directive_basic(self):
         # Basic replacement
-        res = data.replace_search_directive("Smiley meter:10", "meter", "12")
+        res = search.replace_search_directive("Smiley meter:10", "meter", "12")
         self.assertEqual(res, "Smiley meter:12")
 
         # Alias replacement (m -> meter)
-        res = data.replace_search_directive("Smiley m:10", "meter", "12")
+        res = search.replace_search_directive("Smiley m:10", "meter", "12")
         self.assertEqual(res, "Smiley meter:12")
 
         # Append when not present
-        res = data.replace_search_directive("Smiley", "meter", "11")
+        res = search.replace_search_directive("Smiley", "meter", "11")
         self.assertEqual(res, "Smiley meter:11")
 
         # Empty initial query
-        res = data.replace_search_directive("", "meter", "11")
+        res = search.replace_search_directive("", "meter", "11")
         self.assertEqual(res, "meter:11")
 
     def test_replace_search_directive_removal(self):
         # Remove directive preserving free text
-        res = data.replace_search_directive("Smiley meter:10 bpm:>180", "meter", None)
+        res = search.replace_search_directive("Smiley meter:10 bpm:>180", "meter", None)
         self.assertEqual(res, "Smiley bpm:>180")
 
         # Remove alias
-        res = data.replace_search_directive("Smiley m:10", "meter", None)
+        res = search.replace_search_directive("Smiley m:10", "meter", None)
         self.assertEqual(res, "Smiley")
 
         # Remove when not present
-        res = data.replace_search_directive("Smiley", "meter", None)
+        res = search.replace_search_directive("Smiley", "meter", None)
         self.assertEqual(res, "Smiley")
 
     def test_replace_search_directive_complex_and_quotes(self):
         # Quoted pack name with spaces and other directives
         query = 'artist:Smiley pack:"In The Groove" meter:10 bpm:>180'
-        res = data.replace_search_directive(query, "meter", "11")
+        res = search.replace_search_directive(query, "meter", "11")
         self.assertEqual(res, 'artist:Smiley pack:"In The Groove" meter:11 bpm:>180')
 
         # Quoted value insertion
-        res = data.replace_search_directive("meter:10", "pack", "In The Groove")
+        res = search.replace_search_directive("meter:10", "pack", "In The Groove")
         self.assertEqual(res, 'meter:10 pack:"In The Groove"')
 
         # Removal with quotes preserved
-        res = data.replace_search_directive('pack:"In The Groove" bpm:140-159', "bpm", None)
+        res = search.replace_search_directive('pack:"In The Groove" bpm:140-159', "bpm", None)
         self.assertEqual(res, 'pack:"In The Groove"')
 
     @staticmethod
     def search_meaning(query):
         """What the search reads from a query: its free-text terms and its directives."""
-        parsed = data.parse_search_query(query)
+        parsed = search.parse_search_query(query)
         return tuple(parsed["free_terms"]), sorted(parsed["directives"])
 
     def assert_rewrite_keeps_meaning(self, query, target, value, new_values):
         """The rewritten query must read as the original with only the target field's directives swapped."""
         free, directives = self.search_meaning(query)
-        field = data.SEARCH_FIELD_ALIASES[target]
+        field = search.SEARCH_FIELD_ALIASES[target]
         expected = (free, sorted([d for d in directives if d[0] != field] + [(field, v) for v in new_values]))
-        rewritten = data.replace_search_directive(query, target, value)
+        rewritten = search.replace_search_directive(query, target, value)
         self.assertEqual(self.search_meaning(rewritten), expected, f"{query!r} -> {rewritten!r}")
         return rewritten
 
@@ -101,7 +104,8 @@ class DistributionTests(unittest.TestCase):
 
     def test_rewrite_with_an_unbalanced_quote_keeps_meaning(self):
         # parse_search_query splits on spaces when a quote is never closed, so these are plain words.
-        self.assertEqual(data.replace_search_directive("don't stop meter:3", "meter", None), "don't stop")
+        self.assertEqual(
+            search.replace_search_directive("don't stop meter:3", "meter", None), "don't stop")
         # Removing the word that held the stray quote must not change how the rest is read.
         for query in ("m:' :'title'", 'meter::"x ya""'):
             self.assert_rewrite_keeps_meaning(query, "meter", None, [])
@@ -154,14 +158,15 @@ class DistributionTests(unittest.TestCase):
 
     def test_chart_without_a_meter_tag_gets_a_clickable_zero_bar(self):
         # parse_cache_file stores a missing METER tag as 0, so real data never reaches the "?" bar.
-        self.assertEqual(data.number(None), 0.0)
-        rows = [{"Meter": data.number(None)}, {"Meter": data.number("11")}]
+        self.assertEqual(number(None), 0.0)
+        rows = [{"Meter": number(None)}, {"Meter": number("11")}]
         dist = {label: (count, token) for label, count, token, _ in data.aggregate_meter_distribution(rows)}
         self.assertEqual(dist["0"], (1, "0"))
         self.assertNotIn("?", dist)
         # The bar's number equals the rows the table shows after clicking it.
-        query = data.parse_search_query(data.replace_search_directive("", "meter", dist["0"][1]))
-        self.assertEqual(sum(data.match_chart_query(row, query) for row in rows), dist["0"][0])
+        query = search.parse_search_query(
+            search.replace_search_directive("", "meter", dist["0"][1]))
+        self.assertEqual(sum(search.match_chart_query(row, query) for row in rows), dist["0"][0])
 
     def test_aggregate_difficulty_distribution(self):
         rows = [
@@ -187,7 +192,7 @@ class DistributionTests(unittest.TestCase):
 
         # Order must match DIFFICULTY_ORDER
         diff_order = [item[0] for item in dist[:6]]
-        self.assertEqual(diff_order, list(data.DIFFICULTY_ORDER))
+        self.assertEqual(diff_order, list(DIFFICULTY_ORDER))
 
     @staticmethod
     def bpm_row(low, high=None):
@@ -250,8 +255,9 @@ class DistributionTests(unittest.TestCase):
         for label, count, token, _ in data.aggregate_bpm_distribution(rows):
             if not token:
                 continue
-            query = data.replace_search_directive("", "bpm", token)
-            matched = sum(data.match_chart_query(row, data.parse_search_query(query)) for row in rows)
+            query = search.replace_search_directive("", "bpm", token)
+            matched = sum(
+                search.match_chart_query(row, search.parse_search_query(query)) for row in rows)
             self.assertEqual(matched, count, f"bar {label} ({query})")
 
     def test_meter_bar_count_equals_rows_after_clicking_the_bar(self):
@@ -271,9 +277,9 @@ class DistributionTests(unittest.TestCase):
                 # The "?" bar has no filter, so the click-through
                 # invariant does not apply to it.
                 continue
-            query = data.replace_search_directive("", "meter", token)
-            parsed = data.parse_search_query(query)
-            matched = sum(data.match_chart_query(row, parsed) for row in rows)
+            query = search.replace_search_directive("", "meter", token)
+            parsed = search.parse_search_query(query)
+            matched = sum(search.match_chart_query(row, parsed) for row in rows)
             if label == "nan":
                 # Known divergence, see issue #171: the "nan" bar is
                 # clickable but meter:nan matches no rows (NaN is not
@@ -300,9 +306,9 @@ class DistributionTests(unittest.TestCase):
             {"Difficulty": ""},
         ]
         for label, count, token, _ in data.aggregate_difficulty_distribution(rows):
-            query = data.replace_search_directive("", "diff", token)
-            parsed = data.parse_search_query(query)
-            matched = sum(data.match_chart_query(row, parsed) for row in rows)
+            query = search.replace_search_directive("", "diff", token)
+            parsed = search.parse_search_query(query)
+            matched = sum(search.match_chart_query(row, parsed) for row in rows)
             self.assertEqual(matched, count, f"bar {label} ({query})")
 
     def test_difficulty_bar_count_equals_rows_after_clicking_the_bar(self):
@@ -341,21 +347,22 @@ class DistributionTests(unittest.TestCase):
                 difficulty="All difficulties", query="")
 
     def test_replace_search_directive_with_several_values(self):
-        res = data.replace_search_directive("Smiley bpm:150 meter:11", "bpm", (">=120", "<140"))
+        res = search.replace_search_directive("Smiley bpm:150 meter:11", "bpm", (">=120", "<140"))
         self.assertEqual(res, "Smiley bpm:>=120 bpm:<140 meter:11")
         # Replacing again swaps both directives, and None removes both.
-        res = data.replace_search_directive(res, "bpm", (">=140", "<160"))
+        res = search.replace_search_directive(res, "bpm", (">=140", "<160"))
         self.assertEqual(res, "Smiley bpm:>=140 bpm:<160 meter:11")
-        self.assertEqual(data.replace_search_directive(res, "bpm", None), "Smiley meter:11")
-        self.assertEqual(data.replace_search_directive("", "bpm", (">=120", "<140")), "bpm:>=120 bpm:<140")
+        self.assertEqual(search.replace_search_directive(res, "bpm", None), "Smiley meter:11")
+        self.assertEqual(
+            search.replace_search_directive("", "bpm", (">=120", "<140")), "bpm:>=120 bpm:<140")
 
     def test_filter_token_text(self):
-        self.assertEqual(data.filter_token_text("11"), "11")
-        self.assertEqual(data.filter_token_text((">=120", "<140")), ">=120 <140")
-        self.assertEqual(data.filter_token_text(""), "")
+        self.assertEqual(search.filter_token_text("11"), "11")
+        self.assertEqual(search.filter_token_text((">=120", "<140")), ">=120 <140")
+        self.assertEqual(search.filter_token_text(""), "")
 
     def test_filter_texts_match_ignores_number_format_and_order(self):
-        match = data.filter_texts_match
+        match = search.filter_texts_match
         # Numbers are read the way the search reads them.
         self.assertTrue(match("11.0", "11"))
         self.assertTrue(match("=11", "11"))
@@ -384,20 +391,20 @@ class DistributionTests(unittest.TestCase):
 
     def test_get_active_chart_filters_lists_every_active_chart_filter(self):
         self.assertEqual(
-            data.get_active_chart_filters("Hard", "Smiley meter:11 bpm:>=120 bpm:<140"),
+            search.get_active_chart_filters("Hard", "Smiley meter:11 bpm:>=120 bpm:<140"),
             [("Difficulty", "Hard"), ("Meter", "11"), ("BPM", ">=120 <140")],
         )
         # A diff: directive counts when the dropdown is not set.
         self.assertEqual(
-            data.get_active_chart_filters("All difficulties", "diff:Challenge"),
+            search.get_active_chart_filters("All difficulties", "diff:Challenge"),
             [("Difficulty", "Challenge")],
         )
         # The dropdown wins over a diff: directive; empty values (half-typed "bpm:") are ignored.
         self.assertEqual(
-            data.get_active_chart_filters("Hard", "diff:Challenge bpm:"),
+            search.get_active_chart_filters("Hard", "diff:Challenge bpm:"),
             [("Difficulty", "Hard")],
         )
-        self.assertEqual(data.get_active_chart_filters("All difficulties", "Smiley"), [])
+        self.assertEqual(search.get_active_chart_filters("All difficulties", "Smiley"), [])
 
     def test_distribution_summary_stats(self):
         rows = [
@@ -482,7 +489,7 @@ class DistributionTests(unittest.TestCase):
         self.assertFalse(actives["10"])
 
     def test_filter_texts_match_treats_nan_as_nan(self):
-        match = data.filter_texts_match
+        match = search.filter_texts_match
         self.assertTrue(match("nan", "nan"))
         self.assertTrue(match("=nan", "nan"))
         self.assertTrue(match("nan", "=nan"))

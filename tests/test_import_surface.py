@@ -27,6 +27,7 @@ import library_course
 import library_format
 import library_geometry
 import library_dialog_query
+import library_distribution
 import library_search
 import library_sources
 import library_stores
@@ -155,4 +156,4 @@ class ImportSurfaceTests(unittest.TestCase):
             "chart_clear_decision",
             "chart_click_decision",
             "distribution_summary_stats",
-        ))
+        ), module=library_distribution)
