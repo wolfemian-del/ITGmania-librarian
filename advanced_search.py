@@ -1,6 +1,6 @@
 """The Advanced Search dialog: field filters that build a search query.
 
-Tk-side companion to the dialog-query helpers in library_data.py. The
+Tk-side companion to the dialog-query helpers in library_dialog_query.py. The
 component owns its dialog; everything it needs from the main window
 arrives through its constructor.
 """

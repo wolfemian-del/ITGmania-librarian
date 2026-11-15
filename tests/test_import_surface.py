@@ -26,6 +26,7 @@ import library_data
 import library_course
 import library_format
 import library_geometry
+import library_dialog_query
 import library_search
 import library_sources
 
@@ -127,7 +128,7 @@ class ImportSurfaceTests(unittest.TestCase):
         self._assert_resolve((
             "build_dialog_query",
             "split_dialog_query",
-        ))
+        ), module=library_dialog_query)
 
     def test_stores_names_resolve(self):
         # Re-pointed to library_stores.py at Step 7.
