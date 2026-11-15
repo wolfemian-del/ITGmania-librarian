@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — for review |
+| **Status** | Accepted (2026-11-14) |
 | **Author** | Muse (Muse Spark 1.3) |
 | **Date** | 2026-11-14 |
 | **Base** | main `6c9a8339` (after PR #168 merged; Proposal 0009 complete, suite 613 OK) |
@@ -13,6 +13,8 @@
 In plain language: the data file everything else in the app reads from — `library_data.py`, the Tk-free module holding the parsing, the search language, the score merge, the course formatting, and the two stores — has grown to 2,109 lines and 81 functions, and it is now the largest single concentration left in the codebase. This proposal splits it into nine smaller modules, one per subject area, following the same pattern as Proposal 0009: pure moves, bodies byte-identical, staged leaf-first so each step is independently green. Nothing the user sees changes. The old file is deleted at the last step, after serving as an interim hybrid from the second step on (§7, Q1).
 
 This proposal was revised after the panel review on PR #169. The owner adopted Claude's findings, which changed the module list (geometry and dialog query split out, the scores module renamed), flipped Q1 from shim to delete, and moved the full panel from Step 5 to Step 1. The decisions are recorded in §7; the measurements in §2 are unchanged.
+
+Review resolutions (2026-11-14): the full four-model panel reviewed PR #169 — Claude (design/contracts), Grok (staging/test plan), GLM (measurements/legibility), ChatGPT-6 (executed verification). Claude's findings were adopted (nine modules; geometry and dialog query split out; the scores module renamed `library_sources.py`; the old file deleted at Step 9; the full panel moved from Step 5 to Step 1; the corrected §4 import lists and Step 1 pins), and the GLM, ChatGPT-6, and Grok corrections consistent with them were folded in (edge-vs-site wording, the stdlib note, the SnapshotResult and ChartBar inventory corrections, the Step 8 re-pointing clarification), with two corrections to the reviews themselves (GRADE_OPTIONS belongs to the dialog module, not the search module; the stdlib names distribute as in §2). Grok's staging order was confirmed unchanged. The owner accepted the revised proposal.
 
 ## 1. Background and Goal
 
