@@ -4,7 +4,7 @@ A small Windows-friendly desktop app for browsing ITGmania cached charts alongsi
 
 ![The library window, showing the song table with scores and grades](docs/images/main-window.png)
 
-The screenshot above is a Linux render of the main window with a small synthetic library. The table shows the chart list with scores; the search bar, filters, and distribution panel are at the top.
+The screenshot above is a Linux render of the main window with a small synthetic library. The table shows the chart list with scores; the search bar and filters are at the top, and the Distribution button at the top right opens the collapsible side panel.
 
 ## Run
 

@@ -1,10 +1,10 @@
 # Ruff config for ITGmania-library-viewer.
 # Enforces only the rules Ian agreed to in the 2026-11-13 Ruff evaluation:
 #   F401  unused import            (the unused MouseEvent import in tests/test_ui_distribution.py — issue #157, removed by PR #160; the rule guards against reintroducing one)
-#   RUF046 unnecessary int() cast  (format_time, library_format.py:28 — issue #156, fixed by PR #159; the redundant int() around round() is gone)
+#   RUF046 unnecessary int() cast  (format_time in library_format.py — issue #156, fixed by PR #159; the redundant int() around round() is gone)
 #   RUF022 unsorted __all__        (the __all__ lists in the nine data modules — issue #156, fixed by PR #159)
 # Deliberately NOT selected: I001 (import order is load-bearing in
-# distribution_panel.py:37), F841 (the *style unpack in test_theme.py:107 is
+# distribution_panel.py), F841 (the *style unpack in test_theme.py is
 # load-bearing), and the 61 stylistic rules (blind-except, lambdas, etc.).
 # E501 is also off: it would duplicate flake8's 100 hard limit and fail on
 # the grandfathered over-long lines. See the README's development section.
