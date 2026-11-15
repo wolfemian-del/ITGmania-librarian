@@ -1,6 +1,30 @@
 import importlib.util
 import unittest
 import library_data as data
+from library_filter import LibraryFilter
+
+
+class _StandInVar:
+    """A Tk-variable stand-in: get/set plus a no-op trace_add."""
+
+    def __init__(self, value=""):
+        self._value = value
+
+    def get(self):
+        return self._value
+
+    def set(self, value):
+        self._value = value
+
+    def trace_add(self, *args):
+        return None
+
+
+class _StandInEntry:
+    """A search-box stand-in: only icursor, which apply_chart_filter calls."""
+
+    def icursor(self, *args):
+        return None
 
 
 class DistributionTests(unittest.TestCase):
@@ -249,18 +273,29 @@ class DistributionTests(unittest.TestCase):
             {"Meter": float("nan")},
         ]
         for label, count, token, _ in data.aggregate_meter_distribution(rows):
-            if not token or label == "nan":
-                # The "?" bar has no filter, and the "nan" bar counts rows
-                # the search matcher cannot select (NaN is not equal to
-                # itself), so the click-through invariant does not apply.
+            if not token:
+                # The "?" bar has no filter, so the click-through
+                # invariant does not apply to it.
                 continue
             query = data.replace_search_directive("", "meter", token)
             parsed = data.parse_search_query(query)
             matched = sum(data.match_chart_query(row, parsed) for row in rows)
+            if label == "nan":
+                # Known divergence, see issue #171: the "nan" bar is
+                # clickable but meter:nan matches no rows (NaN is not
+                # equal to itself), so a click shows 0 rows while the
+                # bar says 2.
+                self.assertEqual(matched, 0, f"bar {label} ({query})")
+                continue
             self.assertEqual(matched, count, f"bar {label} ({query})")
 
-    def test_difficulty_bar_count_equals_rows_after_clicking_the_bar(self):
-        """Every difficulty bar's number must equal the rows its own filter returns."""
+    def test_difficulty_bar_count_equals_rows_after_typing_the_diff_directive(self):
+        """Every difficulty bar's number must equal the rows the typed diff: directive returns.
+
+        This pins the typed-directive seam, not the click path: a click on
+        a difficulty bar sets the Difficulty dropdown (exact, case-sensitive),
+        it never types a diff: directive. The click path has its own pin.
+        """
         rows = [
             {"Difficulty": "Beginner"},
             {"Difficulty": "Challenge"},
@@ -275,6 +310,41 @@ class DistributionTests(unittest.TestCase):
             parsed = data.parse_search_query(query)
             matched = sum(data.match_chart_query(row, parsed) for row in rows)
             self.assertEqual(matched, count, f"bar {label} ({query})")
+
+    def test_difficulty_bar_count_equals_rows_after_clicking_the_bar(self):
+        """Every difficulty bar's number must equal the rows a real click shows.
+
+        A click sets the Difficulty dropdown through chart_click_decision
+        and apply_chart_filter, so this goes through LibraryFilter on
+        stand-in variables (no Tk needed: library_filter imports only
+        library_data). Zero-count bars are non-clickable in the UI, but
+        the decision still applies and yields 0 rows, so they are checked
+        too. The rows use canonical difficulty names: the aggregator folds
+        case and whitespace while the dropdown compares exactly, so odd
+        text is a known divergence the dropdown would show fewer rows
+        for, and it is left out here.
+        """
+        rows = [
+            {"Difficulty": "Beginner"},
+            {"Difficulty": "Challenge"},
+            {"Difficulty": "Hard"},
+            {"Difficulty": "Custom"},
+            {"Difficulty": ""},
+        ]
+        filter_ = LibraryFilter(
+            _StandInVar(""), _StandInVar("All packs"),
+            _StandInVar("All types"),
+            _StandInVar("All difficulties"), _StandInVar(False),
+            _StandInEntry(), None, None, None, None)
+        filter_.set_rows(rows)
+        for label, count, token, _ in data.aggregate_difficulty_distribution(rows):
+            difficulty, query = data.chart_click_decision(
+                "Difficulty", token, "All difficulties", "")
+            filter_.apply_chart_filter(difficulty=difficulty, query=query)
+            self.assertEqual(
+                len(filter_.filter_rows()), count, f"bar {label}")
+            filter_.apply_chart_filter(
+                difficulty="All difficulties", query="")
 
     def test_replace_search_directive_with_several_values(self):
         res = data.replace_search_directive("Smiley bpm:150 meter:11", "bpm", (">=120", "<140"))
