@@ -46,30 +46,30 @@ Two naming facts to know before you trust the prefixes:
 
 ## Modules
 
-Line counts are at v1.3.0. "Tests" is the file that covers the module; live
+"Tests" is the file that covers the module; live
 (window) tests for the UI components stay in `tests/test_library_visualizer.py`.
 
-| Module | Lines | What it holds | Tests |
-| --- | --- | --- | --- |
-| `library_visualizer.py` | 660 | the shell: `LibraryApp`, the menu, and the `main()` entry point | `tests/test_library_visualizer.py` |
-| `library_loader.py` | 667 | the load/sync engine: scan and sync workers, result queue, generation counters, snapshot counters | `tests/test_library_loader.py` |
-| `library_search.py` | 588 | the search language: parser, matcher, and the numeric-bound helpers | `tests/test_library_search.py` |
-| `course_builder.py` | 455 | the Build-a-course dialog and its queue | `tests/test_course_builder.py` |
-| `library_table.py` | 447 | the song table: sorting, column order and widths, row tinting | `tests/test_library_table.py` |
-| `distribution_panel.py` | 363 | the distribution side panel and its charts | `tests/test_ui_distribution.py` |
-| `library_sources.py` | 345 | scores, cache, and path helpers | `tests/test_library_sources.py` |
-| `library_distribution.py` | 330 | the distribution charts: meter, difficulty, and BPM aggregation | `tests/test_distribution.py` |
-| `advanced_search.py` | 287 | the Advanced Search dialog | `tests/test_advanced_search.py` |
-| `library_stores.py` | 261 | persistence: the snapshot and settings stores | `tests/test_snapshot_store.py`, `tests/test_settings_store.py` |
-| `data_paths_dialog.py` | 232 | the Data paths dialog | `tests/test_data_paths_dialog.py` |
-| `library_filter.py` | 229 | the filter pipeline: the five filter variables, traces, search debounce | `tests/test_library_filter.py` |
-| `library_course.py` | 203 | .crs text-format helpers: formatting, parsing, trailing-modifier detection, field validation | `tests/test_library_course.py` |
-| `library_format.py` | 172 | formatting and sort-key helpers | `tests/test_library_format.py` |
-| `library_dialog_query.py` | 142 | the Advanced Search dialog's query conversion | `tests/test_library_dialog_query.py` |
-| `library_geometry.py` | 123 | window geometry and DPI helpers | `tests/test_library_geometry.py` |
-| `theme.py` | 94 | every color, font, and fixed size the window uses | `tests/test_theme.py` |
-| `row_tints.py` | 82 | the difficulty row tints, shared by the table and the course builder | `tests/test_row_tints.py` |
-| `library_constants.py` | 72 | the shared column and grade tables | `tests/test_import_surface.py` |
+| Module | What it holds | Tests |
+| --- | --- | --- |
+| `library_visualizer.py` | the shell: `LibraryApp`, the menu, and the `main()` entry point | `tests/test_library_visualizer.py` |
+| `library_loader.py` | the load/sync engine: scan and sync workers, result queue, generation counters, snapshot counters | `tests/test_library_loader.py` |
+| `library_search.py` | the search language: parser, matcher, and the numeric-bound helpers | `tests/test_library_search.py` |
+| `course_builder.py` | the Build-a-course dialog and its queue | `tests/test_course_builder.py` |
+| `library_table.py` | the song table: sorting, column order and widths, row tinting | `tests/test_library_table.py` |
+| `distribution_panel.py` | the distribution side panel and its charts | `tests/test_ui_distribution.py` |
+| `library_sources.py` | scores, cache, and path helpers | `tests/test_library_sources.py` |
+| `library_distribution.py` | the distribution charts: meter, difficulty, and BPM aggregation | `tests/test_distribution.py` |
+| `advanced_search.py` | the Advanced Search dialog | `tests/test_advanced_search.py` |
+| `library_stores.py` | persistence: the snapshot and settings stores | `tests/test_snapshot_store.py`, `tests/test_settings_store.py` |
+| `data_paths_dialog.py` | the Data paths dialog | `tests/test_data_paths_dialog.py` |
+| `library_filter.py` | the filter pipeline: the five filter variables, traces, search debounce | `tests/test_library_filter.py` |
+| `library_course.py` | .crs text-format helpers: formatting, parsing, trailing-modifier detection, field validation | `tests/test_library_course.py` |
+| `library_format.py` | formatting and sort-key helpers | `tests/test_library_format.py` |
+| `library_dialog_query.py` | the Advanced Search dialog's query conversion | `tests/test_library_dialog_query.py` |
+| `library_geometry.py` | window geometry and DPI helpers | `tests/test_library_geometry.py` |
+| `theme.py` | every color, font, and fixed size the window uses | `tests/test_theme.py` |
+| `row_tints.py` | the difficulty row tints, shared by the table and the course builder | `tests/test_row_tints.py` |
+| `library_constants.py` | the shared column and grade tables | `tests/test_import_surface.py` |
 
 ## How the pieces fit
 
