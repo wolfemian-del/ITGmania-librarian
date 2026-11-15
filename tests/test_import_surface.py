@@ -29,6 +29,7 @@ import library_geometry
 import library_dialog_query
 import library_search
 import library_sources
+import library_stores
 
 
 class ImportSurfaceTests(unittest.TestCase):
@@ -140,7 +141,7 @@ class ImportSurfaceTests(unittest.TestCase):
             "_valid_column_width",
             "_valid_window_geometry",
             "write_file_atomically",
-        ))
+        ), module=library_stores)
 
     def test_distribution_names_resolve(self):
         # Re-pointed to library_distribution.py at Step 8.
