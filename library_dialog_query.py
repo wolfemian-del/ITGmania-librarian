@@ -17,11 +17,7 @@ from library_search import (
 # the dialog never silently drops or changes a filter. build_dialog_query() is the reverse.
 
 DIALOG_TEXT_FIELDS = ("title", "artist", "pack")
-
-
 DIALOG_RANGE_FIELDS = ("meter", "bpm", "time", "peak_nps")
-
-
 _DIALOG_RANGE_TOKEN_NAMES = {"meter": "meter", "bpm": "bpm", "time": "time", "peak_nps": "nps"}
 
 
