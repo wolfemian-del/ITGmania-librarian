@@ -56,8 +56,9 @@ class LibraryTable:
     """The Treeview, its columns and sorting, and selection.
 
     parent: the table frame, for the Treeview.
-    filter: the LibraryFilter component, for filter_rows and the change
-        notification the table subscribes to (see below).
+    filter: the LibraryFilter component, for filter_rows,
+        library_rows, and the change notification the table
+        subscribes to (see below).
     dpi_scale: the display scale factor.
     column_visibility, group_visibility: shared objects; the View menu
         binds them, and the table mutates them in place (it never
@@ -77,9 +78,10 @@ class LibraryTable:
     would go stale in the app after a sort click or a reset. It exposes
     layout_state(), which _save_settings reads (it reads the actual
     widths back from tree.column), so the app never holds a stale copy.
-    The app pushes the full library rows after a load via set_rows(rows);
-    a sync does not call it — the filter and the loader share one rows
-    list, and the table displays what the filter returns.
+    The table reads the rows through the filter (library_rows()),
+    which is the single holder of the rows inside the UI (option C,
+    PR #168 review): a load sets the filter's rows, a sync re-scores
+    them in place, and the table displays what the filter returns.
 
     The table subscribes its own refresh_table to the filter's change
     notification: subscribe it once, after construction, with
@@ -97,9 +99,9 @@ class LibraryTable:
         self.count_label = count_label
         self._save_settings = save_settings
         self._show_rows = show_rows
-        # The rows the table displays (set via set_rows), and the render
-        # state refresh_table and _insert_batch keep between batches.
-        self._rows: list[dict] = []
+        # The render state refresh_table and _insert_batch keep between
+        # batches. The rows themselves live in the filter (option C):
+        # the table reads them through filter.library_rows().
         self._render_generation = 0
         self.tree_item_rows = {}
         self._dragged_column = None
@@ -201,18 +203,6 @@ class LibraryTable:
         self.tree.bind("<<TreeviewSelect>>", self._tree_tint.on_select, add="+")
         self._sync_group_checks()
 
-    def set_rows(self, rows):
-        """Hold the rows the table displays, and refresh it.
-
-        The refresh is skipped while the filter is batching: on a load
-        the app calls this inside the filter's batch, and the batch exit
-        refreshes once for the whole load. A set_rows on its own refreshes
-        at once, so a forgotten call cannot leave the table silently empty.
-        """
-        self._rows = rows
-        if not self._filter.batching:
-            self.refresh_table()
-
     def layout_state(self):
         """The layout _save_settings persists: the column order, the widths
         read back from the tree in canonical units, and the sort keys.
@@ -232,8 +222,7 @@ class LibraryTable:
                           for column, descending in self.sort_keys],
         }
 
-
-    def _column_visibility_changed(self, changed_column):
+    def column_visibility_changed(self, changed_column):
         visible = [column for column in self.column_order if self.column_visibility[column].get()]
         if not visible:
             self.column_visibility[changed_column].set(True)
@@ -246,7 +235,7 @@ class LibraryTable:
         for group, variable in self.group_visibility.items():
             variable.set(all(self.column_visibility[column].get() for column in COLUMN_GROUPS[group]))
 
-    def _group_visibility_changed(self, group):
+    def group_visibility_changed(self, group):
         """Show or hide every column of a group at once, then redraw and save a single time."""
         show = self.group_visibility[group].get()
         previous = {column: self.column_visibility[column].get() for column in COLUMN_GROUPS[group]}
@@ -371,8 +360,6 @@ class LibraryTable:
             self.tree.heading(column, text=heading)
 
     def refresh_table(self, preserve_selection=False):
-        if self.tree is None:
-            return
         selected_rows = set()
         if preserve_selection:
             selected_rows = {
@@ -437,7 +424,8 @@ class LibraryTable:
             self.count_label.set(f"Loading {stop:,} of {len(rows):,} charts…")
             self._parent.after(1, lambda: self._insert_batch(rows, stop, generation, selected_rows))
         else:
-            count_text = f"{len(rows):,} charts shown · {len(self._rows):,} total"
+            total = len(self._filter.library_rows())
+            count_text = f"{len(rows):,} charts shown · {total:,} total"
             hint = self._filter.search_hint()
             if hint:
                 count_text += f" — {hint}"
@@ -449,5 +437,9 @@ class LibraryTable:
                 if (row := self.tree_item_rows.get(item)) is not None]
 
     def library_rows(self):
-        """Every chart row in the loaded library (for the course builder's ambiguity check)."""
-        return self._rows
+        """Every chart row in the loaded library (for the course builder's ambiguity check).
+
+        Read through the filter, which is the single holder of the rows
+        inside the UI (option C): there is no second copy to keep in step.
+        """
+        return self._filter.library_rows()

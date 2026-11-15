@@ -978,10 +978,9 @@ class ScoresSyncTests(unittest.TestCase):
             instance.status = Mock()
             instance.course_builder = None
             instance._table.tree.selection.return_value = []
-            # Re-seed the table's filter with this test's rows (and
-            # the table's own list, so its count total stays honest).
+            # Re-seed the filter with this test's rows (the table reads
+            # its count total through the filter).
             instance._filter.set_rows(rows)
-            instance._table._rows = rows
             loaded = _make_wired_loader(instance)
             loaded.rows = rows
             # Scored-only shows nothing before the sync: the chart has
@@ -1834,7 +1833,6 @@ class LoadDeliversRowsTests(unittest.TestCase):
         # not refresh; the load's batch exit is the refresh the test pins.
         instance._filter.set_rows(instance.rows)
         instance._filter.subscribe(table.refresh_table)
-        table._rows = list(instance.rows)
         return instance
 
     def test_loaded_delivers_the_rows_through_the_real_refresh(self):
@@ -1854,9 +1852,10 @@ class LoadDeliversRowsTests(unittest.TestCase):
             loaded._loaded(delivered, 2)
 
         self.assertIs(instance._filter._rows, delivered)
-        # The load path hands the rows to the table too (set_rows): the
+        # The table reads the rows through the filter (option C): the
         # table's library_rows is what the Course Builder reads back, so
-        # a load that skipped it would open the builder on stale rows.
+        # a load that skipped the filter's set_rows would open the
+        # builder on stale rows.
         self.assertIs(instance._table.library_rows(), delivered)
         self.assertEqual(instance._table.tree.insert.call_count, 2)
         title_index = list(app.HEADERS).index("Title")

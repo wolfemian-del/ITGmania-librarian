@@ -377,14 +377,14 @@ class LibraryApp:
             group_menu.add_checkbutton(
                 label="Show whole group",
                 variable=self.group_visibility[group],
-                command=lambda name=group: self._table._group_visibility_changed(name),
+                command=lambda name=group: self._table.group_visibility_changed(name),
             )
             group_menu.add_separator()
             for column in columns:
                 group_menu.add_checkbutton(
                     label=column,
                     variable=self.column_visibility[column],
-                    command=lambda col=column: self._table._column_visibility_changed(col),
+                    command=lambda col=column: self._table.column_visibility_changed(col),
                 )
             columns_menu.add_cascade(label=group, menu=group_menu)
         view_menu.add_cascade(label="Columns", menu=columns_menu)
@@ -571,7 +571,6 @@ class LibraryApp:
             self._table.refresh_table(preserve_selection=True)
             return
         with self._filter.batch():
-            self._table.set_rows(rows)
             self._filter.set_rows(rows)
             self._filter.set_choices(rows)
         if self.course_builder is not None:

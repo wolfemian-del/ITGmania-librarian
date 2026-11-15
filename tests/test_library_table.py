@@ -2,10 +2,10 @@
 
 Headless: the table is built on fake Tk objects (the Treeview and
 scrollbars are Mocks, patched in), so these run without a display. The
-live table tests (selection, drag, sort clicks) stay in
+live table tests (selection only — the Ctrl+A test) stay in
 tests/test_library_visualizer.py — the windows-ui job runs exactly two
 test files, and a new file would need a workflow edit only the owner can
-make.
+make; the drag and sort-click tests are headless in this file.
 """
 
 import json
@@ -79,9 +79,9 @@ def make_table(column_order=None, column_widths=None, sort_keys=None,
 
     The Treeview and scrollbars are patched to Mocks (the table creates
     them in __init__), so no display is needed; the filter is real, so
-    refresh_table reads the rows it returns. The table's _rows is set
-    directly (not via set_rows) so the setup itself does not refresh —
-    tests that exercise set_rows call it explicitly. column_visibility
+    refresh_table reads the rows it returns. The filter's rows are set
+    before the table subscribes, so the setup itself does not refresh.
+    column_visibility
     and group_visibility default to fresh FakeVariable dicts, or pass
     the app's shared dicts (the save tests do, so _save_settings reads
     the same objects the table mutates).
@@ -115,7 +115,6 @@ def make_table(column_order=None, column_widths=None, sort_keys=None,
     # exists; the filter's rows were set before that, so the setup itself
     # does not refresh.
     filt.subscribe(table.refresh_table)
-    table._rows = list(rows)
     return table, tree
 
 
@@ -163,19 +162,19 @@ class ColumnGroupTests(unittest.TestCase):
         self.assertTrue(table.group_visibility["Score"].get())
         self.assertFalse(table.group_visibility["Tap judgments"].get())
         table.column_visibility["Grade"].set(False)
-        table._column_visibility_changed("Grade")
+        table.column_visibility_changed("Grade")
         self.assertFalse(table.group_visibility["Score"].get())
 
     def test_group_switch_shows_then_hides_a_whole_group_with_one_save(self):
         table = self.make_table(app.DEFAULT_VISIBLE_COLUMNS)
         table.group_visibility["Tap judgments"].set(True)  # what Tk does before calling the command
-        table._group_visibility_changed("Tap judgments")
+        table.group_visibility_changed("Tap judgments")
         self.assertTrue(set(library_data.TAP_FIELDS) <= self.shown(table))
         table.tree.configure.assert_called_once()
         table._save_settings.assert_called_once()
 
         table.group_visibility["Tap judgments"].set(False)
-        table._group_visibility_changed("Tap judgments")
+        table.group_visibility_changed("Tap judgments")
         self.assertFalse(set(library_data.TAP_FIELDS) & self.shown(table))
         self.assertEqual(set(table.tree.configure.call_args.kwargs["displaycolumns"]),
                          set(app.DEFAULT_VISIBLE_COLUMNS))
@@ -183,7 +182,7 @@ class ColumnGroupTests(unittest.TestCase):
     def test_group_switch_cannot_hide_the_last_visible_columns(self):
         table = self.make_table(app.COLUMN_GROUPS["Score"])
         table.group_visibility["Score"].set(False)
-        table._group_visibility_changed("Score")
+        table.group_visibility_changed("Score")
         self.assertEqual(self.shown(table), set(app.COLUMN_GROUPS["Score"]))
         self.assertTrue(table.group_visibility["Score"].get())
         table.tree.configure.assert_not_called()
@@ -197,6 +196,11 @@ class ColumnGroupTests(unittest.TestCase):
         self.assertEqual(table.column_order, list(app.HEADERS))
         self.assertEqual(table.tree.configure.call_args.kwargs["displaycolumns"],
                          [col for col in app.HEADERS if col in app.DEFAULT_VISIBLE_COLUMNS])
+        # The widths go back to defaults too (GLM, PR #168 review): a
+        # reset that restored the order but left the widths dragged
+        # would pass the assertions above.
+        table.tree.column.assert_any_call(
+            "Title", width=library_data.scale_pixels(130, 1.0))
         self.assertFalse(table.group_visibility["Tech counts"].get())
         # "Song & chart" reads unchecked after a reset: Subtitle belongs to
         # the group but starts hidden (issue #49), so the group is never
@@ -413,9 +417,12 @@ class LibraryRowsForCourseTests(unittest.TestCase):
     def test_library_rows_for_course_returns_the_loaded_rows(self):
         # The course builder's save-time ambiguity check compares its queue against
         # this list, so it must be the app's current rows, not a snapshot copy.
+        # The table reads them through the filter (option C, PR #168 review):
+        # the filter is the single holder, so the table's rows are the
+        # filter's rows.
         rows = [{"Title": "A"}, {"Title": "B"}]
         table, _tree = make_table()
-        table.set_rows(rows)
+        table._filter.set_rows(rows)
 
         self.assertIs(table.library_rows(), rows)
 
@@ -458,13 +465,13 @@ class InsertBatchProgressTests(unittest.TestCase):
         # Issue #123: a snapshot row whose Time is "nan" or "1e999" used to
         # raise inside _insert_batch; now the cell is blank and the batch lands.
         table, _rows = self.make_instance()
-        table._rows = [
+        rows = [
             {"Title": "Song A", "Difficulty": "Hard", "Time": "nan"},
             {"Title": "Song B", "Difficulty": "Hard", "Time": "1e999"},
             {"Title": "Song C", "Difficulty": "Hard", "Time": 120},
         ]
         with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
-            table._insert_batch(table._rows, 0, 1)
+            table._insert_batch(rows, 0, 1)
         self.assertEqual(table.tree.insert.call_count, 3)
         time_index = list(app.HEADERS).index("Time")
         inserted = [kwargs["values"][time_index]
@@ -607,30 +614,17 @@ class RebindingHazardTests(unittest.TestCase):
 
 
 class TableWiringGuardTests(unittest.TestCase):
-    """The Step 6 wiring guard: set_rows refreshes (on its own, and once
-    inside a batch); the sort clicks and the column drag land on the table;
-    and refresh_table reaches the panel's show_rows with the filtered rows.
-    The layout_state pin lives in RebindingHazardTests; the unfiltered
-    show_rows pin lives in RefreshDeliversRowsTests."""
+    """The Step 6 wiring guard: a load (the filter's set_rows inside a
+    batch) refreshes exactly once, at the batch exit; the sort clicks
+    and the column drag land on the table; and refresh_table reaches
+    the panel's show_rows with the filtered rows. The layout_state pin
+    lives in RebindingHazardTests; the unfiltered show_rows pin lives
+    in RefreshDeliversRowsTests."""
 
-    def test_set_rows_on_its_own_refreshes_at_once(self):
-        rows = rows_for(("Pack1", "dance-single", "Hard"),
-                        ("Pack2", "dance-single", "Hard"))
-        show_rows = Mock()
-        table, tree = make_table(rows=rows, show_rows=show_rows)
-        tree.reset_mock()
-        show_rows.reset_mock()
-        table.count_label.set.reset_mock()
-
-        table.set_rows(rows)
-
-        # The table displays the rows it was given, once.
-        self.assertEqual(tree.insert.call_count, 2)
-        show_rows.assert_called_once_with(rows)
-        table.count_label.set.assert_called_once_with(
-            "2 charts shown · 2 total")
-
-    def test_set_rows_inside_a_batch_refreshes_exactly_once_at_the_exit(self):
+    def test_a_load_refreshes_exactly_once_at_the_batch_exit(self):
+        # Option C (PR #168 review): there is no table set_rows any more —
+        # the load hands the rows to the filter inside its batch, and the
+        # batch exit is the one refresh for the whole load.
         rows = rows_for(("Pack1", "dance-single", "Hard"))
         show_rows = Mock()
         table, tree = make_table(rows=rows, show_rows=show_rows)
@@ -638,7 +632,7 @@ class TableWiringGuardTests(unittest.TestCase):
         show_rows.reset_mock()
 
         with table._filter.batch():
-            table.set_rows(rows)
+            table._filter.set_rows(rows)
             # No refresh while the batch is open.
             show_rows.assert_not_called()
 
@@ -721,3 +715,98 @@ class LayoutStateTests(unittest.TestCase):
         table.sort_by("Title")
         self.assertEqual(table.layout_state()["sort_keys"],
                          [["Title", False]])
+
+
+class SavedLayoutSeedTests(unittest.TestCase):
+    """The saved-layout seed (_parse_seed) through the table's constructor
+    (GLM, PR #168 review): the sort keys and widths had no headless pin,
+    so a seed parser that ignored them would stay green."""
+
+    def test_valid_sort_keys_round_trip_through_the_seed(self):
+        table, _tree = make_table(
+            sort_keys=[["Title", True], ["Meter", False]])
+        self.assertEqual(table.sort_keys, [("Title", True), ("Meter", False)])
+        self.assertEqual(table.layout_state()["sort_keys"],
+                         [["Title", True], ["Meter", False]])
+
+    def test_invalid_and_duplicate_sort_keys_are_dropped(self):
+        table, _tree = make_table(sort_keys=[
+            ["Bogus", True], ["Title", "yes"], ["Title", False],
+            ["Title", True], ["Meter", False]])
+        self.assertEqual(table.sort_keys,
+                         [("Title", False), ("Meter", False)])
+
+    def test_no_valid_sort_key_falls_back_to_the_default(self):
+        table, _tree = make_table(
+            sort_keys=[["Bogus", True], ["Title", "yes"]])
+        self.assertEqual(table.sort_keys, [("Pack", False)])
+
+    def test_saved_widths_apply_and_unknown_columns_are_ignored(self):
+        table, _tree = make_table(
+            column_widths={"Title": 999, "Bogus": 50})
+        self.assertEqual(table.column_widths["Title"], 999)
+        self.assertNotIn("Bogus", table.column_widths)
+
+    def test_non_list_seed_values_fall_back_to_defaults(self):
+        table, _tree = make_table(column_order="x", column_widths=[],
+                                  sort_keys="x")
+        self.assertEqual(table.column_order, list(app.HEADERS))
+        self.assertEqual(table.sort_keys, [("Pack", False)])
+        self.assertIsNone(table.column_widths["Title"])
+
+
+class ShiftSortClickTests(unittest.TestCase):
+    """_shift_sort_click adds a second sort key on Shift-click (ChatGPT-6,
+    PR #168 review): the bindings guard only pins that the handler is
+    bound, not what it does."""
+
+    COLUMNS = ["Title", "Artist", "Pack"]
+
+    @staticmethod
+    def make_table():
+        table, tree = make_table(
+            column_order=list(ShiftSortClickTests.COLUMNS))
+        table.column_order = list(ShiftSortClickTests.COLUMNS)
+        tree.identify_region.return_value = "heading"
+        tree.identify_column.side_effect = (
+            lambda x: "#1" if x < 100 else ("#2" if x < 200 else "#3"))
+        tree.winfo_width.return_value = 300
+        tree.reset_mock()
+        return table
+
+    @staticmethod
+    def event(x, shift=True):
+        event = Mock()
+        event.x = x
+        event.y = 10
+        event.state = 0x0001 if shift else 0
+        return event
+
+    def test_shift_click_adds_a_second_sort_key(self):
+        table = self.make_table()
+        table.refresh_table = Mock()
+
+        table._shift_sort_click(self.event(150))
+
+        self.assertEqual(table.sort_keys,
+                         [("Pack", False), ("Artist", False)])
+        table._save_settings.assert_called_once()
+
+    def test_shift_click_on_an_existing_key_toggles_its_direction(self):
+        table = self.make_table()
+        table.refresh_table = Mock()
+        table._shift_sort_click(self.event(150))
+
+        table._shift_sort_click(self.event(150))
+
+        self.assertEqual(table.sort_keys,
+                         [("Pack", False), ("Artist", True)])
+
+    def test_a_click_without_shift_does_nothing(self):
+        table = self.make_table()
+        table.refresh_table = Mock()
+
+        table._shift_sort_click(self.event(150, shift=False))
+
+        self.assertEqual(table.sort_keys, [("Pack", False)])
+        table.refresh_table.assert_not_called()

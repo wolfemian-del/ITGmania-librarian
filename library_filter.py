@@ -35,7 +35,8 @@ class LibraryFilter:
     root: for after() scheduling of the search debounce.
 
     The filter holds the rows it filters (set via set_rows(rows)). It
-    exposes set_rows(rows), set_choices(rows), filter_rows(ignore_metric=None),
+    exposes set_rows(rows), library_rows(), set_choices(rows),
+    filter_rows(ignore_metric=None),
     search_hint(), batch(), apply_chart_filter, focus_search, clear_search,
     and subscribe(callback) — the callback is invoked when something changed,
     so the table refreshes. The filter installs the variable traces
@@ -77,15 +78,15 @@ class LibraryFilter:
         self._rows = rows
         self._refresh_unless_batching()
 
-    @property
-    def batching(self):
-        """True while a batch() block is open.
+    def library_rows(self):
+        """Every chart row in the loaded library.
 
-        The table's set_rows reads this so a set_rows inside the load
-        batch does not refresh twice (the batch exit refreshes once);
-        a set_rows on its own refreshes at once.
+        The filter is the single holder of the rows inside the UI
+        (option C, PR #168 review): the table and the Course Builder
+        read them through here, so there is no second copy to keep
+        in step.
         """
-        return self._batching_filter_changes
+        return self._rows
 
     def set_choices(self, rows):
         """Rebuild the dropdown choices from the loaded rows.
