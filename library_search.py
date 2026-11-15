@@ -178,6 +178,11 @@ def _compare_bound(bound: tuple, actual) -> bool:
     if op == "<=":
         return val <= target
     if op == "==":
+        # NaN is not equal to itself, so a plain == test can never
+        # select a NaN row; a "nan" target matches NaN values instead
+        # (issue #171: the "nan" meter bar's filter is meter:nan).
+        if math.isnan(target):
+            return math.isnan(val)
         return val == target
     return False
 

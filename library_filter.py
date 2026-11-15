@@ -138,14 +138,20 @@ class LibraryFilter:
         pack, chart_type, diff = self.pack_var.get(), self.type_var.get(), self.diff_var.get()
         if ignore_metric == "Difficulty":
             diff = "All difficulties"
+        # The dropdown folds case and surrounding spaces, the way the
+        # distribution chart groups difficulties (issue #172), so a
+        # click on a bar shows exactly the rows the bar counts.
+        diff_key = diff.strip().casefold()
         rows = []
         for row in self._rows:
             if pack != "All packs" and row["Pack"] != pack:
                 continue
             if chart_type != "All types" and row["Type"] != chart_type:
                 continue
-            if diff != "All difficulties" and row["Difficulty"] != diff:
-                continue
+            if diff != "All difficulties":
+                row_diff = str(row["Difficulty"] or "").strip().casefold()
+                if row_diff != diff_key:
+                    continue
             if self.scored_var.get() and not row["Grade"]:
                 continue
             if criteria and not match_chart_query(row, criteria):
