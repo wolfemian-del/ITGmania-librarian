@@ -26,6 +26,7 @@ import library_data
 import library_course
 import library_format
 import library_geometry
+import library_search
 import library_sources
 
 
@@ -119,7 +120,7 @@ class ImportSurfaceTests(unittest.TestCase):
             "parse_search_query",
             "replace_search_directive",
             "split_search_query",
-        ))
+        ), module=library_search)
 
     def test_dialog_query_names_resolve(self):
         # Re-pointed to library_dialog_query.py at Step 6.
