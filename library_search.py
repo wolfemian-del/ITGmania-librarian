@@ -69,6 +69,12 @@ SEARCH_FIELD_ALIASES = {
 }
 
 
+# Fields whose directives take a numeric bound (meter, bpm, time, score,
+# percent, plays, peak_nps, the radar counts and the tech counts). An
+# empty value for one of these is unfinished typing, not a filter; a
+# non-empty value that will not parse is unreadable (see
+# find_unreadable_directives). Text fields are not in this set: an empty
+# title: is a substring of everything, so it already matches.
 NUMERIC_SEARCH_FIELDS = frozenset({
     "meter", "bpm", "time", "score", "percent", "plays", "peak_nps",
     *RADAR_COUNT_FIELDS,
@@ -532,6 +538,7 @@ def replace_search_directive(query: str, directive_prefix: str, new_value: str |
     return " ".join(text if is_new else _quote_for_search(text) for text, is_new in pieces)
 
 
+# Chart metric name -> canonical search directive field that filters it.
 CHART_FILTER_FIELDS = {"Difficulty": "difficulty", "Meter": "meter", "BPM": "bpm"}
 
 
