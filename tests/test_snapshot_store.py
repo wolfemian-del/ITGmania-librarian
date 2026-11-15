@@ -333,10 +333,14 @@ class SnapshotStoreTests(unittest.TestCase):
             store, path = self.make_store(directory)
             cache_dir = Path(directory) / "Cache"
             stats_file = Path(directory) / "Stats.xml"
+            path.write_text("old contents", encoding="utf-8")
             with patch("os.replace", side_effect=OSError("locked")):
                 with self.assertRaises(OSError):
                     store.write(cache_dir, stats_file, [self.sample_row()], 1, 0, 0, False)
             self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
+            # The old file itself must survive too: a store that damaged
+            # its own file before delegating would pass the no-temp check.
+            self.assertEqual(path.read_text(encoding="utf-8"), "old contents")
 
     def test_atomic_helper_signature_takes_payload_then_path(self):
         # Proposal 0008 §4.1 pins the helper's signature: the serialized

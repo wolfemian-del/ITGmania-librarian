@@ -13,10 +13,10 @@ The list is built from the names consumers actually import, not from
 `__all__`: five of them (`_normalized_source_path`, `_settings_file_path`,
 `_valid_window_geometry`, `_valid_column_width`, `_quote_for_search`) are
 not in `__all__`, and a pin built from `__all__` alone would have let a
-move drop them silently. The stdlib module attribute the namespace-patch
-tests read (`data.sys`) is deliberately not in this list — those tests
-themselves fail loudly if it goes missing, and it is not a name this
-file defines.
+move drop them silently. The stdlib module attributes the namespace-patch
+tests read (`data.sys`, `data.ctypes`) are deliberately not in this list —
+those tests themselves fail loudly if they go missing, and they are not
+names this file defines.
 """
 
 import unittest
