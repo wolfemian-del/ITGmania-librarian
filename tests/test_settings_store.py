@@ -1,6 +1,6 @@
 """Headless tests for the settings store (proposal 0008, PR 2).
 
-The store lives in library_data.py and takes no Tk: these tests run
+The store lives in library_stores.py and takes no Tk: these tests run
 against tmp paths with no app husk. The load tests are the settings-behaviour
 cases moved out of the app harnesses (proposal 0008 §6 step 3); the save
 tests pin the dedup baseline, the deepcopy, and the temp-file cleanup.
@@ -13,8 +13,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import library_data
-from library_data import SettingsStore
+import library_stores
+from library_stores import SettingsStore
 
 
 def make_store(directory):
@@ -232,15 +232,15 @@ class SettingsStoreSaveTests(unittest.TestCase):
 class SettingsStoreValidatorTests(unittest.TestCase):
     def test_valid_window_geometry_accepts_and_canonicalizes(self):
         self.assertEqual(
-            library_data._valid_window_geometry("1000x620+10+10", (700, 440)),
+            library_stores._valid_window_geometry("1000x620+10+10", (700, 440)),
             "1000x620+10+10")
         # A negative coordinate is rebuilt in Tk's own spelling ("+-8"):
         # the shorter "-8" form means "8px from the right edge" to Tk.
         self.assertEqual(
-            library_data._valid_window_geometry("1000x620+-8+100", (700, 440)),
+            library_stores._valid_window_geometry("1000x620+-8+100", (700, 440)),
             "1000x620+-8+100")
         self.assertEqual(
-            library_data._valid_window_geometry("1000x620-8+100", (700, 440)),
+            library_stores._valid_window_geometry("1000x620-8+100", (700, 440)),
             "1000x620+-8+100")
 
     def test_valid_window_geometry_rejects_unusable_values(self):
@@ -248,29 +248,29 @@ class SettingsStoreValidatorTests(unittest.TestCase):
                       "699x620+0+0", "1000x439+0+0"):
             with self.subTest(value=value):
                 self.assertIsNone(
-                    library_data._valid_window_geometry(value, (700, 440)))
+                    library_stores._valid_window_geometry(value, (700, 440)))
 
     def test_valid_window_geometry_honours_the_given_minimum(self):
         self.assertEqual(
-            library_data._valid_window_geometry("500x530+10+10", (480, 520)),
+            library_stores._valid_window_geometry("500x530+10+10", (480, 520)),
             "500x530+10+10")
         self.assertIsNone(
-            library_data._valid_window_geometry("500x530+10+10", (700, 440)))
+            library_stores._valid_window_geometry("500x530+10+10", (700, 440)))
         self.assertEqual(
-            library_data._valid_window_geometry("900x500+10+10", (700, 440)),
+            library_stores._valid_window_geometry("900x500+10+10", (700, 440)),
             "900x500+10+10")
         self.assertIsNone(
-            library_data._valid_window_geometry("900x500+10+10", (480, 520)))
+            library_stores._valid_window_geometry("900x500+10+10", (480, 520)))
 
     def test_valid_column_width_accepts_in_range_and_rejects_the_rest(self):
         for value in (55, 100, 2000):
             with self.subTest(value=value):
                 self.assertEqual(
-                    library_data._valid_column_width(value, "Pack"), value)
+                    library_stores._valid_column_width(value, "Pack"), value)
         for value in (None, "garbage", 54, 2001):
             with self.subTest(value=value):
                 self.assertIsNone(
-                    library_data._valid_column_width(value, "Pack"))
+                    library_stores._valid_column_width(value, "Pack"))
 
 
 if __name__ == "__main__":

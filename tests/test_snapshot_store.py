@@ -1,6 +1,6 @@
 """Headless tests for the snapshot store (proposal 0008, PR 1).
 
-The store lives in library_data.py and takes no Tk: these tests run
+The store lives in library_stores.py and takes no Tk: these tests run
 against tmp paths with no app husk. The headers tuple here is a
 representative subset of the app's HEADERS — the store validates against
 whatever tuple it is given, so the subset pins the logic (including the
@@ -16,7 +16,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 import library_data
-from library_data import SnapshotStore
+import library_stores
+from library_stores import SnapshotStore
 
 HEADERS = ("Title", "Subtitle", "Artist", "Pack", "Type", "Difficulty",
            "Meter", "Time", "BPM", "Chart")
@@ -214,7 +215,7 @@ class SnapshotStoreTests(unittest.TestCase):
             stats_file = Path(directory) / "Stats.xml"
             store.write(cache_dir, stats_file, [self.sample_row()], 1, 0, 0, False)
             payload = json.loads(path.read_text(encoding="utf-8"))
-            payload["schema_version"] = library_data.LIBRARY_CACHE_SCHEMA_VERSION + 1
+            payload["schema_version"] = library_stores.LIBRARY_CACHE_SCHEMA_VERSION + 1
             path.write_text(json.dumps(payload), encoding="utf-8")
 
             result = store.read(cache_dir, stats_file)
@@ -345,7 +346,7 @@ class SnapshotStoreTests(unittest.TestCase):
     def test_atomic_helper_signature_takes_payload_then_path(self):
         # Proposal 0008 §4.1 pins the helper's signature: the serialized
         # payload first, the target path second.
-        parameters = list(inspect.signature(library_data.write_file_atomically).parameters)
+        parameters = list(inspect.signature(library_stores.write_file_atomically).parameters)
         self.assertEqual(parameters, ["text", "path"])
 
     def test_failed_replace_leaves_the_old_file_intact(self):
@@ -358,7 +359,7 @@ class SnapshotStoreTests(unittest.TestCase):
             path.write_text("old contents", encoding="utf-8")
             with patch("os.replace", side_effect=OSError("locked")):
                 with self.assertRaises(OSError):
-                    library_data.write_file_atomically("new contents", path)
+                    library_stores.write_file_atomically("new contents", path)
             self.assertEqual(path.read_text(encoding="utf-8"), "old contents")
             self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
 
@@ -368,15 +369,15 @@ class SnapshotStoreTests(unittest.TestCase):
         # non-dict row, and non-string source paths are all invalid.
         malformed = [
             ["not", "a", "dict"],
-            {"schema_version": library_data.LIBRARY_CACHE_SCHEMA_VERSION,
+            {"schema_version": library_stores.LIBRARY_CACHE_SCHEMA_VERSION,
              "cache_dir": "Cache", "stats_file": "Stats.xml",
              "rows": "not a list"},
-            {"schema_version": library_data.LIBRARY_CACHE_SCHEMA_VERSION,
+            {"schema_version": library_stores.LIBRARY_CACHE_SCHEMA_VERSION,
              "cache_dir": "Cache", "stats_file": "Stats.xml",
              "rows": ["not a dict"]},
-            {"schema_version": library_data.LIBRARY_CACHE_SCHEMA_VERSION,
+            {"schema_version": library_stores.LIBRARY_CACHE_SCHEMA_VERSION,
              "cache_dir": 123, "stats_file": "Stats.xml", "rows": []},
-            {"schema_version": library_data.LIBRARY_CACHE_SCHEMA_VERSION,
+            {"schema_version": library_stores.LIBRARY_CACHE_SCHEMA_VERSION,
              "cache_dir": "Cache", "stats_file": None, "rows": []},
         ]
         for payload in malformed:
