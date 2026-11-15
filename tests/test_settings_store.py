@@ -181,12 +181,18 @@ class SettingsStoreSaveTests(unittest.TestCase):
             store = make_store(directory)
             store.load()
 
+            store.settings_path.write_text("old contents", encoding="utf-8")
             with patch("os.replace", side_effect=OSError("locked")):
                 with self.assertRaises(OSError):
                     store.save(dict(SETTINGS))
 
             self.assertEqual([p for p in Path(directory).iterdir()
                               if p.name.endswith(".tmp")], [])
+            # The old file itself must survive too: a store that damaged
+            # its own file before delegating would pass the no-temp check.
+            self.assertEqual(
+                store.settings_path.read_text(encoding="utf-8"),
+                "old contents")
             # The baseline stays stale, so the next save retries.
             store.save(dict(SETTINGS))
             self.assertTrue(store.settings_path.is_file())

@@ -1,0 +1,150 @@
+"""The import-surface pin (Proposal 0010, Step 1).
+
+Every name a production module or a test imports from `library_data`
+today, grouped by the module it is headed to (§4). No move may silently
+drop one: if a name stops resolving from `library_data`, the move PR
+that dropped it fails here before the suite ever reaches the behaviour
+tests. Each move PR re-points the names it moves — the method for that
+module starts importing from the new module instead — and at Step 9,
+when `library_data.py` is deleted, every method imports from its new
+module.
+
+The list is built from the names consumers actually import, not from
+`__all__`: five of them (`_normalized_source_path`, `_settings_file_path`,
+`_valid_window_geometry`, `_valid_column_width`, `_quote_for_search`) are
+not in `__all__`, and a pin built from `__all__` alone would have let a
+move drop them silently. The stdlib module attributes the namespace-patch
+tests read (`data.sys`, `data.ctypes`) are deliberately not in this list —
+those tests themselves fail loudly if they go missing, and they are not
+names this file defines.
+"""
+
+import unittest
+
+import library_data
+
+
+class ImportSurfaceTests(unittest.TestCase):
+    def _assert_resolve(self, names):
+        for name in names:
+            with self.subTest(name=name):
+                self.assertIsNotNone(getattr(library_data, name, None))
+
+    def test_constants_names_resolve(self):
+        # Re-pointed to library_constants.py at Step 2.
+        self._assert_resolve((
+            "COLUMN_GROUPS",
+            "DEFAULT_VISIBLE_COLUMNS",
+            "DIFFICULTY_ORDER",
+            "GRADE_NAMES",
+            "GRADE_OPTIONS",
+            "HEADERS",
+            "NUMERIC_COLUMNS",
+            "RADAR_FIELDS",
+            "TAP_FIELDS",
+            "TECH_FIELDS",
+        ))
+
+    def test_format_names_resolve(self):
+        # Re-pointed to library_format.py at Step 2.
+        self._assert_resolve((
+            "bpm_sort_key",
+            "difficulty_sort_key",
+            "format_bpm_display",
+            "format_duration",
+            "format_refresh_time",
+            "grade_sort_key",
+            "number",
+            "parse_bpms",
+            "split_path",
+            "tag_map",
+        ))
+
+    def test_sources_names_resolve(self):
+        # Re-pointed to library_sources.py at Step 3.
+        self._assert_resolve((
+            "_normalized_source_path",
+            "any_scores_match",
+            "cache_dir_candidates",
+            "first_existing_directory",
+            "invalid_paths_note",
+            "looks_like_song_tree",
+            "merge_scores",
+            "parse_cache_file",
+            "stats_index",
+        ))
+
+    def test_geometry_names_resolve(self):
+        # Re-pointed to library_geometry.py at Step 4.
+        self._assert_resolve((
+            "declare_dpi_awareness",
+            "dpi_scale_factor",
+            "format_geometry",
+            "parse_course_geometry",
+            "scale_geometry",
+            "scale_pixels",
+        ))
+
+    def test_course_names_resolve(self):
+        # Re-pointed to library_course.py at Step 4.
+        self._assert_resolve((
+            "course_append_bytes",
+            "course_song_line",
+            "course_song_lines",
+            "course_trailing_risk",
+            "find_ambiguous_course_entries",
+            "format_new_course",
+            "parse_course_text",
+            "validate_course_fields",
+        ))
+
+    def test_search_names_resolve(self):
+        # Re-pointed to library_search.py at Step 5.
+        self._assert_resolve((
+            "CHART_FILTER_FIELDS",
+            "SEARCH_FIELD_ALIASES",
+            "_quote_for_search",
+            "filter_texts_match",
+            "filter_token_text",
+            "find_unreadable_directives",
+            "get_active_chart_filters",
+            "match_chart_query",
+            "parse_duration_seconds",
+            "parse_numeric_bound",
+            "parse_search_query",
+            "replace_search_directive",
+            "split_search_query",
+        ))
+
+    def test_dialog_query_names_resolve(self):
+        # Re-pointed to library_dialog_query.py at Step 6.
+        self._assert_resolve((
+            "build_dialog_query",
+            "split_dialog_query",
+        ))
+
+    def test_stores_names_resolve(self):
+        # Re-pointed to library_stores.py at Step 7.
+        self._assert_resolve((
+            "LIBRARY_CACHE_SCHEMA_VERSION",
+            "SettingsStore",
+            "SnapshotStore",
+            "_settings_file_path",
+            "_valid_column_width",
+            "_valid_window_geometry",
+            "write_file_atomically",
+        ))
+
+    def test_distribution_names_resolve(self):
+        # Re-pointed to library_distribution.py at Step 8.
+        self._assert_resolve((
+            "ChartBar",
+            "aggregate_bpm_distribution",
+            "aggregate_difficulty_distribution",
+            "aggregate_meter_distribution",
+            "chart_bar_at",
+            "chart_bars",
+            "chart_clear_decision",
+            "chart_click_decision",
+            "distribution_summary_stats",
+        ))
