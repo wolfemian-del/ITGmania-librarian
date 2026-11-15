@@ -23,7 +23,9 @@ import unittest
 
 import library_constants
 import library_data
+import library_course
 import library_format
+import library_geometry
 import library_sources
 
 
@@ -86,7 +88,7 @@ class ImportSurfaceTests(unittest.TestCase):
             "parse_course_geometry",
             "scale_geometry",
             "scale_pixels",
-        ))
+        ), module=library_geometry)
 
     def test_course_names_resolve(self):
         # Re-pointed to library_course.py at Step 4.
@@ -99,7 +101,7 @@ class ImportSurfaceTests(unittest.TestCase):
             "format_new_course",
             "parse_course_text",
             "validate_course_fields",
-        ))
+        ), module=library_course)
 
     def test_search_names_resolve(self):
         # Re-pointed to library_search.py at Step 5.
