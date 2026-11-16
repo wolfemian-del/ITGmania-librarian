@@ -1,0 +1,77 @@
+# Implementation Proposal: Move the app into a package
+
+| | |
+|---|---|
+| **Status** | Draft — for review |
+| **Author** | Muse (Muse Spark 1.3) |
+| **Date** | 2026-11-16 |
+| **Base** | main `8fb0ec4e` (after PR #186 merged; suite 628 OK, skipped=38, headless) |
+| **Related** | Claude's v1.3.0 assessment (flat root); Proposal 0010 (the module split whose boundaries this preserves); Proposal 0011 (its stages build inside the package); docs pass #184 (ARCHITECTURE.md) |
+
+---
+
+In plain language: the app is nineteen files loose at the repository root, and this proposal files all of them away into one package folder, `itgmania_library`, so the root holds only the launcher, the docs, the config, and the tests. Nothing the owner sees changes except the launch command, which becomes `python launch.py` — the same window, started from a file whose name says what it does. The one real decision is the package's shape: one flat package with absolute imports, and a small launcher at the root named `launch.py`.
+
+## 1. Background and Goal
+
+Claude's v1.3.0 assessment named the flat root — nineteen `.py` files beside config and docs — and the owner chose a docs-first pass on 2026-11-15, deferring the move. On 2026-11-16 he decided the new Proposal 0011 modules should be born nested in the hierarchy, not added to the flat root for a later move to carry, and asked for this proposal. The move must land before 0011 stage 2, which creates `library_media.py` — that is the deadline; stage 3's `song_page.py` and stage 4's player seam follow it into the package.
+
+"Done" means all nineteen modules live in `itgmania_library/`, `python launch.py` launches the app, the suite is green with no new tests, and no behaviour has changed. This change moves a boundary — the package boundary — without changing any component boundary: no module is split, merged, or renamed, no constructor changes, no settings key, no file format. It constrains later work in the intended way: every new module is born inside the package, and the 0011 stages build there.
+
+## 2. Current State (measured on main `50ceaabe`)
+
+- [CODE] Nineteen `.py` files sit flat at the root: `library_visualizer.py` (the shell), `library_loader.py`, `library_table.py`, `library_filter.py`, `library_sources.py`, `library_stores.py`, `library_search.py`, `library_format.py`, `library_constants.py`, `library_geometry.py`, `library_course.py`, `library_dialog_query.py`, `library_distribution.py`, `advanced_search.py`, `course_builder.py`, `data_paths_dialog.py`, `distribution_panel.py`, `row_tints.py`, `theme.py`. The layer diagram in `docs/ARCHITECTURE.md` (measured from the import graph at v1.3.0, no cycles) still holds: layer 0 `library_constants`, `library_geometry`, `library_course`, `theme`; layer 1 `library_format`, `library_search`, `row_tints`; layer 2 `library_filter`, `course_builder`, `library_sources`, `library_dialog_query`, `library_distribution`; layer 3 `library_loader`, `library_stores`, `advanced_search`, `distribution_panel`, `data_paths_dialog`; layer 4 `library_table`; layer 5 `library_visualizer`. Six files import Tkinter (`advanced_search`, `course_builder`, `data_paths_dialog`, `distribution_panel`, `library_loader`, `library_visualizer`); the nine Tk-free data modules are the 0010 set.
+- [RAN] Import counts by AST on main `50ceaabe` (Python 3.12.3, sandbox): the app files hold 118 import statements, the tests 167 (285 total). Of those, 49 app statements and 75 test statements name a root module — 124 statements, 192 imported names — and those are the lines the move re-points; everything else (stdlib, `matplotlib`, `unittest`) is untouched. The earlier rough estimate of ~197 import statements is superseded by this count. Six test files do `import library_visualizer as app` (`test_end_to_end`, `test_library_filter`, `test_library_loader`, `test_library_table`, `test_library_visualizer`, `test_ui_distribution`) — all six must still be re-pointed to the package module. There is no longer a root file named `library_visualizer.py` to collide with, so the shadowing trap a same-named shim would have carried is gone; a missed re-point fails loudly with `ModuleNotFoundError`.
+- [CODE] The import-surface pin (`tests/test_import_surface.py`, Proposal 0010 Step 1) imports the nine data modules by their flat names and asserts 74 names resolve from them. All nine import lines re-point to the package; the names it pins do not change, and the pin still guards the same surface.
+- [CODE] `WINDOW_SOURCES` (`tests/test_theme.py:12–17`) reads nine files by name from `ROOT` and joins them for the theme guard. The nine names stay the same; the directory they are read from becomes the package dir.
+- [CODE] Launch is `python library_visualizer.py` (README:14, AGENTS.md "Running and checking"). There is no `__main__.py` and no `__file__` or `sys.path` use anywhere in the app code, so nothing in the app locates itself by path. CI runs `python -m unittest discover -s tests` (`.github/workflows/tests.yml:38`; the windows-ui job runs two test files the same way) — the command is unchanged by the move, so no workflow edit is needed, which matters because the bot has no Workflows permission.
+- [CODE] The version pin test reads `CHANGELOG.md` via `Path(__file__).resolve().parent.parent` (`tests/test_library_visualizer.py:1495`) — the repo root, which does not move. Fixture paths are relative to the test files (`Path(__file__).parent / "fixtures"`), and the tests themselves do not move, so they are unaffected.
+- [CODE] The docs state the flat layout in three places: `docs/ARCHITECTURE.md` ("Launch" — "There is no package: every module sits flat at the repository root and imports its siblings by their plain names"), README:90 (the 19-module table pointer; "`library_visualizer.py` is the entry point; the other files are imported by it"), and README:94 (`__version__` lives in `library_visualizer.py`). AGENTS.md's code rule ("Keep logic that does not need the window in a `library_*` data module") names the flat layout too. The two `ruff.toml` comments that cite module names (`library_format.py`, `tests/test_ui_distribution.py`) stay correct — the module names do not change.
+- [CODE] The Proposal 0011 interaction: its stages create `song_page.py` (stage 3), `library_media.py` (stage 2), and an unnamed player-seam module (stage 4); stage 1 creates no new modules, so it is move-neutral. After this move those are born as `itgmania_library/song_page.py`, `itgmania_library/library_media.py`, and the seam inside the package; the 0011 proposal's flat file paths are superseded for the new modules, and its multi-selection clarification still rides with the stage-3 PR.
+
+## 3. The Decision: one flat package, absolute imports, a root launcher
+
+The recommendation is a single flat package, `itgmania_library`, holding all nineteen modules with their names unchanged; absolute imports everywhere (`from itgmania_library.library_sources import ...`); the tests stay at `tests/` with re-pointed imports; a root launcher `launch.py` of a few lines that imports `main` from the package — the launch command becomes `python launch.py`, and the name says what the file does to a reader who never opens the README; and a `__main__.py` in the package so `python -m itgmania_library` works too. The package's `__init__.py` is empty apart from a comment — no top-level re-exports, no second import surface; the pin test remains the surface.
+
+The alternatives, and why they are not the recommendation: layered subpackages (say `data/` and `ui/`) would encode the ARCHITECTURE.md layers as directories, but they split the pin test, double the import-path churn, and restructure what this move was asked to tidy — the layers stay as documentation, not directories. Relative imports inside the package (`from .library_sources import ...`) are shorter but hide the package and make the pin test's module references awkward; the repo's style is explicit, so absolute wins. A staged leaf-first move in the 0010 style would be reviewable per PR, but it leaves split-layout intermediates for weeks — some modules in the package, some at the root — which is the untidiness this proposal exists to end; the move is pure relocation, so one mechanical PR verified by tooling is the cleaner shape. No launcher, `python -m` only, leaves no obvious file to run at the root; not recommended. Keeping the shim named `library_visualizer.py` would preserve the launch command, but it leaves a root file whose purpose is not obvious from its name and that shadows the package module — a bare `import library_visualizer` from the repo root would resolve to the shim; not recommended.
+
+The package name carries one wart, stated plainly: the `library_` prefix inside `itgmania_library` doubles the word (`itgmania_library.library_sources`). Renaming the modules to drop the prefix is out of scope — it would break the pin test's naming and every reference in the docs, and it is a separate change with no behavioural payoff.
+
+## 4. Recommended Design in Detail
+
+The boundary is explicit. The package holds all nineteen modules, changed only in their import lines — nothing else moves and nothing is renamed. The tests, docs, config, `CHANGELOG.md`, and fixtures stay where they are. What the move must not reach into: no `__all__` changes, no function signatures, no settings or snapshot formats, no CI workflow, no test logic (import lines only).
+
+The launcher is the only new file at the root, and it is `__main__`-only: `from itgmania_library.library_visualizer import main`, then the `if __name__ == "__main__": main()` guard. Nothing imports it, and no name in the package collides with it — the six test files that do `import library_visualizer as app` are re-pointed to `from itgmania_library import library_visualizer as app`, and a missed one fails loudly with `ModuleNotFoundError`. The package's `__main__.py` is the same two lines with a relative import, so `python -m itgmania_library` from the repo root launches the app. Running from anywhere else fails exactly as it does today (the flat modules are only importable from the repo root), so there is no behaviour change to the launch. `__version__` stays in the package's `library_visualizer.py`.
+
+Import style is absolute everywhere. Intra-package lines become `from itgmania_library.<module> import <names>`; test lines the same. The pin test keeps its shape — `from itgmania_library import library_constants` and the rest — and still asserts the same 74 names from the same nine modules. `WINDOW_SOURCES` reads the same nine filenames from the package dir. The 124 re-pointed statements are the whole code change, plus `launch.py`, `__init__.py`, and `__main__.py`.
+
+The docs move with the code: `docs/ARCHITECTURE.md` rewrites its "Launch" section (package, launcher, the `python -m` alternative) and notes the package path in the module table; the layer diagram does not change. README:14 becomes `python launch.py`; README:90 and README:94 name the package path instead of the flat file. AGENTS.md rewords the `library_*` rule to the package path, and its "Run" line becomes `python launch.py`. `docs/proposals/README.md` gains the 0012 row.
+
+The legibility test, the project's standing guideline: the app is one package, `itgmania_library`, holding the nineteen modules the flat root held, and the root keeps only the launcher. A reader can hold that sentence and find any module.
+
+## 5. What Does Not Change
+
+No behaviour, no window change, no settings key, no snapshot format, no `HEADERS` change, no search-language or course-builder or distribution-panel change. No module is renamed; no function signature changes; no `__all__` changes. The test command (`python -m unittest discover -s tests`) is unchanged. The launch command is the one thing that changes: `python launch.py` instead of `python library_visualizer.py`. No new dependency. No CI workflow change.
+
+## 6. Test Plan (for the implementation PR)
+
+Pins before moves: the suite itself is the pin — 628 OK (skipped=38) on main `50ceaabe` — and the import-surface pin test must pass with its re-pointed imports before anything else is judged. The move adds no new tests; a move that needs new tests has changed behaviour.
+
+Verification follows the 0010 pattern for mechanical moves: every moved module must be byte-identical apart from its import lines, checked by AST comparison (each moved file's AST, minus its `Import`/`ImportFrom` nodes, equals the base file's). The diff is reviewed as renames plus import lines, not read line by line; the review's deliverable is the verification report, not a line review.
+
+Staging: one PR, purely mechanical — move all nineteen files, re-point the 124 statements, add `launch.py`, `__init__.py`, and `__main__.py`, update the pin test, `WINDOW_SOURCES`, README, AGENTS.md, and ARCHITECTURE.md, and add the 0012 index row. The fallback, if reviewers prefer it, is leaf-first by layer as in 0010, with the split-layout intermediates that implies.
+
+File lists a move must update, the ones that have gone stale before: the nineteen module files; the six test files that do `import library_visualizer as app` and every test file importing a root module; `tests/test_import_surface.py`; `tests/test_theme.py` `WINDOW_SOURCES`; README.md (launch, architecture pointer, version line); AGENTS.md (`library_*` rule); `docs/ARCHITECTURE.md` (Launch section, module table); `docs/proposals/README.md` (0012 row). Full-suite expectation: 628 OK (the base count), headless and under Xvfb. Live smoke on Ian's Windows machine: launch from `C:\dev` with `python launch.py`, load the library, one search, quit and relaunch to confirm the settings and snapshot still round-trip — the same smoke as 0010's.
+
+## 7. Open Questions for Reviewers
+
+- **Q1. Package name — `itgmania_library`?** Recommendation: yes. It matches the product name; the doubled "library" inside it is a wart, and renaming the modules to drop the prefix is out of scope.
+- **Q2. Import style — absolute or relative inside the package?** Recommendation: absolute everywhere (`from itgmania_library.<module> import ...`), for explicitness and greppability; relative hides the package.
+- **Q3. Staging — one mechanical PR, or leaf-first by layer?** Recommendation: one PR, AST-verified as pure relocation; leaf-first leaves split-layout intermediates for weeks.
+- **Q4. Review — full panel on this proposal, mechanical verification on the implementation PR?** Recommendation: yes, the 0010 pattern — the panel judges the layout decision here, and the implementation PR is judged by its verification report (Grok sole reviewer plus the AST report).
+- **Q5. Sequencing with Proposal 0011 — the move first?** Recommendation: the move lands before stage 2 (the hard deadline); stage 1 is move-neutral and could land on either side, but there is no reason to land it first now that the move is scoped — the four stages then build entirely inside the package.
+- **Q6. The launcher — `launch.py` at the root?** Recommendation: yes. The name says what the file does to a reader who never opens the README, and it cannot collide with any module in the package. Keeping the name `library_visualizer.py` would preserve the launch command, but it leaves a root file whose purpose is not obvious from its name and that shadows the package module — a bare `import library_visualizer` from the repo root would resolve to the shim.
+
+---
+
+*Written by Muse (Muse Spark 1.3).*
