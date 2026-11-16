@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — for review |
+| **Status** | Accepted — approved by the owner on 2026-11-16, with the review resolutions below. |
 | **Author** | Muse (Muse Spark 1.3) |
 | **Date** | 2026-11-16 |
 | **Base** | main `85a07a9` (after PR #184 merged; suite 628 OK, skipped=38, headless) |
@@ -13,6 +13,20 @@
 **Revision 2 — 2026-11-16 (full four-model panel on PR #185: Claude, GLM, Grok, ChatGPT-6, plus Gemini's synthesis).** The panel's engine findings are folded in: the deprecated-pref rule is flipped (deprecated-if-nonempty, else Writable), both ReadOnly keys enter `song_roots`, the `FixupPath` citation is replaced by `GetSongAssetPath` with sandboxing and extension-allowlist rules, per-chart `#MUSIC` becomes the chart's effective `Music`, the package is pygame-ce, and the stage-2 boundary, Windows smoke owner, and file lists are clarified. Three design calls changed on the panel's argument: the schema bumps to 5 in stage 1, the roots are derived every time instead of persisted (no new settings key), and Enter joins double-click as an entry gesture. The decisions are recorded in §7.
 
 **Revision 3 — 2026-11-16 (Claude's re-review of Revision 2, PR #185 comment 6931406458).** Eight smaller holes, all verified against the engine source before folding in: the roots now state their failure modes (a missing or unreadable `Preferences.ini` means no additional folders, read utf-8-sig on the PR #118 idiom, never a crash; a song under no root shows 'not in the known song folders', not 'folder gone'); the stop timer is cancelled by `show()`, Stop, and a new Play; the shell detects a missing player with `importlib.util.find_spec("pygame")`, no import; the sample window is normalized before `play()` (a length of 0 or less becomes 12 s, the engine's default; a start of -1 or an overrunning window becomes start 0 for 12 s or to the end of the song); the deprecated rule is stated for both the song pair and the `AdditionalFolders` pair; the contract names a `SongMedia` record, renames the entry callback `on_open_row`, lists the engine's extension allowlists, and disables the folder button off Windows; the stage-1 'check whether' is closed (only `#MUSIC` has a chart-level override) and the length and sample window are stated to belong to the song's music; the Q1 JPEG claim is tagged [OBSERVED] and the footer is corrected. One design call changed on the review's argument: the four resolution and grouping helpers move to a new Tk-free module `library_media.py`, keeping `library_sources.py` parse-only.
+
+## Review resolutions (2026-11-16)
+
+The owner approved this proposal on 2026-11-16 (PR #185 merged the same day). Each open question's outcome:
+
+- **Q1. Images** — decided: PNG-first, Pillow later; stage 1 reports the BANNER/BACKGROUND/JACKET extension counts across the real cache, so the Pillow call is made with data.
+- **Q2. Audio** — decided: pygame-ce staged last, with the external player as the fallback if offset playback does not verify on Windows.
+- **Q3. Carriage** — decided: hidden row keys at parse time, with the schema bump to 5 in stage 1.
+- **Q4. Entry** — decided: double-click and Enter on the focused row, through `on_open_row`. The multi-selection wording ("leaves multi-selections alone") is clarified in the stage-3 PR, not here (owner decided 2026-11-16).
+- **Q5. Geometry** — decided: fixed default, `SONG_PAGE_GEOMETRY` alongside `SONG_PAGE_MIN_SIZE`, no persistence in v1.
+- **Q6. Review** — the full four-model panel ran on this proposal; for the stages, Grok alone is not enough for stages 1–2, stage 3 leans on the owner's Windows checks, and stage 4 deserves a second reviewer.
+- **Q7. Roots** — decided: derive every time from `Preferences.ini` and the cache dir; no new settings key; `game_install_dir` deferred.
+
+Amendments folded in before acceptance: Revision 2 (the full panel's findings) and Revision 3 (Claude's re-review — eight holes, all verified against the engine source). The 0011 stages build inside the `itgmania_library` package once Proposal 0012 lands; the new modules are born nested, not flat.
 
 ---
 
@@ -85,7 +99,7 @@ Staging, with what each PR proves:
 
 File lists a move must update, the ones that have gone stale before: `tests/test_theme.py` `WINDOW_SOURCES` gains `song_page.py`; `theme.py` gains `SONG_PAGE_MIN_SIZE` and `SONG_PAGE_GEOMETRY`; `library_stores.py` gains the schema constant bump; `library_table.py` gains the new input; `library_visualizer.py` gains the wiring, the `_dialog_is_open` entry and the reload hook; a new Tk-free `library_media.py` holds the four resolution and grouping helpers; README.md gains the feature and the new modules; `docs/ARCHITECTURE.md` gains the module rows (Module | What it holds | Tests — no Lines column, per the #184 decision); `docs/proposals/README.md` gains the 0011 row when this proposal lands; `requirements.txt` gains pygame-ce at stage 4, and a Tk-free module holds the player seam. Full-suite expectation: 628 OK (the base count) plus the new tests, headless and under Xvfb. Live smoke on Ian's Windows machine: Ian confirms on his OutFox install that resolution finds the additional-folder library and that the chosen player starts at SAMPLESTART — the PNG, folder and playback paths are the ones a sandbox cannot prove.
 
-## 7. Open Questions for Reviewers
+## 7. Open Questions — Resolved
 
 - **Q1. Images — dependency-free PNG first, Pillow later?** Recommendation: yes. The banner is PNG in the real cache and `PhotoImage` reads it with no dependency; Pillow buys JPEG backgrounds and smooth scaling as a later enhancement, not a v1 dependency. Stage 1 reports the image-extension counts across the real cache, so the Pillow call is made with data (at a glance [OBSERVED], no song banner is JPEG, though a few pack banners are). The cost is a placeholder for JPEG backgrounds in v1.
 - **Q2. Audio — pygame-ce in-app preview, external player, or defer?** Recommendation: pygame-ce, staged last, with the external player as the fallback if offset playback does not verify on Windows. Pygame-ce is the only option that plays the sample window in-app (pygame itself has no Python 3.14 Windows wheel); the external player plays the whole song and is restricted to audio extensions; deferring leaves the sketched playback undone. The page owns the stop timer and calls `on_stop` when the page closes, so playback cannot outlive the window.
