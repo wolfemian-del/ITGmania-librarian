@@ -11,6 +11,7 @@ from unittest.mock import MagicMock, Mock, patch
 from itgmania_library import data_paths_dialog as dialog
 from itgmania_library import distribution_panel as dp
 from itgmania_library import library_geometry as geometry
+from itgmania_library import library_media
 from itgmania_library import library_stores as stores
 from itgmania_library import library_visualizer as app
 from itgmania_library import theme
@@ -1268,7 +1269,9 @@ class CourseReloadNotificationTests(unittest.TestCase):
         instance.diff_var = Mock()
         instance.status = Mock()
         instance.course_builder = course_builder
+        instance.song_page = Mock()
         instance._on_library_changed([], preserve_selection=False)
+        return instance
 
     def test_loaded_tells_the_course_builder_the_library_reloaded(self):
         builder = Mock()
@@ -1277,6 +1280,14 @@ class CourseReloadNotificationTests(unittest.TestCase):
 
     def test_loaded_without_a_course_builder_still_completes(self):
         self._run_loaded(None)  # the pre-_build state: no builder yet, no error
+
+    def test_loaded_closes_the_song_page_on_a_load_and_on_a_sync(self):
+        """The shell closes the song page on a library reload and on a
+        score sync, so a stale page never shows old scores (proposal 0011)."""
+        instance = self._run_loaded(Mock())
+        instance.song_page.close.assert_called_once_with()
+        instance._on_library_changed([], preserve_selection=True)
+        self.assertEqual(instance.song_page.close.call_count, 2)
 
 
 
@@ -1391,6 +1402,8 @@ class DialogKeyBindingTests(unittest.TestCase):
         instance.about_window = None
         instance.course_builder = Mock()
         instance.course_builder.window = closed_window
+        instance.song_page = Mock()
+        instance.song_page.window = None
         instance._on_main_escape()
         # No dialog open: Escape clears the search.
         instance._filter.clear_search.assert_called_once()
@@ -1409,6 +1422,12 @@ class DialogKeyBindingTests(unittest.TestCase):
         instance.about_window = open_window
         instance._on_main_escape()
         instance._filter.clear_search.assert_not_called()  # About open
+
+        instance._filter.clear_search.reset_mock()
+        instance.about_window = None
+        instance.song_page.window = open_window
+        instance._on_main_escape()
+        instance._filter.clear_search.assert_not_called()  # Song page open
 
     def test_select_all_rows_selects_exactly_the_displayed_rows(self):
         # Issue #36's headless pin: the handler selects the tree's
@@ -1727,6 +1746,463 @@ class LiveDpiScaleTests(unittest.TestCase):
                              geometry.scale_pixels(130, factor))
         finally:
             root.destroy()
+
+
+class OpenSongPageTests(unittest.TestCase):
+    """The shell's _open_song_page (proposal 0011, stage 3): the song is
+    every row sharing the focused row's "Course path", the opened chart
+    goes first, and the record is built from the selected cache dir."""
+
+    def _instance(self, rows, cache_dir):
+        instance = object.__new__(app.LibraryApp)
+        instance._filter = Mock()
+        instance._filter.library_rows.return_value = rows
+        instance.cache_var = Mock()
+        instance.cache_var.get.return_value = cache_dir
+        instance.song_page = Mock()
+        return instance
+
+    def test_open_song_page_shows_the_songs_charts_with_the_opened_chart_first(self):
+        opened = {"Title": "One", "Artist": "A", "Pack": "P",
+                  "Course path": "P/One", "Music": "song.ogg",
+                  "Banner": "", "Background": "", "Jacket": "", "CDTitle": "",
+                  "SampleStart": 64.58, "SampleLength": 15.0, "Time": 93.987999}
+        sibling = dict(opened, Difficulty="Challenge")
+        other = dict(opened, Title="Two", **{"Course path": "P/Two"})
+        with tempfile.TemporaryDirectory() as tmp:
+            instance = self._instance(
+                [sibling, opened, other], str(Path(tmp) / "Cache" / "Songs"))
+            instance._open_song_page(opened)
+        instance.song_page.show.assert_called_once()
+        song, media = instance.song_page.show.call_args.args
+        self.assertEqual(song["title"], "One")
+        self.assertEqual(song["artist"], "A")
+        self.assertEqual(song["pack"], "P")
+        self.assertIs(song["charts"][0], opened)
+        self.assertEqual(len(song["charts"]), 2)
+        # No root holds the files in a fresh temp dir, so the record is empty.
+        self.assertIsNone(media.music)
+        self.assertIsNone(media.folder)
+
+    def test_open_song_page_with_no_course_path_opens_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            instance = self._instance([], str(Path(tmp) / "Cache" / "Songs"))
+            instance._open_song_page({"Title": "One"})
+        instance.song_page.show.assert_not_called()
+
+    def test_open_song_page_with_no_matching_rows_opens_nothing(self):
+        row = {"Title": "One", "Course path": "P/Ghost"}
+        with tempfile.TemporaryDirectory() as tmp:
+            instance = self._instance([row], str(Path(tmp) / "Cache" / "Songs"))
+            instance.song_page = Mock()
+            # The focused row is not among the filter's rows, so the song has no charts.
+            instance._filter.library_rows.return_value = []
+            instance._open_song_page(row)
+        instance.song_page.show.assert_not_called()
+
+
+class LiveSongPageOpenTests(unittest.TestCase):
+    """The song page opens from a double-click or Enter on a chart row
+    (Proposal 0011, stage 3): the gestures, the focused row, and the
+    multi-selection rule, in a real window."""
+
+    def make_root(self):
+        if app.tk is None:
+            self.skipTest("Tkinter is not installed")
+        try:
+            root = app.tk.Tk()
+        except app.tk.TclError:
+            self.skipTest("No display available for Tk")
+
+        def destroy_quietly():
+            with contextlib.suppress(Exception):
+                root.destroy()
+
+        self.addCleanup(destroy_quietly)
+        return root
+
+    @staticmethod
+    def pump_until(root, condition, timeout=10):
+        deadline = time.monotonic() + timeout
+        while not condition() and time.monotonic() < deadline:
+            root.update()
+            time.sleep(0.02)
+
+    def _rows(self):
+        """Five rows: song One (two charts, a good PNG banner), Two (a
+        JPEG banner), Three (a corrupt PNG banner), and Four (under no root)."""
+        rows = []
+        for title, difficulty, meter, bpm, time_value, course_path, banner in (
+                ("One", "Hard", 10.0, "150", 93.987999, "P/One", "banner.png"),
+                ("One", "Challenge", 13.0, "150-180", 93.987999, "P/One", "banner.png"),
+                ("Two", "Medium", 8.0, "120", 80.0, "P/Two", "banner.jpg"),
+                ("Three", "Easy", 5.0, "100", 60.0, "P/Three", "banner.png"),
+                ("Four", "Beginner", 2.0, "90", 45.0, "Q/Four", "banner.png")):
+            row = {header: "" for header in app.HEADERS}
+            row.update({"Title": title, "Artist": f"Artist {title}",
+                        "Pack": course_path.split("/")[0],
+                        "Type": "dance-single", "Difficulty": difficulty, "Meter": meter,
+                        "BPM": bpm, "Time": time_value,
+                        "Score": 985000.0 if title == "One" and difficulty == "Hard" else "",
+                        "Course path": course_path, "Music": "song.ogg",
+                        "Banner": banner, "Background": "", "Jacket": "", "CDTitle": "",
+                        "SampleStart": 64.58 if title == "One" else 10.0,
+                        "SampleLength": 15.0 if title == "One" else 12.0})
+            rows.append(row)
+        return rows
+
+    def _layout_and_app(self):
+        """A real app on a temp library: the song folders, the Preferences.ini
+        pointing at them, and the snapshot the app restores at startup."""
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        base = Path(tmp.name)
+        cache_dir = base / "Cache" / "Songs"
+        cache_dir.mkdir(parents=True)
+        songs_dir = base / "Songs"
+        for song in ("One", "Two", "Three"):
+            (songs_dir / "P" / song).mkdir(parents=True)
+        fixtures = Path(__file__).parent / "fixtures"
+        (songs_dir / "P" / "One" / "banner.png").write_bytes(
+            (fixtures / "song_banner.png").read_bytes())
+        (songs_dir / "P" / "One" / "song.ogg").write_bytes(b"fake ogg")
+        (songs_dir / "P" / "Two" / "banner.jpg").write_bytes(
+            (fixtures / "song_banner.jpg").read_bytes())
+        (songs_dir / "P" / "Three" / "banner.png").write_bytes(
+            (fixtures / "song_banner_corrupt.png").read_bytes())
+        (base / "Save").mkdir()
+        (base / "Save" / "Preferences.ini").write_text(
+            f"AdditionalSongFoldersWritable={songs_dir}\n", encoding="utf-8")
+        stats_file = base / "Stats.xml"
+        stats_file.write_text("<Stats/>")
+        settings_path = base / "settings.json"
+        settings_path.write_text(json.dumps(
+            {"cache_dir": str(cache_dir), "stats_file": str(stats_file)}))
+        rows = self._rows()
+        # The snapshot is written by the app's own writer, from a
+        # throwaway application that is never pumped.
+        writer_root = self.make_root()
+        patch_settings = patch.object(
+            app.LibraryApp, "_settings_file_path",
+            staticmethod(lambda: settings_path))
+        with patch_settings:
+            writer = app.LibraryApp(writer_root)
+            writer._snapshot_store.write(cache_dir, stats_file, rows, len(rows), 0, 0, False)
+        writer_root.destroy()
+
+        root = self.make_root()
+        patcher = patch.object(
+            app.LibraryApp, "_settings_file_path",
+            staticmethod(lambda: settings_path))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        application = app.LibraryApp(root)
+        self.pump_until(root, lambda: len(application._table.tree.get_children()) == len(rows))
+        for _ in range(5):
+            root.update()
+        return application, root, songs_dir
+
+    def _items_by_row(self, application):
+        return {(row["Title"], row["Difficulty"]): item
+                for item, row in application._table.tree_item_rows.items()}
+
+    def _double_click(self, application, root, item):
+        # Tk's event generate does not take Double (or Triple/Quadruple)
+        # in the pattern, so a double-click is two presses: the second
+        # press is what synthesizes the <Double-Button-1> binding.
+        tree = application._table.tree
+        self.pump_until(root, lambda: tree.bbox(item) != "")
+        bbox = tree.bbox(item)
+        self.assertNotEqual(bbox, "", "the row is not visible")
+        for _ in range(2):
+            tree.event_generate("<ButtonPress-1>", x=bbox[0] + 2, y=bbox[1] + 2,
+                                when="now")
+            tree.event_generate("<ButtonRelease-1>", x=bbox[0] + 2, y=bbox[1] + 2,
+                                when="now")
+        for _ in range(5):
+            root.update()
+
+    def _press_enter(self, application, root):
+        # A generated key event needs the tree to hold keyboard focus:
+        # focus_force it (the Xvfb harness's idiom) once it is viewable.
+        tree = application._table.tree
+        self.pump_until(root, lambda: tree.winfo_viewable())
+        tree.focus_force()
+        for _ in range(3):
+            root.update()
+            time.sleep(0.02)
+        tree.event_generate("<Return>", when="now")
+        for _ in range(5):
+            root.update()
+
+    def _double_click_at(self, application, root, x, y):
+        # Two presses at a point, as in _double_click: the second press
+        # synthesizes the <Double-Button-1> binding for that point.
+        tree = application._table.tree
+        for _ in range(2):
+            tree.event_generate("<ButtonPress-1>", x=x, y=y, when="now")
+            tree.event_generate("<ButtonRelease-1>", x=x, y=y, when="now")
+        for _ in range(5):
+            root.update()
+
+    def test_double_click_opens_the_page_for_the_clicked_row(self):
+        application, root, songs_dir = self._layout_and_app()
+        items = self._items_by_row(application)
+        self._double_click(application, root, items[("One", "Hard")])
+        page = application.song_page
+        self.assertIsNotNone(page.window)
+        self.assertEqual(page._title_label["text"], "One")
+        self.assertEqual(len(page._charts_frame.winfo_children()), 2)
+        self.assertNotEqual(page._banner_label["image"], "")
+        self.assertEqual(page._banner_label["text"], "")
+        self.assertEqual(page._music_label["text"],
+                         "Music: song.ogg · 1:34 · preview 1:05–1:20")
+        self.assertEqual(page._folder_label["text"], str(songs_dir / "P" / "One"))
+        # Off Windows there is no os.startfile, so the folder button stays
+        # disabled even when the folder exists; the enabled case is for the
+        # owner's Windows checks.
+        self.assertEqual(page._folder_button["state"], "disabled")
+
+    def test_single_click_does_not_open_the_page(self):
+        application, root, _songs_dir = self._layout_and_app()
+        items = self._items_by_row(application)
+        tree = application._table.tree
+        bbox = tree.bbox(items[("One", "Hard")])
+        tree.event_generate("<ButtonPress-1>", x=bbox[0] + 2, y=bbox[1] + 2,
+                            when="now")
+        tree.event_generate("<ButtonRelease-1>", x=bbox[0] + 2, y=bbox[1] + 2,
+                            when="now")
+        for _ in range(5):
+            root.update()
+        self.assertIsNone(application.song_page.window)
+
+    def test_enter_opens_the_page_for_the_focused_row(self):
+        application, root, _songs_dir = self._layout_and_app()
+        items = self._items_by_row(application)
+        tree = application._table.tree
+        tree.focus(items[("Two", "Medium")])
+        self._press_enter(application, root)
+        page = application.song_page
+        self.assertIsNotNone(page.window)
+        self.assertEqual(page._title_label["text"], "Two")
+        # A JPEG banner takes the placeholder path: the banner is not a PNG.
+        self.assertEqual(page._banner_label["text"], "No banner")
+        self.assertEqual(page._banner_label["image"], "")
+        self.assertEqual(len(page._charts_frame.winfo_children()), 1)
+
+    def test_double_click_on_a_heading_opens_nothing(self):
+        application, root, _songs_dir = self._layout_and_app()
+        items = self._items_by_row(application)
+        tree = application._table.tree
+        first_bbox = tree.bbox(next(iter(items.values())))
+        self._double_click_at(application, root, 10, first_bbox[1] // 2)
+        self.assertIsNone(application.song_page.window)
+
+    def test_double_click_on_empty_space_opens_nothing(self):
+        application, root, _songs_dir = self._layout_and_app()
+        items = self._items_by_row(application)
+        tree = application._table.tree
+        last_bbox = tree.bbox(list(items.values())[-1])
+        self._double_click_at(application, root, 10,
+                              last_bbox[1] + last_bbox[3] + 10)
+        self.assertIsNone(application.song_page.window)
+
+    def test_enter_with_a_multi_selection_opens_the_focused_row_and_keeps_the_selection(self):
+        application, root, _songs_dir = self._layout_and_app()
+        items = self._items_by_row(application)
+        tree = application._table.tree
+        children = tree.get_children()
+        tree.selection_set(children)
+        tree.focus(items[("Three", "Easy")])
+        before = tree.selection()
+        self._press_enter(application, root)
+        page = application.song_page
+        self.assertIsNotNone(page.window)
+        self.assertEqual(page._title_label["text"], "Three")
+        # A corrupt PNG takes the placeholder path through the TclError.
+        self.assertEqual(page._banner_label["text"], "No banner")
+        self.assertEqual(tree.selection(), before)
+
+    def test_double_click_on_a_song_under_no_root_shows_the_not_in_folders_note(self):
+        application, root, _songs_dir = self._layout_and_app()
+        items = self._items_by_row(application)
+        self._double_click(application, root, items[("Four", "Beginner")])
+        page = application.song_page
+        self.assertIsNotNone(page.window)
+        self.assertEqual(page._title_label["text"], "Four")
+        self.assertEqual(page._folder_label["text"], "Not in the known song folders")
+        self.assertEqual(page._folder_button["state"], "disabled")
+        self.assertEqual(page._banner_label["text"], "No banner")
+        self.assertEqual(page._music_label["text"], "No music file")
+
+
+class LiveSongPageDirectTests(unittest.TestCase):
+    """The song page on its own (Proposal 0011, stage 3): the media it
+    shows, the placeholders, and the button states."""
+
+    def make_root(self):
+        if app.tk is None:
+            self.skipTest("Tkinter is not installed")
+        try:
+            root = app.tk.Tk()
+        except app.tk.TclError:
+            self.skipTest("No display available for Tk")
+
+        def destroy_quietly():
+            with contextlib.suppress(Exception):
+                root.destroy()
+
+        self.addCleanup(destroy_quietly)
+        return root
+
+    @staticmethod
+    def _button(parent, text, command):
+        return app.tk.Button(parent, text=text, command=command)
+
+    def _page(self, root, on_open_folder=None):
+        return app.SongPage(root, on_play=None, on_stop=None,
+                            on_open_folder=on_open_folder, dpi_scale=1.0,
+                            button_factory=self._button)
+
+    @staticmethod
+    def _song(title="One", charts=None):
+        return {"title": title, "artist": f"Artist {title}", "pack": "P",
+                "charts": charts if charts is not None else [
+                    {"Difficulty": "Hard", "Meter": 10.0, "BPM": "150",
+                     "Score": 985000.0},
+                    {"Difficulty": "Challenge", "Meter": 13.0, "BPM": "150-180",
+                     "Score": ""}]}
+
+    @staticmethod
+    def _media(**overrides):
+        values = {"banner": None, "background": None, "jacket": None,
+                  "cd_title": None, "music": None, "music_length": None,
+                  "sample_start": None, "sample_length": None, "folder": None}
+        values.update(overrides)
+        return library_media.SongMedia(**values)
+
+    def test_png_banner_is_shown_and_a_jpeg_takes_the_placeholder(self):
+        root = self.make_root()
+        fixtures = Path(__file__).parent / "fixtures"
+        page = self._page(root)
+        page.show(self._song(), self._media(banner=fixtures / "song_banner.png"))
+        root.update()
+        self.assertNotEqual(page._banner_label["image"], "")
+        self.assertEqual(page._banner_label["text"], "")
+        # Showing another song refills the same window.
+        window = page.window
+        page.show(self._song("Two"), self._media(banner=fixtures / "song_banner.jpg"))
+        root.update()
+        self.assertIs(page.window, window)
+        self.assertEqual(page._title_label["text"], "Two")
+        self.assertEqual(page._banner_label["text"], "No banner")
+        self.assertEqual(page._banner_label["image"], "")
+
+    def test_corrupt_png_takes_the_placeholder(self):
+        root = self.make_root()
+        fixtures = Path(__file__).parent / "fixtures"
+        page = self._page(root)
+        page.show(self._song(), self._media(
+            banner=fixtures / "song_banner_corrupt.png"))
+        root.update()
+        self.assertEqual(page._banner_label["text"], "No banner")
+        self.assertEqual(page._banner_label["image"], "")
+
+    def test_wide_banner_is_subsampled_to_fit(self):
+        root = self.make_root()
+        fixtures = Path(__file__).parent / "fixtures"
+        page = self._page(root)
+        page.show(self._song(), self._media(
+            banner=fixtures / "song_banner_wide.png"))
+        root.update()
+        self.assertNotEqual(page._banner_label["image"], "")
+        image = page._images["banner"]
+        self.assertLess(image.width(), 2000)
+        self.assertLessEqual(image.width(), 700)
+
+    def test_music_line_shows_the_length_and_preview_window(self):
+        root = self.make_root()
+        page = self._page(root)
+        page.show(self._song(), self._media(
+            music=Path("song.ogg"), music_length=93.987999,
+            sample_start=64.58, sample_length=15.0))
+        root.update()
+        self.assertEqual(page._music_label["text"],
+                         "Music: song.ogg · 1:34 · preview 1:05–1:20")
+
+    def test_chart_override_music_shows_the_file_with_no_length_or_window(self):
+        root = self.make_root()
+        page = self._page(root)
+        page.show(self._song(), self._media(music=Path("alt.ogg")))
+        root.update()
+        self.assertEqual(page._music_label["text"], "Music: alt.ogg")
+
+    def test_no_music_file_shows_the_placeholder(self):
+        root = self.make_root()
+        page = self._page(root)
+        page.show(self._song(), self._media())
+        root.update()
+        self.assertEqual(page._music_label["text"], "No music file")
+
+    def test_charts_list_shows_meter_bpm_and_score(self):
+        root = self.make_root()
+        page = self._page(root)
+        page.show(self._song(), self._media())
+        root.update()
+        labels = page._charts_frame.winfo_children()
+        self.assertEqual(len(labels), 2)
+        self.assertEqual(labels[0]["text"], "Hard · Meter 10 · 150 · Score 985000")
+        self.assertEqual(labels[1]["text"],
+                         "Challenge · Meter 13 · 150-180 · No score")
+
+    def test_folder_button_state_follows_the_callback_and_the_folder(self):
+        root = self.make_root()
+        opened = Mock()
+        folder = Path("/tmp/Songs/P/One")
+        page = self._page(root, on_open_folder=opened)
+        page.show(self._song(), self._media(folder=folder))
+        root.update()
+        self.assertEqual(page._folder_button["state"], "normal")
+        self.assertEqual(page._folder_label["text"], str(folder))
+        page._folder_button.invoke()
+        opened.assert_called_once_with(folder)
+
+        page.show(self._song(), self._media())
+        root.update()
+        self.assertEqual(page._folder_button["state"], "disabled")
+        self.assertEqual(page._folder_label["text"], "Not in the known song folders")
+
+        page_no_callback = self._page(root)
+        page_no_callback.show(self._song(), self._media(folder=folder))
+        root.update()
+        self.assertEqual(page_no_callback._folder_button["state"], "disabled")
+
+    def test_play_and_stop_are_disabled_without_a_player(self):
+        # Stage 3 ships no player (playback is stage 4), so both stay disabled.
+        root = self.make_root()
+        page = self._page(root)
+        page.show(self._song(), self._media(music=Path("song.ogg")))
+        root.update()
+        self.assertEqual(page._play_button["state"], "disabled")
+        self.assertEqual(page._stop_button["state"], "disabled")
+
+    def test_show_refills_the_same_window_and_close_destroys_it(self):
+        root = self.make_root()
+        page = self._page(root)
+        page.show(self._song(), self._media())
+        root.update()
+        window = page.window
+        page.show(self._song("Two"), self._media())
+        root.update()
+        self.assertIs(page.window, window)
+        self.assertEqual(page._title_label["text"], "Two")
+        page.close()
+        self.assertIsNone(page.window)
+        self.assertIsNotNone(page._saved_geometry)
+        page.show(self._song(), self._media())
+        root.update()
+        self.assertIsNotNone(page.window)
+        self.assertIsNot(page.window, window)
 
 
 if __name__ == "__main__":

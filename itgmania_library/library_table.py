@@ -73,6 +73,11 @@ class LibraryTable:
         layout change.
     show_rows: a callable the table invokes with the visible rows after
         each refresh, so the Distribution Panel keeps receiving its push.
+    on_open_row: a callable the table invokes with the focused row when
+        the user double-clicks a cell or presses Enter on it, so the app
+        can open that row's song page. None (the default) means the
+        gestures do nothing; the focused row is the one opened, never
+        selection()[0], so a multi-selection is left untouched.
 
     The table owns its sort and column state — sort_keys, column_order,
     and column_widths are not inputs, because sort_by rebinds sort_keys
@@ -92,7 +97,7 @@ class LibraryTable:
 
     def __init__(self, parent, filter, dpi_scale, column_visibility,
                  group_visibility, saved_layout, count_label, save_settings,
-                 show_rows):
+                 show_rows, on_open_row=None):
         self._parent = parent
         self._filter = filter
         self._dpi_scale = dpi_scale
@@ -101,6 +106,7 @@ class LibraryTable:
         self.count_label = count_label
         self._save_settings = save_settings
         self._show_rows = show_rows
+        self._on_open_row = on_open_row
         # The render state refresh_table and _insert_batch keep between
         # batches. The rows themselves live in the filter (option C):
         # the table reads them through filter.library_rows().
@@ -195,6 +201,8 @@ class LibraryTable:
         self.tree.bind("<ButtonRelease-1>", self._save_settings, add="+")
         self.tree.bind("<Control-a>", self._select_all_rows, add="+")
         self.tree.bind("<Control-A>", self._select_all_rows, add="+")
+        self.tree.bind("<Double-Button-1>", self._open_focused_row, add="+")
+        self.tree.bind("<Return>", self._open_focused_row_key, add="+")
         visible_columns = [column for column in self.column_order
                            if self.column_visibility[column].get()]
         if visible_columns:
@@ -312,6 +320,35 @@ class LibraryTable:
         matches = [x for x in range(self.tree.winfo_width())
                    if self.tree.identify_column(x) == display_id]
         return (matches[0], matches[-1] + 1) if matches else None
+
+    def _open_focused_row(self, event):
+        """Double-click on a chart row: open the focused row's song page.
+
+        Only a cell opens the page — a heading, the empty space below the
+        rows, and the separators do not. The focused row is the one opened,
+        never selection()[0]: with a multi-selection, the double-click
+        opens the focused row's song and leaves the selection untouched.
+        """
+        if self.tree.identify_region(event.x, event.y) != "cell":
+            return
+        self._invoke_open_row()
+
+    def _open_focused_row_key(self, _event=None):
+        """Enter on a focused row: open that row's song page.
+
+        The focused row is the criterion, not the mouse position — the
+        pointer may be anywhere when Enter is pressed.
+        """
+        self._invoke_open_row()
+
+    def _invoke_open_row(self):
+        """Call on_open_row with the focused row, if there is one."""
+        if self._on_open_row is None:
+            return
+        focused = self.tree.focus()
+        row = self.tree_item_rows.get(focused) if focused else None
+        if row is not None:
+            self._on_open_row(row)
 
     def _select_all_rows(self, _event=None):
         """Ctrl+A in the table (issue #36): select every displayed row.

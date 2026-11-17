@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import os
 import sys
 try:
     import tkinter as tk
@@ -23,7 +24,14 @@ from itgmania_library.course_builder import CourseBuilder
 from itgmania_library.data_paths_dialog import DataPathsDialog
 from itgmania_library.library_filter import LibraryFilter
 from itgmania_library.library_loader import LibraryLoader
+from itgmania_library.library_media import (
+    build_song_media,
+    charts_for_song,
+    open_song_folder,
+    song_roots,
+)
 from itgmania_library.library_table import LibraryTable
+from itgmania_library.song_page import SongPage
 from itgmania_library.distribution_panel import DistributionPanel
 from itgmania_library.library_constants import COLUMN_GROUPS, DEFAULT_VISIBLE_COLUMNS, HEADERS
 from itgmania_library.library_geometry import (
@@ -135,6 +143,9 @@ class LibraryApp:
         self.about_window = None
         self.course_builder = None
         self.distribution_panel = None
+        # The song page (song_page.py, proposal 0011 stage 3): built in
+        # _build, once, and re-raised by show(); None until then.
+        self.song_page = None
         # The Data paths dialog (UI redesign, proposal 0009 Step 3): the
         # component owns its window and note line. It is built first; its
         # load_callback and paths_match_loaded are late-bound lambdas (the
@@ -298,6 +309,15 @@ class LibraryApp:
         self.table_frame = tk.Frame(self.content_frame, bg=theme.BG_WINDOW)
         self.table_frame.pack(side="left", fill="both", expand=True)
         self.count_label = tk.StringVar(value="0 charts")
+        # The song page component (song_page.py, proposal 0011 stage 3):
+        # built once at startup and re-raised by show(). Play stays
+        # disabled until stage 4 supplies the player, and the folder
+        # button stays disabled off Windows, where os.startfile does not
+        # exist.
+        self.song_page = SongPage(
+            self.root, on_play=None, on_stop=None,
+            on_open_folder=open_song_folder if hasattr(os, "startfile") else None,
+            dpi_scale=self._dpi_scale, button_factory=self._button)
         # The table (proposal 0009 Step 6): constructed after the filter
         # and the Distribution Panel, taking the filter and the panel's
         # show_rows; it subscribes its refresh to the filter's change
@@ -309,7 +329,8 @@ class LibraryApp:
              "column_widths": self.saved_settings.get("column_widths", {}),
              "sort_keys": self.saved_settings.get("sort_keys", [])},
             self.count_label, self._save_settings,
-            self.distribution_panel.show_rows)
+            self.distribution_panel.show_rows,
+            on_open_row=self._open_song_page)
         self._filter.subscribe(self._table.refresh_table)
         self.progress = ttk.Progressbar(self.root, mode="indeterminate", style="Horizontal.TProgressbar")
         self.progress.pack(fill="x", padx=scale_pixels(18, self._dpi_scale), pady=(0, scale_pixels(4, self._dpi_scale)))
@@ -492,6 +513,35 @@ class LibraryApp:
         """The chart rows currently selected in the main table (for the course builder)."""
         return self._table.selected_rows()
 
+    def _open_song_page(self, row):
+        """Open the song page for the focused row's song (proposal 0011).
+
+        The song is every row sharing the row's "Course path", read from
+        the filter's rows rather than the visible rows, so a filtered
+        table still shows every chart; the opened chart goes first. The
+        roots are derived from the selected cache dir every time the page
+        opens, so the record is built from the rows as they are now.
+        """
+        course_path = row.get("Course path")
+        if not course_path:
+            return
+        rows = charts_for_song(self._filter.library_rows(), course_path)
+        if not rows:
+            return
+        # The opened chart first; the rest keep the page's type-then-difficulty order.
+        rows = [row] + [other for other in rows if other is not row]
+        cache_dir = self.cache_var.get().strip()
+        cache_path = (Path(cache_dir) if cache_dir
+                      else first_existing_directory(cache_dir_candidates()))
+        media = build_song_media(course_path, song_roots(cache_path), rows)
+        song = {
+            "title": row.get("Title") or "",
+            "artist": row.get("Artist") or "",
+            "pack": row.get("Pack") or "",
+            "charts": rows,
+        }
+        self.song_page.show(song, media)
+
     def _library_rows_for_course(self):
         """Every chart row in the loaded library (for the course builder's ambiguity check)."""
         return self._table.library_rows()
@@ -499,6 +549,7 @@ class LibraryApp:
     def _dialog_is_open(self):
         for window in (self.advanced_search.window if self.advanced_search is not None else None,
                        self.course_builder.window if self.course_builder is not None else None,
+                       self.song_page.window if self.song_page is not None else None,
                        self.about_window):
             if window is not None and window.winfo_exists():
                 return True
@@ -561,6 +612,13 @@ class LibraryApp:
         exactly once) and the Course Builder is told the library
         changed.
         """
+        # A reload or a sync replaces the rows the page shows; close it so
+        # a stale page never shows old scores (proposal 0011). A bare
+        # instance built for a loader test may not have a page; that is
+        # "no page to close", not an error.
+        page = getattr(self, "song_page", None)
+        if page is not None:
+            page.close()
         if preserve_selection:
             # Invariant: the filter and the loader share one rows list.
             # A sync re-scores that list in place (merge_scores never

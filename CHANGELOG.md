@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Double-click a chart (or press Enter on it) to open the song page: the song's banner, background, jacket and CD title, its music file with its length and preview window, and all of its charts with meter, BPM and scores. A file that is missing or is not a PNG shows a placeholder, and a song whose folder is not under any known song folder says so with the folder button disabled. Playback arrives in the next stage, so Play is disabled for now.
 - The launch command is now `python launch.py` instead of `python library_visualizer.py`. The app itself is unchanged: the nineteen modules now live in the `itgmania_library` package, and `launch.py` at the repository root starts it.
 
 ## 1.3.0 - 2026-11-15

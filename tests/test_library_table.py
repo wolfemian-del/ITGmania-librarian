@@ -76,7 +76,8 @@ def make_filter(rows=()):
 def make_table(column_order=None, column_widths=None, sort_keys=None,
                visible_columns=None, column_visibility=None,
                group_visibility=None, rows=(), show_rows=None,
-               save_settings=None, count_label=None, dpi_scale=1.0):
+               save_settings=None, count_label=None, dpi_scale=1.0,
+               on_open_row=None):
     """A real LibraryTable on fake Tk objects, plus the Mock tree it built.
 
     The Treeview and scrollbars are patched to Mocks (the table creates
@@ -112,7 +113,8 @@ def make_table(column_order=None, column_widths=None, sort_keys=None,
             parent, filt, dpi_scale, column_visibility, group_visibility,
             seed, count_label if count_label is not None else Mock(),
             save_settings if save_settings is not None else Mock(),
-            show_rows if show_rows is not None else Mock())
+            show_rows if show_rows is not None else Mock(),
+            on_open_row=on_open_row)
     # The app subscribes the table's refresh to the filter once the table
     # exists; the filter's rows were set before that, so the setup itself
     # does not refresh.
@@ -125,6 +127,94 @@ def rows_for(*specs):
     return [{"Pack": pack, "Type": type_, "Difficulty": difficulty,
              "Title": "Song", "Grade": ""}
             for pack, type_, difficulty in specs]
+
+
+class OpenRowBindingTests(unittest.TestCase):
+    """The double-click and Enter bindings open the focused row's song page
+    (Proposal 0011, stage 3): only a cell opens it, the focused row is the
+    one opened, and a multi-selection is left untouched."""
+
+    ROW = {"Title": "One", "Course path": "P/One"}
+
+    @staticmethod
+    def make_table(on_open_row=None):
+        table, tree = make_table(on_open_row=on_open_row)
+        table.tree_item_rows = {"item1": OpenRowBindingTests.ROW}
+        tree.focus.return_value = "item1"
+        return table, tree
+
+    @staticmethod
+    def event(region="cell"):
+        event = Mock()
+        event.x = 5
+        event.y = 5
+        return event
+
+    def test_double_click_on_a_cell_opens_the_focused_row(self):
+        opened = Mock()
+        table, tree = self.make_table(on_open_row=opened)
+        tree.identify_region.return_value = "cell"
+
+        table._open_focused_row(self.event())
+
+        opened.assert_called_once_with(self.ROW)
+
+    def test_double_click_on_a_heading_opens_nothing(self):
+        opened = Mock()
+        table, tree = self.make_table(on_open_row=opened)
+        tree.identify_region.return_value = "heading"
+
+        table._open_focused_row(self.event())
+
+        opened.assert_not_called()
+
+    def test_double_click_on_empty_space_opens_nothing(self):
+        opened = Mock()
+        table, tree = self.make_table(on_open_row=opened)
+        tree.identify_region.return_value = "nothing"
+
+        table._open_focused_row(self.event())
+
+        opened.assert_not_called()
+
+    def test_enter_opens_the_focused_row_whatever_the_mouse_is_over(self):
+        opened = Mock()
+        table, tree = self.make_table(on_open_row=opened)
+        tree.identify_region.return_value = "heading"
+
+        table._open_focused_row_key(self.event())
+
+        opened.assert_called_once_with(self.ROW)
+
+    def test_no_focused_row_opens_nothing(self):
+        opened = Mock()
+        table, tree = self.make_table(on_open_row=opened)
+        tree.identify_region.return_value = "cell"
+        tree.focus.return_value = ""
+
+        table._open_focused_row(self.event())
+        table._open_focused_row_key(self.event())
+
+        opened.assert_not_called()
+
+    def test_no_callback_means_the_gestures_do_nothing(self):
+        table, tree = self.make_table(on_open_row=None)
+        tree.identify_region.return_value = "cell"
+
+        table._open_focused_row(self.event())
+        table._open_focused_row_key(self.event())
+
+    def test_enter_leaves_the_selection_untouched(self):
+        opened = Mock()
+        table, tree = self.make_table(on_open_row=opened)
+        tree.selection.return_value = ("item1", "item2")
+
+        table._open_focused_row_key(self.event())
+
+        opened.assert_called_once_with(self.ROW)
+        tree.selection_set.assert_not_called()
+        tree.selection_add.assert_not_called()
+        tree.selection_remove.assert_not_called()
 
 
 if __name__ == "__main__":
