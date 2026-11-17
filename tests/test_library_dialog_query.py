@@ -43,7 +43,11 @@ class AdvancedSearchDialogTests(unittest.TestCase):
 
     def test_filters_the_boxes_would_change_are_kept(self):
         for query in ("grade:<B", "grade:S", "grade:>S", "meter:>10", "bpm:<150",
-                      "time:<=90.5", "grade:>=Zzz", "meter:abc", "bpm:"):
+                      "time:<=90.5", "grade:>=Zzz", "meter:abc", "bpm:",
+                      # Issue #194: a time bound over the format cap reads as
+                      # blank in a box, so the box cannot show it — it stays
+                      # in "other" instead of being dropped on Apply.
+                      "time:>=360000", "time:>=1e308", "time:100-360000"):
             with self.subTest(query=query):
                 parts = data.split_dialog_query(query)
                 self.assertEqual(parts["other"], query)
@@ -108,6 +112,7 @@ class AdvancedSearchDialogTests(unittest.TestCase):
             "meter:>=5 meter:<=10", "bpm:>=140 bpm:<=160", "bpm:150", "time:<=1:30", "time:<=90.5",
             "nps:>=10", "nps:>10", "title:song artist:ann pack:one", 'pack:"pack one" percent:>80',
             "song meter:>=8 score:>0 diff:hard", "percent:<50", "bpm:", "grade:", "alpha beta",
+            "time:>=360000", "time:>=1e308", "time:100-360000",
         )
         for query in queries:
             with self.subTest(query=query):

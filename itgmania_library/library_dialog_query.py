@@ -62,14 +62,26 @@ def _absorb_into_dialog(slots: dict, field: str, value: str) -> bool:
         op = bound[0]
         if op in ("range", "==") and not low and not high:
             new_low, new_high = (bound[1], bound[2]) if op == "range" else (bound[1], bound[1])
-            slots[field] = [_format_bound_number(new_low, is_duration),
-                            _format_bound_number(new_high, is_duration)]
+            formatted = [_format_bound_number(new_low, is_duration),
+                         _format_bound_number(new_high, is_duration)]
+            # A duration the box cannot show (over the format cap, so it
+            # reads as blank) is not absorbed: it stays in "other", so
+            # applying the dialog never silently drops the filter.
+            if not all(formatted):
+                return False
+            slots[field] = formatted
             return True
         if op == ">=" and not low:
-            slots[field][0] = _format_bound_number(bound[1], is_duration)
+            formatted = _format_bound_number(bound[1], is_duration)
+            if not formatted:
+                return False
+            slots[field][0] = formatted
             return True
         if op == "<=" and not high:
-            slots[field][1] = _format_bound_number(bound[1], is_duration)
+            formatted = _format_bound_number(bound[1], is_duration)
+            if not formatted:
+                return False
+            slots[field][1] = formatted
             return True
         # Strict > and < have no box: the boxes mean >= and <=.
         return False
