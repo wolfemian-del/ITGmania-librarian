@@ -2495,9 +2495,18 @@ class LiveSongPageDirectTests(unittest.TestCase):
         root.update()
         self.assertGreater(page._charts_canvas.yview()[0], 0.0)
         before = page._charts_canvas.yview()[0]
-        page._charts_canvas.event_generate("<Button-5>", when="now")
+        page._charts_canvas.event_generate("<MouseWheel>", delta=-120,
+                                           when="now")
         root.update()
         self.assertGreater(page._charts_canvas.yview()[0], before)
+        # The X11 wheel events are bound too (a real wheel on X11 sends
+        # Button-4/Button-5, not MouseWheel), but those buttons do not
+        # exist on Windows, so the event is only generated there.
+        if sys.platform != "win32":
+            before = page._charts_canvas.yview()[0]
+            page._charts_canvas.event_generate("<Button-5>", when="now")
+            root.update()
+            self.assertGreater(page._charts_canvas.yview()[0], before)
 
     def test_a_size_only_geometry_is_placed_on_screen(self):
         # The first open uses a size-only geometry (no +x+y); the window
@@ -2524,10 +2533,15 @@ class LiveSongPageDirectTests(unittest.TestCase):
         root.update()
         page.window.geometry("760x800")
         root.update()
+        # The window manager may clamp the resize to the screen (on the
+        # Windows runner the screen is 768 tall, so 800 becomes 749), so
+        # the test records the height the window actually reached and
+        # asserts the reopen matches that, not the requested 800.
+        resized = page.window.winfo_height()
         page.close()
         page.show(self._song(charts=self._many_charts(30)), self._media())
         root.update()
-        self.assertEqual(page.window.winfo_height(), 800)
+        self.assertEqual(page.window.winfo_height(), resized)
         self.assertTrue(page._charts_scrollbar.winfo_ismapped())
         self.assertEqual(len(page._charts_frame.winfo_children()), 30)
 
