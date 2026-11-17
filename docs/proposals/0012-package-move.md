@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — for review |
+| **Status** | Approved - (2026-11-16) |
 | **Author** | Muse (Muse Spark 1.3) |
 | **Date** | 2026-11-16 |
 | **Base** | main `8fb0ec4e` (after PR #186 merged; suite 628 OK, skipped=38, headless) |
