@@ -19,9 +19,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import library_search as search
-import library_sources as data
-import library_visualizer as app
+from itgmania_library import library_search as search
+from itgmania_library import library_sources as data
+from itgmania_library import library_visualizer as app
 
 FIXTURES = Path(__file__).parent / "fixtures"
 

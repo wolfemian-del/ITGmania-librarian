@@ -5,10 +5,14 @@ guide stays in `README.md`.
 
 ## Launch
 
-`python library_visualizer.py` is the entry point — it is the only file you
-run. The other 18 `.py` files at the root are imported by it (directly or
-through each other). There is no package: every module sits flat at the
-repository root and imports its siblings by their plain names.
+Run `launch.py` from the repository root (`python launch.py`). It is the
+only file you run: it imports `main` from
+`itgmania_library.library_visualizer` and calls it. The other 18 modules
+live in the `itgmania_library` package and are imported by it (directly or
+through each other), by their absolute package names
+(`from itgmania_library.library_sources import ...`). As an aside,
+`python -m itgmania_library` from the repo root launches the app too,
+through the package's `__main__.py`.
 
 ## Layers
 
@@ -51,25 +55,25 @@ Two naming facts to know before you trust the prefixes:
 
 | Module | What it holds | Tests |
 | --- | --- | --- |
-| `library_visualizer.py` | the shell: `LibraryApp`, the menu, and the `main()` entry point | `tests/test_library_visualizer.py` |
-| `library_loader.py` | the load/sync engine: scan and sync workers, result queue, generation counters, snapshot counters | `tests/test_library_loader.py` |
-| `library_search.py` | the search language: parser, matcher, and the numeric-bound helpers | `tests/test_library_search.py` |
-| `course_builder.py` | the Build-a-course dialog and its queue | `tests/test_course_builder.py` |
-| `library_table.py` | the song table: sorting, column order and widths, row tinting | `tests/test_library_table.py` |
-| `distribution_panel.py` | the distribution side panel and its charts | `tests/test_ui_distribution.py` |
-| `library_sources.py` | scores, cache, and path helpers | `tests/test_library_sources.py` |
-| `library_distribution.py` | the distribution charts: meter, difficulty, and BPM aggregation | `tests/test_distribution.py` |
-| `advanced_search.py` | the Advanced Search dialog | `tests/test_advanced_search.py` |
-| `library_stores.py` | persistence: the snapshot and settings stores | `tests/test_snapshot_store.py`, `tests/test_settings_store.py` |
-| `data_paths_dialog.py` | the Data paths dialog | `tests/test_data_paths_dialog.py` |
-| `library_filter.py` | the filter pipeline: the five filter variables, traces, search debounce | `tests/test_library_filter.py` |
-| `library_course.py` | .crs text-format helpers: formatting, parsing, trailing-modifier detection, field validation | `tests/test_library_course.py` |
-| `library_format.py` | formatting and sort-key helpers | `tests/test_library_format.py` |
-| `library_dialog_query.py` | the Advanced Search dialog's query conversion | `tests/test_library_dialog_query.py` |
-| `library_geometry.py` | window geometry and DPI helpers | `tests/test_library_geometry.py` |
-| `theme.py` | every color, font, and fixed size the window uses | `tests/test_theme.py` |
-| `row_tints.py` | the difficulty row tints, shared by the table and the course builder | `tests/test_row_tints.py` |
-| `library_constants.py` | the shared column and grade tables | `tests/test_import_surface.py` |
+| `itgmania_library/library_visualizer.py` | the shell: `LibraryApp`, the menu, and the `main()` entry point | `tests/test_library_visualizer.py` |
+| `itgmania_library/library_loader.py` | the load/sync engine: scan and sync workers, result queue, generation counters, snapshot counters | `tests/test_library_loader.py` |
+| `itgmania_library/library_search.py` | the search language: parser, matcher, and the numeric-bound helpers | `tests/test_library_search.py` |
+| `itgmania_library/course_builder.py` | the Build-a-course dialog and its queue | `tests/test_course_builder.py` |
+| `itgmania_library/library_table.py` | the song table: sorting, column order and widths, row tinting | `tests/test_library_table.py` |
+| `itgmania_library/distribution_panel.py` | the distribution side panel and its charts | `tests/test_ui_distribution.py` |
+| `itgmania_library/library_sources.py` | scores, cache, and path helpers | `tests/test_library_sources.py` |
+| `itgmania_library/library_distribution.py` | the distribution charts: meter, difficulty, and BPM aggregation | `tests/test_distribution.py` |
+| `itgmania_library/advanced_search.py` | the Advanced Search dialog | `tests/test_advanced_search.py` |
+| `itgmania_library/library_stores.py` | persistence: the snapshot and settings stores | `tests/test_snapshot_store.py`, `tests/test_settings_store.py` |
+| `itgmania_library/data_paths_dialog.py` | the Data paths dialog | `tests/test_data_paths_dialog.py` |
+| `itgmania_library/library_filter.py` | the filter pipeline: the five filter variables, traces, search debounce | `tests/test_library_filter.py` |
+| `itgmania_library/library_course.py` | .crs text-format helpers: formatting, parsing, trailing-modifier detection, field validation | `tests/test_library_course.py` |
+| `itgmania_library/library_format.py` | formatting and sort-key helpers | `tests/test_library_format.py` |
+| `itgmania_library/library_dialog_query.py` | the Advanced Search dialog's query conversion | `tests/test_library_dialog_query.py` |
+| `itgmania_library/library_geometry.py` | window geometry and DPI helpers | `tests/test_library_geometry.py` |
+| `itgmania_library/theme.py` | every color, font, and fixed size the window uses | `tests/test_theme.py` |
+| `itgmania_library/row_tints.py` | the difficulty row tints, shared by the table and the course builder | `tests/test_row_tints.py` |
+| `itgmania_library/library_constants.py` | the shared column and grade tables | `tests/test_import_surface.py` |
 
 ## How the pieces fit
 

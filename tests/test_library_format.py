@@ -1,8 +1,8 @@
 import time
 import unittest
 
-import library_format as data
-from library_constants import GRADE_NAMES, GRADE_OPTIONS
+from itgmania_library import library_format as data
+from itgmania_library.library_constants import GRADE_NAMES, GRADE_OPTIONS
 
 
 class SplitPathTests(unittest.TestCase):

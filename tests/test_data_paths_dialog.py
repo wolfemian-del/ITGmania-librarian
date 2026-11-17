@@ -11,7 +11,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from data_paths_dialog import DataPathsDialog
+from itgmania_library.data_paths_dialog import DataPathsDialog
 
 
 class DataPathsPopupTests(unittest.TestCase):

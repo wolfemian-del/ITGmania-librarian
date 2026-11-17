@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import library_sources as data
+from itgmania_library import library_sources as data
 
 
 class ParsingTests(unittest.TestCase):

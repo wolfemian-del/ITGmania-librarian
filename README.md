@@ -11,7 +11,7 @@ The screenshot above is a Linux render of the main window with a small synthetic
 Install Python 3.10 or newer with Tcl/Tk, then run:
 
 ```powershell
-python library_visualizer.py
+python launch.py
 ```
 
 Optional: install `matplotlib` (`pip install matplotlib`, or `pip install -r requirements.txt`) to display interactive collection distribution charts (Meter, Difficulty, and BPM) in the collapsible side panel. Without it the panel shows an install hint and everything else works as usual.
@@ -67,7 +67,7 @@ The app remembers the selected data paths, the Pack/Type/Difficulty filter selec
 
 ## Changing the look
 
-Every color and font the window uses is defined, with a note on what it is for, in `theme.py`. To restyle the app, edit the values there and restart it; the window code only refers to the names (for example `theme.BG_WINDOW`), and a test fails if a color or font is typed directly into the window code again (the nine window-source files listed as `WINDOW_SOURCES` in `tests/test_theme.py`). `theme.DIFFICULTY_COLORS` controls both the distribution chart bars and the song table row tints. Row heights, panel widths, and window sizes are likewise fixed numbers in `theme.py`, so a much larger font may also need those adjusted. Those numbers are in 100% units: on Windows the app declares itself DPI-aware, so at 125% or 150% display scaling they are scaled up and the text stays sharp instead of being bitmap-stretched, and the sizes and positions the app remembers are stored in 100% units, so they come back the same at any scale.
+Every color and font the window uses is defined, with a note on what it is for, in `itgmania_library/theme.py`. To restyle the app, edit the values there and restart it; the window code only refers to the names (for example `theme.BG_WINDOW`), and a test fails if a color or font is typed directly into the window code again (the nine window-source files listed as `WINDOW_SOURCES` in `tests/test_theme.py`). `theme.DIFFICULTY_COLORS` controls both the distribution chart bars and the song table row tints. Row heights, panel widths, and window sizes are likewise fixed numbers in `itgmania_library/theme.py`, so a much larger font may also need those adjusted. Those numbers are in 100% units: on Windows the app declares itself DPI-aware, so at 125% or 150% display scaling they are scaled up and the text stays sharp instead of being bitmap-stretched, and the sizes and positions the app remembers are stored in 100% units, so they come back the same at any scale.
 
 ## Development checks
 
@@ -85,10 +85,10 @@ ruff check .
 
 `ruff check --fix` applies the safe fixes (the unused import and the `__all__` ordering — verified: the ordering fix only swaps the inverted pairs within their groups and keeps the constants / classes / functions grouping). The `int()` cast fix is marked unsafe and is not applied by plain `--fix`; fix that one by hand, one line.
 
-`theme.py` holds the colors and fonts; `tests/test_theme.py` checks the window code uses it.
+`itgmania_library/theme.py` holds the colors and fonts; `tests/test_theme.py` checks the window code uses it.
 
-The code is laid out in `docs/ARCHITECTURE.md`: a layer diagram, a table of all 19 modules with what each holds and its tests, and how the pieces fit together. `library_visualizer.py` is the entry point; the other files are imported by it.
+The code is laid out in `docs/ARCHITECTURE.md`: a layer diagram, a table of all 19 modules with what each holds and its tests, and how the pieces fit together. `itgmania_library/library_visualizer.py` is the entry point; the other files are imported by it.
 
 ## License
 
-Released under the MIT License; see `LICENSE`. **Help → About** shows the version and license. The version number is `__version__` in `library_visualizer.py`, and a test checks that it matches the newest heading in `CHANGELOG.md`, so change both together when releasing.
+Released under the MIT License; see `LICENSE`. **Help → About** shows the version and license. The version number is `__version__` in `itgmania_library/library_visualizer.py`, and a test checks that it matches the newest heading in `CHANGELOG.md`, so change both together when releasing.

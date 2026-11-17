@@ -1,10 +1,10 @@
 import importlib.util
 import unittest
-import library_distribution as data
-import library_search as search
-from library_constants import DIFFICULTY_ORDER
-from library_format import number
-from library_filter import LibraryFilter
+from itgmania_library import library_distribution as data
+from itgmania_library import library_search as search
+from itgmania_library.library_constants import DIFFICULTY_ORDER
+from itgmania_library.library_format import number
+from itgmania_library.library_filter import LibraryFilter
 
 
 class _StandInVar:

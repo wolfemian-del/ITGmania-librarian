@@ -15,9 +15,9 @@ except ImportError:
     tk = None
     filedialog = None
 
-import theme
-from library_geometry import scale_geometry, scale_pixels
-from library_sources import invalid_paths_note
+from itgmania_library import theme
+from itgmania_library.library_geometry import scale_geometry, scale_pixels
+from itgmania_library.library_sources import invalid_paths_note
 
 
 class DataPathsDialog:

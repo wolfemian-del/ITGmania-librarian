@@ -14,7 +14,7 @@ them in a sortable, filterable table, and can build .CRS course files. Read READ
   languages, build steps, code generation and clever metaprogramming are not, unless the owner agrees.
 - If you add a package, say what it is for, list it in README.md (and requirements.txt), and prefer
   packages that install with plain pip on Windows. Do not limit a useful feature to avoid a dependency.
-- Keep logic that does not need the window in a `library_*` data module (no Tkinter) with tests in tests/.
+- Keep logic that does not need the window in an `itgmania_library.library_*` data module (no Tkinter) with tests in tests/.
 - Prefer small, single-purpose functions and clear names. Comment only where a passage's purpose or
   ordering could be misread. Documentation lives in README.md; update it when behavior changes.
 - Line length: aim for 88 characters or fewer; 100 is the hard limit — a line
@@ -68,7 +68,7 @@ them in a sortable, filterable table, and can build .CRS course files. Read READ
   report it to the owner as a finding; do not change it until the owner confirms.
 
 ## Running and checking
-- Run: python library_visualizer.py (Python 3.10+; the owner uses 3.14 on Windows 11).
+- Run: python launch.py (Python 3.10+; the owner uses 3.14 on Windows 11).
 - Tests: python -m unittest discover -s tests
 - Many sandboxes have no Tkinter or display. If you cannot open the window, say so and list checks
   the owner can run.

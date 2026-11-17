@@ -23,8 +23,8 @@ import xml.etree.ElementTree as ET
 from datetime import datetime
 from pathlib import Path
 
-from library_format import format_refresh_time
-from library_sources import (
+from itgmania_library.library_format import format_refresh_time
+from itgmania_library.library_sources import (
     _normalized_source_path,
     any_scores_match,
     invalid_paths_note,

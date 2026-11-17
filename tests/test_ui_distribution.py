@@ -5,10 +5,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import distribution_panel as dp
-import library_distribution as data
-import library_visualizer as app
-import theme
+from itgmania_library import distribution_panel as dp
+from itgmania_library import library_distribution as data
+from itgmania_library import library_visualizer as app
+from itgmania_library import theme
 
 
 class DistributionUITests(unittest.TestCase):

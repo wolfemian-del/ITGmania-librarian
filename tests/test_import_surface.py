@@ -19,15 +19,15 @@ names this file defines.
 
 import unittest
 
-import library_constants
-import library_course
-import library_format
-import library_geometry
-import library_dialog_query
-import library_distribution
-import library_search
-import library_sources
-import library_stores
+from itgmania_library import library_constants
+from itgmania_library import library_course
+from itgmania_library import library_format
+from itgmania_library import library_geometry
+from itgmania_library import library_dialog_query
+from itgmania_library import library_distribution
+from itgmania_library import library_search
+from itgmania_library import library_sources
+from itgmania_library import library_stores
 
 
 class ImportSurfaceTests(unittest.TestCase):

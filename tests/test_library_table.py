@@ -14,14 +14,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from library_constants import TAP_FIELDS
-from library_geometry import scale_pixels
-from library_stores import SettingsStore
-import library_table as table_module
-import row_tints
-import library_visualizer as app
-from library_filter import LibraryFilter
-from library_table import LibraryTable
+from itgmania_library.library_constants import TAP_FIELDS
+from itgmania_library.library_geometry import scale_pixels
+from itgmania_library.library_stores import SettingsStore
+from itgmania_library import library_table as table_module
+from itgmania_library import row_tints
+from itgmania_library import library_visualizer as app
+from itgmania_library.library_filter import LibraryFilter
+from itgmania_library.library_table import LibraryTable
 
 
 class _ValueVar:

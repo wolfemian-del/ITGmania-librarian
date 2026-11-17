@@ -16,13 +16,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
-import library_sources as sources
-import library_stores as stores
-import library_loader as loader
-import library_table as table_module
-import library_visualizer as app
-from library_table import LibraryTable
-import data_paths_dialog as dialog
+from itgmania_library import library_sources as sources
+from itgmania_library import library_stores as stores
+from itgmania_library import library_loader as loader
+from itgmania_library import library_table as table_module
+from itgmania_library import library_visualizer as app
+from itgmania_library.library_table import LibraryTable
+from itgmania_library import data_paths_dialog as dialog
 
 
 class _StubStatus:

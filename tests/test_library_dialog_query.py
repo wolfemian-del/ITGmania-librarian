@@ -1,7 +1,7 @@
 import unittest
 
-import library_dialog_query as data
-import library_search
+from itgmania_library import library_dialog_query as data
+from itgmania_library import library_search
 
 
 class AdvancedSearchDialogTests(unittest.TestCase):

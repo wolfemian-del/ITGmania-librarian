@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 import shlex
 
-from library_constants import (
+from itgmania_library.library_constants import (
     GRADE_NAMES,
     GRADE_RANK,
     RADAR_COUNT_FIELDS,

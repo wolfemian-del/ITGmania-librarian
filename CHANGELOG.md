@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- The launch command is now `python launch.py` instead of `python library_visualizer.py`. The app itself is unchanged: the nineteen modules now live in the `itgmania_library` package, and `launch.py` at the repository root starts it.
+
 ## 1.3.0 - 2026-11-15
 
 ### Scores sync

@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import contextlib
 
-from library_format import difficulty_sort_key
-from library_search import (
+from itgmania_library.library_format import difficulty_sort_key
+from itgmania_library.library_search import (
     CHART_FILTER_FIELDS,
     find_unreadable_directives,
     match_chart_query,

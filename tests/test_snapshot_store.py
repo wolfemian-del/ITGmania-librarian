@@ -15,9 +15,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import library_sources
-import library_stores
-from library_stores import SnapshotStore
+from itgmania_library import library_sources
+from itgmania_library import library_stores
+from itgmania_library.library_stores import SnapshotStore
 
 HEADERS = ("Title", "Subtitle", "Artist", "Pack", "Type", "Difficulty",
            "Meter", "Time", "BPM", "Chart")

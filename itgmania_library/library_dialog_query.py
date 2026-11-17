@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from library_constants import GRADE_OPTIONS
-from library_format import format_duration
-from library_search import (
+from itgmania_library.library_constants import GRADE_OPTIONS
+from itgmania_library.library_format import format_duration
+from itgmania_library.library_search import (
     _quote_for_search,
     parse_numeric_bound,
     parse_search_query,
