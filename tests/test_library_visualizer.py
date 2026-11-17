@@ -2418,11 +2418,153 @@ class LiveSongPageDirectTests(unittest.TestCase):
         self.assertEqual(page._title_label["text"], "Two")
         page.close()
         self.assertIsNone(page.window)
-        self.assertIsNotNone(page._saved_geometry)
+        # A plain close records nothing (Proposal 0013, the refinement):
+        # the window was never moved or resized, so there is no geometry
+        # to remember for the next open.
+        self.assertIsNone(page._saved_geometry)
         page.show(self._song(), self._media())
         root.update()
         self.assertIsNotNone(page.window)
         self.assertIsNot(page.window, window)
+
+    # Proposal 0013: the window opens at the height its song needs, and
+    # the chart list scrolls when the song has more charts than fit.
+    # Content sizing only runs on a first open (no saved geometry), so
+    # each measurement below uses a fresh page.
+
+    @staticmethod
+    def _many_charts(n):
+        return [{"Type": "dance-single", "Difficulty": "Hard",
+                 "Meter": 10.0, "BPM": "150", "Score": ""}
+                for _ in range(n)]
+
+    def _assert_buttons_visible(self, page):
+        window_height = page.window.winfo_height()
+        for button in (page._play_button, page._stop_button,
+                       page._folder_button):
+            self.assertLessEqual(
+                button.winfo_y() + button.winfo_height(), window_height)
+
+    def test_a_one_chart_song_opens_shorter_than_a_sixteen_chart_song(self):
+        root = self.make_root()
+        one = self._page(root)
+        one.show(self._song(charts=self._many_charts(1)), self._media())
+        root.update()
+        short = one.window.winfo_height()
+        self.assertLess(short, 1000)
+        self._assert_buttons_visible(one)
+        one.close()
+        many = self._page(root)
+        many.show(self._song(charts=self._many_charts(16)), self._media())
+        root.update()
+        tall = many.window.winfo_height()
+        self.assertGreater(tall, short)
+        self.assertLessEqual(tall, root.winfo_screenheight())
+        self._assert_buttons_visible(many)
+
+    def test_a_fitting_list_shows_no_scrollbar(self):
+        root = self.make_root()
+        page = self._page(root)
+        page.show(self._song(), self._media())
+        root.update()
+        self.assertFalse(page._charts_scrollbar.winfo_ismapped())
+        self.assertEqual(page._charts_canvas.yview(), (0.0, 1.0))
+
+    def test_a_fifty_chart_song_opens_no_taller_than_the_screen_and_scrolls(self):
+        root = self.make_root()
+        page = self._page(root)
+        page.show(self._song(charts=self._many_charts(50)), self._media())
+        root.update()
+        self.assertLessEqual(page.window.winfo_height(),
+                             root.winfo_screenheight())
+        self.assertTrue(page._charts_scrollbar.winfo_ismapped())
+        self.assertLess(page._charts_canvas.yview()[1], 1.0)
+        region = page._charts_canvas.cget("scrollregion")
+        self.assertGreater(int(region.split()[3]),
+                           page._charts_canvas.winfo_height())
+        self._assert_buttons_visible(page)
+
+    def test_the_mousewheel_scrolls_an_overflowing_list(self):
+        root = self.make_root()
+        page = self._page(root)
+        page.show(self._song(charts=self._many_charts(50)), self._media())
+        root.update()
+        self.assertNotEqual(page._charts_canvas.bind("<MouseWheel>"), "")
+        page._charts_canvas.event_generate("<MouseWheel>", delta=-120,
+                                           when="now")
+        root.update()
+        self.assertGreater(page._charts_canvas.yview()[0], 0.0)
+        before = page._charts_canvas.yview()[0]
+        page._charts_canvas.event_generate("<Button-5>", when="now")
+        root.update()
+        self.assertGreater(page._charts_canvas.yview()[0], before)
+
+    def test_a_size_only_geometry_is_placed_on_screen(self):
+        # The first open uses a size-only geometry (no +x+y); the window
+        # manager places it, and the only placement path is that one.
+        root = self.make_root()
+        page = self._page(root)
+        page.show(self._song(), self._media())
+        root.update()
+        self.assertTrue(page.window.winfo_ismapped())
+        self.assertGreaterEqual(page.window.winfo_x(), 0)
+        self.assertGreaterEqual(page.window.winfo_y(), 0)
+        self.assertLessEqual(
+            page.window.winfo_y() + page.window.winfo_height(),
+            root.winfo_screenheight())
+
+    def test_a_resize_in_the_session_is_remembered_for_the_next_open(self):
+        # Once the owner resizes the window, the saved geometry wins for
+        # later opens (Proposal 0013, the refinement), and the scrollbar
+        # covers a taller song. Thirty charts need more height than the
+        # resized window even without images, so the list must scroll.
+        root = self.make_root()
+        page = self._page(root)
+        page.show(self._song(charts=self._many_charts(1)), self._media())
+        root.update()
+        page.window.geometry("760x800")
+        root.update()
+        page.close()
+        page.show(self._song(charts=self._many_charts(30)), self._media())
+        root.update()
+        self.assertEqual(page.window.winfo_height(), 800)
+        self.assertTrue(page._charts_scrollbar.winfo_ismapped())
+        self.assertEqual(len(page._charts_frame.winfo_children()), 30)
+
+    def test_a_plain_close_does_not_pin_the_size(self):
+        # The refinement (Proposal 0013): closing the page without
+        # moving or resizing it records nothing, so the next song sizes
+        # to itself instead of reusing the first song's height.
+        root = self.make_root()
+        page = self._page(root)
+        page.show(self._song(charts=self._many_charts(1)), self._media())
+        root.update()
+        short = page.window.winfo_height()
+        page.close()
+        self.assertIsNone(page._saved_geometry)
+        page.show(self._song(charts=self._many_charts(16)), self._media())
+        root.update()
+        self.assertGreater(page.window.winfo_height(), short)
+        self.assertFalse(page._charts_scrollbar.winfo_ismapped())
+
+    def test_a_drag_is_remembered_for_the_next_open(self):
+        # A move without a resize is also a deliberate change: the
+        # position sticks for the next open, along with the size.
+        root = self.make_root()
+        page = self._page(root)
+        page.show(self._song(charts=self._many_charts(1)), self._media())
+        root.update()
+        short = page.window.winfo_height()
+        page.window.geometry(f"760x{short}+100+100")
+        root.update()
+        page.close()
+        self.assertIsNotNone(page._saved_geometry)
+        page.show(self._song(charts=self._many_charts(16)), self._media())
+        root.update()
+        self.assertEqual(page.window.winfo_x(), 100)
+        self.assertEqual(page.window.winfo_y(), 100)
+        self.assertEqual(page.window.winfo_height(), short)
+        self.assertTrue(page._charts_scrollbar.winfo_ismapped())
 
 
 if __name__ == "__main__":
