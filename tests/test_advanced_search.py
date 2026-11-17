@@ -8,9 +8,9 @@ widgets, the same shape they had against the app method.
 import unittest
 from unittest.mock import Mock, patch
 
-import advanced_search
-import theme
-from advanced_search import AdvancedSearch
+from itgmania_library import advanced_search
+from itgmania_library import theme
+from itgmania_library.advanced_search import AdvancedSearch
 
 
 def make_component(search_text=""):

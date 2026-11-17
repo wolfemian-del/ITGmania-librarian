@@ -11,8 +11,14 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from library_constants import GRADE_NAMES, RADAR_FIELDS, TAP_FIELDS, TECH_FIELDS
-from library_format import format_bpm_display, number, parse_bpms, split_path, tag_map
+from itgmania_library.library_constants import GRADE_NAMES, RADAR_FIELDS, TAP_FIELDS, TECH_FIELDS
+from itgmania_library.library_format import (
+    format_bpm_display,
+    number,
+    parse_bpms,
+    split_path,
+    tag_map,
+)
 
 
 def stats_index(stats_file: Path) -> dict[tuple, dict]:

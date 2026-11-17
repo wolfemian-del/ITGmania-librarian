@@ -17,23 +17,23 @@ from pathlib import Path
 # The release number, shown in Help > About. Keep it equal to the newest heading in CHANGELOG.md (a test checks).
 __version__ = "1.3.0"
 
-import theme
-from advanced_search import AdvancedSearch
-from course_builder import CourseBuilder
-from data_paths_dialog import DataPathsDialog
-from library_filter import LibraryFilter
-from library_loader import LibraryLoader
-from library_table import LibraryTable
-from distribution_panel import DistributionPanel
-from library_constants import COLUMN_GROUPS, DEFAULT_VISIBLE_COLUMNS, HEADERS
-from library_geometry import (
+from itgmania_library import theme
+from itgmania_library.advanced_search import AdvancedSearch
+from itgmania_library.course_builder import CourseBuilder
+from itgmania_library.data_paths_dialog import DataPathsDialog
+from itgmania_library.library_filter import LibraryFilter
+from itgmania_library.library_loader import LibraryLoader
+from itgmania_library.library_table import LibraryTable
+from itgmania_library.distribution_panel import DistributionPanel
+from itgmania_library.library_constants import COLUMN_GROUPS, DEFAULT_VISIBLE_COLUMNS, HEADERS
+from itgmania_library.library_geometry import (
     declare_dpi_awareness,
     dpi_scale_factor,
     scale_geometry,
     scale_pixels,
 )
-from library_sources import cache_dir_candidates, first_existing_directory
-from library_stores import (
+from itgmania_library.library_sources import cache_dir_candidates, first_existing_directory
+from itgmania_library.library_stores import (
     LIBRARY_CACHE_SCHEMA_VERSION,
     SettingsStore,
     SnapshotStore,

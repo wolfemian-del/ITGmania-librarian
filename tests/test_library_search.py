@@ -2,10 +2,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-import library_distribution as distribution
-import library_search as data
-import library_sources as sources
-from library_format import bpm_sort_key
+from itgmania_library import library_distribution as distribution
+from itgmania_library import library_search as data
+from itgmania_library import library_sources as sources
+from itgmania_library.library_format import bpm_sort_key
 
 
 class SearchQueryTests(unittest.TestCase):

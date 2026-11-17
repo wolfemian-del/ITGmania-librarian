@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-import library_geometry as data
+from itgmania_library import library_geometry as data
 
 
 class CourseGeometryParsingTests(unittest.TestCase):

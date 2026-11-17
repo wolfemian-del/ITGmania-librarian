@@ -15,22 +15,22 @@ try:
 except ImportError:
     ttk = None
 
-import row_tints
-from library_constants import (
+from itgmania_library import row_tints
+from itgmania_library.library_constants import (
     COLUMN_GROUPS,
     DEFAULT_VISIBLE_COLUMNS,
     HEADERS,
     NUMERIC_COLUMNS,
 )
-from library_format import (
+from itgmania_library.library_format import (
     bpm_sort_key,
     difficulty_sort_key,
     format_duration,
     grade_sort_key,
     number,
 )
-from library_geometry import scale_pixels
-from library_stores import _valid_column_width
+from itgmania_library.library_geometry import scale_pixels
+from itgmania_library.library_stores import _valid_column_width
 
 # How long one batch of table-row inserts may run before yielding to the event
 # loop (see _insert_batch): long enough to fill quickly, short enough that the

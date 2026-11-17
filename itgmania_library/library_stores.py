@@ -12,8 +12,8 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
-from library_geometry import parse_course_geometry
-from library_sources import _normalized_source_path
+from itgmania_library.library_geometry import parse_course_geometry
+from itgmania_library.library_sources import _normalized_source_path
 
 
 # The library snapshot (proposal 0008): SnapshotStore owns library_cache.json.

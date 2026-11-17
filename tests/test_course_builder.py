@@ -4,11 +4,11 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-import course_builder
-import library_course
-import row_tints
-import theme
-from course_builder import CourseBuilder
+from itgmania_library import course_builder
+from itgmania_library import library_course
+from itgmania_library import row_tints
+from itgmania_library import theme
+from itgmania_library.course_builder import CourseBuilder
 
 
 def make_builder(entries=(), library_rows=()):

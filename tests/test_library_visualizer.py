@@ -8,12 +8,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
-import data_paths_dialog as dialog
-import distribution_panel as dp
-import library_geometry as geometry
-import library_stores as stores
-import library_visualizer as app
-import theme
+from itgmania_library import data_paths_dialog as dialog
+from itgmania_library import distribution_panel as dp
+from itgmania_library import library_geometry as geometry
+from itgmania_library import library_stores as stores
+from itgmania_library import library_visualizer as app
+from itgmania_library import theme
 
 
 def _mock_table(column_width=100):

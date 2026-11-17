@@ -1,10 +1,10 @@
 import unittest
 from unittest.mock import Mock
 
-import distribution_panel as dp
-import library_filter as filter_module
-import library_visualizer as app
-from library_filter import LibraryFilter
+from itgmania_library import distribution_panel as dp
+from itgmania_library import library_filter as filter_module
+from itgmania_library import library_visualizer as app
+from itgmania_library.library_filter import LibraryFilter
 
 
 class _ValueVar:

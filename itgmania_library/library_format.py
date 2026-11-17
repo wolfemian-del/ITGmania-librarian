@@ -6,7 +6,7 @@ import math
 import re
 from datetime import datetime
 
-from library_constants import DIFFICULTY_ORDER, DIFFICULTY_RANK, GRADE_RANK
+from itgmania_library.library_constants import DIFFICULTY_ORDER, DIFFICULTY_RANK, GRADE_RANK
 
 
 def number(value: str | None, default: float = 0) -> float:

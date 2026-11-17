@@ -4,13 +4,14 @@ import re
 import unittest
 from pathlib import Path
 
-import theme
+from itgmania_library import theme
 
 ROOT = Path(__file__).resolve().parent.parent
+PACKAGE = ROOT / "itgmania_library"
 # The window code lives in these modules; a split move adds its module here so the
 # guards below keep covering all of it.
 WINDOW_SOURCES = tuple(
-    (ROOT / name).read_text(encoding="utf-8")
+    (PACKAGE / name).read_text(encoding="utf-8")
     for name in ("library_visualizer.py", "course_builder.py", "row_tints.py",
                  "advanced_search.py", "distribution_panel.py", "data_paths_dialog.py",
                  "library_loader.py", "library_filter.py", "library_table.py")
@@ -87,7 +88,7 @@ class ThemeValuesTests(unittest.TestCase):
                 self.assertTrue(HEX_COLOR.fullmatch(value) or value.isalpha(), f"{name} = {value!r}")
 
     def test_difficulty_colors_cover_every_difficulty(self):
-        from library_constants import DIFFICULTY_ORDER
+        from itgmania_library.library_constants import DIFFICULTY_ORDER
         for difficulty in DIFFICULTY_ORDER:
             self.assertIn(difficulty, theme.DIFFICULTY_COLORS)
 
@@ -127,7 +128,7 @@ class ThemeValuesTests(unittest.TestCase):
             self.assertTrue(all(isinstance(v, int) and v > 0 for v in min_size), name)
 
     def test_theme_does_not_need_tkinter(self):
-        self.assertNotIn("tkinter", (ROOT / "theme.py").read_text(encoding="utf-8"))
+        self.assertNotIn("tkinter", (PACKAGE / "theme.py").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

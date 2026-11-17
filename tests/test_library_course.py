@@ -1,6 +1,6 @@
 import unittest
 
-import library_course as data
+from itgmania_library import library_course as data
 
 
 class CourseModelTests(unittest.TestCase):

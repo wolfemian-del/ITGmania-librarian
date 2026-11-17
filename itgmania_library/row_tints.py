@@ -8,7 +8,7 @@ the white tag live here once, so the two tables cannot drift apart
 
 from __future__ import annotations
 
-import theme
+from itgmania_library import theme
 
 UNKNOWN_DIFFICULTY_TAG = "diff_unknown"  # tag for a difficulty name that theme.DIFFICULTY_COLORS lacks
 SELECTED_ROW_TAG = "selected_row"  # tag that turns a selected row's text white

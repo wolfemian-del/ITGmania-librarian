@@ -43,8 +43,8 @@ def _load_matplotlib():
             MATPLOTLIB_AVAILABLE = True
     return MATPLOTLIB_AVAILABLE
 
-import theme
-from library_distribution import (
+from itgmania_library import theme
+from itgmania_library.library_distribution import (
     aggregate_bpm_distribution,
     aggregate_difficulty_distribution,
     aggregate_meter_distribution,
@@ -54,8 +54,8 @@ from library_distribution import (
     chart_click_decision,
     distribution_summary_stats,
 )
-from library_geometry import scale_pixels
-from library_search import (
+from itgmania_library.library_geometry import scale_pixels
+from itgmania_library.library_search import (
     CHART_FILTER_FIELDS,
     get_active_chart_filters,
     parse_search_query,

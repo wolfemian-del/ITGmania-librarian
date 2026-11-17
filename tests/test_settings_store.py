@@ -13,8 +13,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-import library_stores
-from library_stores import SettingsStore
+from itgmania_library import library_stores
+from itgmania_library.library_stores import SettingsStore
 
 
 def make_store(directory):

@@ -5,8 +5,8 @@ import math
 import statistics
 from typing import NamedTuple
 
-from library_constants import DIFFICULTY_ORDER
-from library_search import (
+from itgmania_library.library_constants import DIFFICULTY_ORDER
+from itgmania_library.library_search import (
     CHART_FILTER_FIELDS,
     _compare_bpm_bound,
     filter_texts_match,

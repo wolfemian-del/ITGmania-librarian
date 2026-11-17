@@ -17,17 +17,17 @@ except ImportError:
     messagebox = None
     ttk = None
 
-import row_tints
-import theme
-from library_course import (
+from itgmania_library import row_tints
+from itgmania_library import theme
+from itgmania_library.library_course import (
     course_append_bytes,
     course_song_lines,
     find_ambiguous_course_entries,
     format_new_course,
     validate_course_fields,
 )
-from library_format import format_duration, number
-from library_geometry import (
+from itgmania_library.library_format import format_duration, number
+from itgmania_library.library_geometry import (
     format_geometry,
     parse_course_geometry,
     scale_geometry,

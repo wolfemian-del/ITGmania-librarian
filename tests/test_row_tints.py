@@ -2,8 +2,8 @@
 import unittest
 from unittest.mock import Mock
 
-import row_tints
-import theme
+from itgmania_library import row_tints
+from itgmania_library import theme
 
 
 class DifficultyTagTests(unittest.TestCase):
