@@ -46,6 +46,7 @@ On Linux the usual cache location is `~/.itgmania/Cache/Songs`, and on macOS `~/
 - Click a column heading to sort. Click it again to reverse the order. Difficulty sorts in gameplay order from Beginner through Edit. Grade sorts in ITGmania tier order (S+ before S before S−). BPM sorts by maximum tempo, then minimum.
 - Table rows are softly tinted by chart difficulty (Beginner sky blue, Easy yellow, Medium rose, Hard green, Challenge purple, Edit gray; any other difficulty name is also gray), matching the distribution chart palette. When a row is selected, its text turns white on the selection background to maintain high contrast.
 - Drag column headings to reorder them, and drag the divider between headings to resize a column.
+- Double-click a chart (or press `Enter` on it) to open the song page: the song's banner, background, jacket and CD title, its music file with its length and preview window, and all of its charts with meter, BPM and scores. A file that is missing or is not a PNG shows a placeholder instead. If the song's folder is not under any known song folder, the page says so and the **Open song folder** button is disabled. The page closes when the library is reloaded or scores are synced, so it never shows old scores.
 - Use **View → Columns** to show or hide columns by category. The categories are Song & chart, Score, Tap judgments, Chart counts and Tech counts. Each category's menu starts with **Show whole group**, which is checked while every column of that category is shown; clicking it shows or hides the whole category at once. At least one column always stays visible.
 - A fresh install, and **View → Reset column layout**, show only the Song & chart and Score columns. The Subtitle column is the exception: it belongs to Song & chart but stays hidden until you turn it on under **View → Columns**. Columns you have already shown or hidden keep your choice. The Tap judgments columns (W1–W5 and Miss) come from the same best score as the Score columns.
 - Scroll horizontally if the columns you turn on are wider than the window.
@@ -87,7 +88,7 @@ ruff check .
 
 `itgmania_library/theme.py` holds the colors and fonts; `tests/test_theme.py` checks the window code uses it.
 
-The code is laid out in `docs/ARCHITECTURE.md`: a layer diagram, a table of all 19 modules with what each holds and its tests, and how the pieces fit together. `itgmania_library/library_visualizer.py` is the entry point; the other files are imported by it.
+The code is laid out in `docs/ARCHITECTURE.md`: a layer diagram, a table of all 21 modules with what each holds and its tests, and how the pieces fit together. `itgmania_library/library_visualizer.py` is the entry point; the other files are imported by it.
 
 ## License
 
