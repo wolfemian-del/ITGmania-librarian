@@ -239,6 +239,63 @@ class SnapshotStoreTests(unittest.TestCase):
         self.assertFalse(result.loaded)
         self.assertEqual(result.reason, "invalid")
 
+    def test_media_keys_survive_a_snapshot_round_trip(self):
+        # Proposal 0011, stage 1: the media keys are hidden row keys, so
+        # they ride the snapshot verbatim like "Score description".
+        with tempfile.TemporaryDirectory() as directory:
+            cache_file = Path(directory) / "song.cache"
+            cache_file.write_text(
+                "#TITLE:Example;\n"
+                "#SONGFILENAME:Songs/Pack/Song/song.sm;\n"
+                "#MUSIC:song.ogg;\n"
+                "#BANNER:banner.png;\n"
+                "#BACKGROUND:bg.jpg;\n"
+                "#JACKET:jacket.png;\n"
+                "#CDTITLE:cdtitle.png;\n"
+                "#SAMPLESTART:64.58;\n"
+                "#SAMPLELENGTH:15;\n"
+                "#MUSICLENGTH:93.9;\n"
+                "#NOTEDATA:;\n"
+                "#STEPSTYPE:dance-single;\n"
+                "#DIFFICULTY:Hard;\n"
+                "#METER:10;\n",
+                encoding="utf-8",
+            )
+            rows, _ = library_sources.parse_cache_file(cache_file, {})
+            store, _path = self.make_store(directory)
+            cache_dir = Path(directory) / "Cache"
+            stats_file = Path(directory) / "Stats.xml"
+            store.write(cache_dir, stats_file, rows, 1, 0, 0, False)
+
+            result = store.read(cache_dir, stats_file)
+
+        self.assertTrue(result.loaded)
+        row = result.rows[0]
+        self.assertEqual(row["Music"], "song.ogg")
+        self.assertEqual(row["Banner"], "banner.png")
+        self.assertEqual(row["Background"], "bg.jpg")
+        self.assertEqual(row["Jacket"], "jacket.png")
+        self.assertEqual(row["CDTitle"], "cdtitle.png")
+        self.assertEqual(row["SampleStart"], 64.58)
+        self.assertEqual(row["SampleLength"], 15.0)
+
+    def test_read_schema_version_4_reports_invalid(self):
+        # Proposal 0011, stage 1 bumps the schema to 5, so a snapshot
+        # written under 4 rebuilds on the existing one-click prompt.
+        with tempfile.TemporaryDirectory() as directory:
+            store, path = self.make_store(directory)
+            cache_dir = Path(directory) / "Cache"
+            stats_file = Path(directory) / "Stats.xml"
+            store.write(cache_dir, stats_file, [self.sample_row()], 1, 0, 0, False)
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["schema_version"] = 4
+            path.write_text(json.dumps(payload), encoding="utf-8")
+
+            result = store.read(cache_dir, stats_file)
+
+        self.assertFalse(result.loaded)
+        self.assertEqual(result.reason, "invalid")
+
     def test_read_row_missing_a_column_reports_invalid(self):
         with tempfile.TemporaryDirectory() as directory:
             store, path = self.make_store(directory)

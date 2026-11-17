@@ -230,6 +230,20 @@ def parse_cache_file(path: Path, scores: dict) -> tuple[list[dict], int]:
     pack = song_dir.split("/", 1)[0] if song_dir else ""
     song_bpm_bounds = parse_bpms(song_tags.get("BPMS"))
     song_display_tag = song_tags.get("DISPLAYBPM")
+    # The media tags (Proposal 0011, stage 1), read once per song:
+    # the chart rows below carry them as hidden keys. A missing tag
+    # reads as "", the way a missing Time does.
+    song_music = song_tags.get("MUSIC", "")
+    song_banner = song_tags.get("BANNER", "")
+    song_background = song_tags.get("BACKGROUND", "")
+    song_jacket = song_tags.get("JACKET", "")
+    song_cdtitle = song_tags.get("CDTITLE", "")
+    sample_start_tag = song_tags.get("SAMPLESTART", "")
+    sample_length_tag = song_tags.get("SAMPLELENGTH", "")
+    song_sample_start = (number(sample_start_tag)
+                         if sample_start_tag else "")
+    song_sample_length = (number(sample_length_tag)
+                          if sample_length_tag else "")
     rows = []
     skipped_blocks = 0
     for chunk in chunks[1:]:
@@ -266,6 +280,18 @@ def parse_cache_file(path: Path, scores: dict) -> tuple[list[dict], int]:
             # back to #CHARTNAME): the merge reads it back, so a both-tags
             # Edit looks up the same entry the parse did (issue #152).
             "Score description": score_description,
+            # The media tags (Proposal 0011, stage 1): hidden row keys,
+            # never columns. Music is the chart's effective value — a
+            # chart-level #MUSIC override wins, else the song's; only
+            # #MUSIC has a chart-level override, so the other six ride
+            # the song's tags.
+            "Music": tags.get("MUSIC") or song_music,
+            "Banner": song_banner,
+            "Background": song_background,
+            "Jacket": song_jacket,
+            "CDTitle": song_cdtitle,
+            "SampleStart": song_sample_start,
+            "SampleLength": song_sample_length,
             # ITGmania formats #PEAKNPS as player-separated sections (P1|P2); take player 1.
             "Peak NPS": number(tags.get("PEAKNPS", "").split("|")[0]) if tags.get("PEAKNPS") else "",
             "Taps/Holds": radar.get("TapsAndHolds", ""), "Jumps": radar.get("Jumps", ""),
@@ -278,6 +304,35 @@ def parse_cache_file(path: Path, scores: dict) -> tuple[list[dict], int]:
         _apply_score_fields(row, score)
         rows.append(row)
     return rows, skipped_blocks
+
+
+# The media fields whose image extensions stage 1 counts (Proposal
+# 0011): the Pillow call is made with these numbers.
+MEDIA_IMAGE_FIELDS = ("Banner", "Background", "Jacket")
+
+
+def image_extension_counts(rows: list[dict]) -> dict[str, dict[str, int]]:
+    """Count image-file extensions per media field, one count per song.
+
+    Each song contributes once (its first row by "Course path"), so a
+    16-chart song does not count sixteen times. The extension is the
+    lowercased suffix of the row's value, or "" where the song has no
+    file for that field; a non-string value (a hand-edited snapshot)
+    counts as "".
+    """
+    counts = {field: {} for field in MEDIA_IMAGE_FIELDS}
+    seen = set()
+    for row in rows:
+        song = row.get("Course path", "")
+        if song in seen:
+            continue
+        seen.add(song)
+        for field in MEDIA_IMAGE_FIELDS:
+            value = row.get(field)
+            suffix = (Path(value).suffix.casefold()
+                      if isinstance(value, str) else "")
+            counts[field][suffix] = counts[field].get(suffix, 0) + 1
+    return counts
 
 
 def looks_like_song_tree(cache: Path) -> bool:
