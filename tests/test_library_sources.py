@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from itgmania_library import library_sources as data
+from itgmania_library.library_constants import HEADERS
 
 
 class ParsingTests(unittest.TestCase):
@@ -586,6 +587,147 @@ class ParsingTests(unittest.TestCase):
             stats_file = Path(directory) / "Stats.xml"
             stats_file.write_text("<Stats />", encoding="utf-8")
             self.assertEqual(data.stats_index(stats_file), {})
+
+
+class MediaParsingTests(unittest.TestCase):
+    # Proposal 0011, stage 1: the seven media tags land as hidden row keys.
+    MEDIA_KEYS = ("Music", "Banner", "Background", "Jacket", "CDTitle",
+                  "SampleStart", "SampleLength")
+
+    @staticmethod
+    def _write_cache(directory, song_tags, charts):
+        cache_file = Path(directory) / "song.cache"
+        cache_file.write_text(song_tags + "".join(charts), encoding="utf-8")
+        return cache_file
+
+    def test_media_tags_land_as_hidden_row_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache_file = self._write_cache(
+                directory,
+                "#TITLE:Example;\n"
+                "#SONGFILENAME:Songs/Pack/Song/song.sm;\n"
+                "#MUSIC:song.ogg;\n"
+                "#BANNER:banner.png;\n"
+                "#BACKGROUND:bg.jpg;\n"
+                "#JACKET:jacket.png;\n"
+                "#CDTITLE:cdtitle.png;\n"
+                "#SAMPLESTART:64.58;\n"
+                "#SAMPLELENGTH:15;\n"
+                "#MUSICLENGTH:93.9;\n",
+                ["#NOTEDATA:;\n"
+                 "#STEPSTYPE:dance-single;\n"
+                 "#DIFFICULTY:Hard;\n"
+                 "#METER:10;\n"],
+            )
+            rows, _ = data.parse_cache_file(cache_file, {})
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["Music"], "song.ogg")
+        self.assertEqual(row["Banner"], "banner.png")
+        self.assertEqual(row["Background"], "bg.jpg")
+        self.assertEqual(row["Jacket"], "jacket.png")
+        self.assertEqual(row["CDTitle"], "cdtitle.png")
+        self.assertEqual(row["SampleStart"], 64.58)
+        self.assertEqual(row["SampleLength"], 15.0)
+        for key in self.MEDIA_KEYS:
+            self.assertNotIn(key, HEADERS)
+
+    def test_cache_without_media_tags_yields_empty_media_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache_file = self._write_cache(
+                directory,
+                "#TITLE:Plain;\n"
+                "#SONGFILENAME:Songs/Pack/Song/song.sm;\n"
+                "#MUSICLENGTH:60;\n",
+                ["#NOTEDATA:;\n"
+                 "#STEPSTYPE:dance-single;\n"
+                 "#DIFFICULTY:Hard;\n"
+                 "#METER:10;\n"],
+            )
+            rows, _ = data.parse_cache_file(cache_file, {})
+
+        self.assertEqual(len(rows), 1)
+        for key in self.MEDIA_KEYS:
+            self.assertEqual(rows[0][key], "")
+
+    def test_chart_level_music_override_wins_over_the_song_music(self):
+        with tempfile.TemporaryDirectory() as directory:
+            cache_file = self._write_cache(
+                directory,
+                "#TITLE:Example;\n"
+                "#SONGFILENAME:Songs/Pack/Song/song.sm;\n"
+                "#MUSIC:song.ogg;\n",
+                ["#NOTEDATA:;\n"
+                 "#STEPSTYPE:dance-single;\n"
+                 "#DIFFICULTY:Hard;\n"
+                 "#METER:10;\n"
+                 "#MUSIC:chart.ogg;\n",
+                 "#NOTEDATA:;\n"
+                 "#STEPSTYPE:dance-single;\n"
+                 "#DIFFICULTY:Challenge;\n"
+                 "#METER:12;\n"],
+            )
+            rows, _ = data.parse_cache_file(cache_file, {})
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0]["Music"], "chart.ogg")
+        self.assertEqual(rows[1]["Music"], "song.ogg")
+
+    def test_chart_level_tags_other_than_music_do_not_override(self):
+        # Only #MUSIC has a chart-level override (NotesLoaderSSC.cpp
+        # :678-711); a chart carrying the other six tags still takes the
+        # song's values.
+        with tempfile.TemporaryDirectory() as directory:
+            cache_file = self._write_cache(
+                directory,
+                "#TITLE:Example;\n"
+                "#SONGFILENAME:Songs/Pack/Song/song.sm;\n"
+                "#BANNER:song-banner.png;\n"
+                "#BACKGROUND:song-bg.png;\n"
+                "#JACKET:song-jacket.png;\n"
+                "#CDTITLE:song-cd.png;\n"
+                "#SAMPLESTART:10;\n"
+                "#SAMPLELENGTH:12;\n",
+                ["#NOTEDATA:;\n"
+                 "#STEPSTYPE:dance-single;\n"
+                 "#DIFFICULTY:Hard;\n"
+                 "#METER:10;\n"
+                 "#BANNER:chart-banner.png;\n"
+                 "#BACKGROUND:chart-bg.png;\n"
+                 "#JACKET:chart-jacket.png;\n"
+                 "#CDTITLE:chart-cd.png;\n"
+                 "#SAMPLESTART:99;\n"
+                 "#SAMPLELENGTH:99;\n"],
+            )
+            rows, _ = data.parse_cache_file(cache_file, {})
+
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["Banner"], "song-banner.png")
+        self.assertEqual(row["Background"], "song-bg.png")
+        self.assertEqual(row["Jacket"], "song-jacket.png")
+        self.assertEqual(row["CDTitle"], "song-cd.png")
+        self.assertEqual(row["SampleStart"], 10.0)
+        self.assertEqual(row["SampleLength"], 12.0)
+
+    def test_image_extension_counts_count_each_song_once(self):
+        rows = [
+            {"Course path": "Pack/A", "Banner": "a.png",
+             "Background": "a.jpg", "Jacket": ""},
+            {"Course path": "Pack/A", "Banner": "a.png",
+             "Background": "a.jpg", "Jacket": ""},
+            {"Course path": "Pack/B", "Banner": "b.JPG",
+             "Background": "", "Jacket": "b.gif"},
+            {"Course path": "Pack/C", "Banner": "",
+             "Background": "c.bmp", "Jacket": 12},
+        ]
+        counts = data.image_extension_counts(rows)
+
+        self.assertEqual(counts["Banner"], {".png": 1, ".jpg": 1, "": 1})
+        self.assertEqual(counts["Background"],
+                         {".jpg": 1, "": 1, ".bmp": 1})
+        self.assertEqual(counts["Jacket"], {"": 2, ".gif": 1})
 
 
 class MergeScoresTests(unittest.TestCase):

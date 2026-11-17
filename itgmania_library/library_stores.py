@@ -17,7 +17,7 @@ from itgmania_library.library_sources import _normalized_source_path
 
 
 # The library snapshot (proposal 0008): SnapshotStore owns library_cache.json.
-LIBRARY_CACHE_SCHEMA_VERSION = 4
+LIBRARY_CACHE_SCHEMA_VERSION = 5
 
 
 def _nonnegative_int(value):
