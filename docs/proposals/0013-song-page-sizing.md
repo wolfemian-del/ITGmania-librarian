@@ -2,11 +2,31 @@
 
 | | |
 |---|---|
-| **Status** | Draft — for review |
+| **Status** | Accepted — approved by the owner on 2026-11-17 |
 | **Author** | Muse (Muse Spark 1.3) |
 | **Date** | 2026-11-17 |
 | **Base** | main `3f5fbd8` (merge of PR #214, Proposal 0011 stage 4) |
 | **Related** | Issue #211; Proposal 0011 (the song page; Q5 deferred persistence); issue #103 (not triggered — see §5) |
+
+## Revision 1 (2026-11-17, from Grok's review of PR #216)
+
+Grok reviewed the draft (Accept, no changes to the proposal) and added two
+items to the §6 test plan, folded in below: assert the mousewheel binding
+works on the canvas when the list overflows, and confirm the window manager
+places a size-only geometry on-screen for the first open.
+
+## Review resolutions (2026-11-17)
+
+Grok (sole reviewer, PR #216 comment 6952304339) verified the §2 arithmetic
+exactly (every interval 22.0 px/chart, chrome ~558 px with images), confirmed
+the boundary and contract claims against main `3f5fbd8`, and confirmed the
+#103 non-trigger. His answers to the open questions, accepted by the owner:
+
+- **Q1.** The cap is the screen height (`winfo_screenheight`), not a fixed
+  maximum.
+- **Q2.** The scrollbar is shown only when the chart list overflows.
+- **Q3.** Content sizing applies only on the first open in a session; after a
+  resize, the saved geometry wins for later opens.
 
 ---
 
@@ -75,13 +95,15 @@ This change does not touch a component boundary or a constructor contract: the p
 - The existing live suites (`LiveSongPageOpenTests`, `LiveSongPageDirectTests`) must pass unchanged apart from the new sizing/scroll assertions — the page's visible behaviour for a fitting song is identical.
 - Full suite green headless and under Xvfb; pyflakes and ruff clean; no added code line over 100 columns.
 - A mutation check: the scroll region not following the labels, and the cap not applied, must each fail a test.
+- The mousewheel binding on the canvas is asserted to work when the list overflows (at least that the binding is present).
+- When content sizing produces a size-only geometry string (no `+x+y`), the window manager is confirmed to still place the window on-screen — the existing on-screen rule is not present, so this is the only placement path for the first open.
 - Windows smoke (owner): Butterfly opens showing all 16 charts and the buttons at the bottom; a song with many Edit charts opens at screen height with a working scrollbar; a one-chart song opens short.
 
-## 7. Open Questions for Reviewers
+## 7. Open Questions — Resolved
 
-- **Q1.** The cap is the screen height (`winfo_screenheight`). Should it instead be a fixed maximum (for example the current 1000 px default), so the window never grows past a familiar size even on a tall display? The recommendation is the screen height: it adapts to the display, and the scrollbar covers anything beyond it either way.
-- **Q2.** The scrollbar is shown only when the chart list overflows. Should it always be visible, so the list's scrollability is obvious even before the owner tries to scroll? The recommendation is overflow-only: a fitting list looks exactly as it does today.
-- **Q3.** Content sizing applies only on the first open in a session; after a resize, the saved geometry wins for later opens. Should the height instead be content-sized on every `show()`, with the saved geometry supplying only the position and width? The recommendation is the first-open rule: a deliberate resize still sticks, and the change to the session memory is nil.
+- **Q1.** The cap is the screen height (`winfo_screenheight`). Should it instead be a fixed maximum (for example the current 1000 px default), so the window never grows past a familiar size even on a tall display? The recommendation is the screen height: it adapts to the display, and the scrollbar covers anything beyond it either way. **Resolved: screen height** (Grok agreed; owner accepted).
+- **Q2.** The scrollbar is shown only when the chart list overflows. Should it always be visible, so the list's scrollability is obvious even before the owner tries to scroll? The recommendation is overflow-only: a fitting list looks exactly as it does today. **Resolved: overflow-only** (Grok agreed; owner accepted).
+- **Q3.** Content sizing applies only on the first open in a session; after a resize, the saved geometry wins for later opens. Should the height instead be content-sized on every `show()`, with the saved geometry supplying only the position and width? The recommendation is the first-open rule: a deliberate resize still sticks, and the change to the session memory is nil. **Resolved: first-open rule** (Grok agreed; owner accepted).
 
 ---
 

@@ -23,4 +23,4 @@ line in each file's header is the record; this index summarizes it.
 | [0010](0010-library-data-split.md) | Split library_data.py into Data Modules | Accepted 2026-11-14 | PRs #170, #174–#181 (proposal #169; merged 2026-11-14/15) |
 | [0011](0011-song-page-media-previews.md) | Song Page with Media Previews | Accepted 2026-11-16 | PR #185 (merged 2026-11-16) |
 | [0012](0012-package-move.md) | Move the app into the `itgmania_library` package | Accepted 2026-11-16 | PR #188 (merged 2026-11-16) |
-| [0013](0013-song-page-sizing.md) | Size the song page by its contents, and scroll the chart list | Draft — for review | — |
+| [0013](0013-song-page-sizing.md) | Size the song page by its contents, and scroll the chart list | Accepted 2026-11-17 | — |
