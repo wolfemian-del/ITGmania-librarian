@@ -49,6 +49,10 @@ _FOLDERS_DEPRECATED_KEY = "AdditionalFolders"
 # song-relative one: the engine would resolve it against the VFS top.
 _VFS_TOP_PREFIXES = ("songs/", "additionalsongs/")
 _DRIVE_LETTER = re.compile(r"^[A-Za-z]:")
+# A single path component that is a drive letter ("C:"): joining it
+# onto a root drops the root on Windows (PureWindowsPath), so it is
+# refused wherever it appears, not only at the start of a value.
+_DRIVE_PART = re.compile(r"^[A-Za-z]:$")
 
 
 def _split_list(value):
@@ -91,7 +95,9 @@ def song_roots(cache_dir):
     its Writable one whenever it is nonempty (PrefsManager.cpp:548-556).
     A missing or unreadable Preferences.ini means no additional folders.
     The install Songs root cannot be derived from the cache dir, so it
-    is not supplied in v1.
+    is not supplied in v1. Data/Static.ini is read after Preferences.ini
+    and can override these preferences, so it is a stated limit of
+    deriving from Preferences.ini alone.
     """
     if cache_dir is None:
         return []
@@ -132,6 +138,8 @@ def _song_dir_parts(song_dir):
              if part not in ("", ".")]
     if not parts or ".." in parts:
         return None
+    if any(_DRIVE_PART.match(part) for part in parts):
+        return None
     return parts
 
 
@@ -158,6 +166,8 @@ def _media_path(song_dir, filename):
     for part in value.split("/"):
         if part in ("", "."):
             continue
+        if _DRIVE_PART.match(part):
+            return None
         if part == "..":
             if len(stack) <= 1:
                 return None
@@ -272,19 +282,24 @@ def build_song_media(song_dir, roots, rows):
     ``rows`` are the song's charts, with the opened chart first: the
     record's music is the opened chart's effective Music, and the length
     and sample window are included only when that music is the song's
-    music — the value the other charts share. A song under no root has
-    no folder and no media, never a crash.
+    music. The song's music is inferred, not stored: stage 1 keeps only
+    each chart's effective Music, so the record keeps the window only
+    when every chart carries the same Music as the opened chart. When
+    charts disagree, the song's file cannot be told apart from a chart
+    override, so the window is dropped rather than applied to the wrong
+    file; a single chart keeps its window, since there is nothing to
+    disagree with — which is also wrong when that one chart has an
+    override, and cannot be known from the rows. A song under no root
+    has no folder and no media, never a crash.
     """
     if not rows:
         return SongMedia()
     opened = rows[0]
-    others = [row.get("Music") for row in rows[1:]]
-    if others and all(music == others[0] for music in others):
-        song_music = others[0]
-    else:
-        song_music = opened.get("Music")
     opened_music = _media_value(opened, "Music")
-    music_is_song_music = opened_music is not None and opened_music == song_music
+    music_is_song_music = (
+        opened_music is not None
+        and all(row.get("Music") == opened_music for row in rows)
+    )
     folder = None
     parts = _song_dir_parts(song_dir)
     if parts is not None:

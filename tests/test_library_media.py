@@ -201,9 +201,10 @@ class ResolveMediaFileTests(unittest.TestCase):
                                      self.roots, "image"))
 
     def test_vfs_top_relative_value(self):
-        # The file exists under the root, but the form is refused, not
-        # the absence: a Songs/... value is a VFS-top path.
-        self._write(self.root1 / "Songs" / SONG_DIR, "banner.png")
+        # The file exists under the song folder itself, so only the
+        # prefix check makes this "not found": without it the value
+        # would resolve as a subfolder of the song folder.
+        self._write(self.song1 / "Songs" / SONG_DIR, "banner.png")
         self.assertIsNone(
             media.resolve_media_file(SONG_DIR, "Songs/Pack/Song/banner.png",
                                      self.roots, "image"))
@@ -257,6 +258,19 @@ class ResolveMediaFileTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             media.resolve_media_file(SONG_DIR, "banner.png", self.roots,
                                      "video")
+
+    def test_filename_with_drive_letter_component(self):
+        # A "C:" component anywhere in the value drops the root on
+        # Windows, so it is refused even though the file exists.
+        self._write(self.song1 / "sub" / "C:", "banner.png")
+        self.assertIsNone(
+            media.resolve_media_file(SONG_DIR, "sub/C:/banner.png",
+                                     self.roots, "image"))
+
+    def test_song_dir_with_drive_letter(self):
+        self.assertIsNone(
+            media.resolve_media_file("C:/Windows", "banner.png",
+                                     self.roots, "image"))
 
     def test_empty_song_dir(self):
         self.assertIsNone(
@@ -389,6 +403,72 @@ class BuildSongMediaTests(unittest.TestCase):
         self.assertIsNone(record.sample_length)
         # The other media still resolve from the opened row.
         self.assertEqual(record.banner, self.song1 / "banner.png")
+
+    def test_opened_chart_is_song_music_other_chart_overrides(self):
+        # The opened chart carries the song's music and another chart
+        # overrides: the window is dropped, since the song's file
+        # cannot be told apart from the override. Harmless — the
+        # player seam defaults to the start of the song.
+        self._write(self.song1, "alt.ogg")
+        self._write_full_set(self.song1)
+        rows = [_row(), _row(Difficulty="Challenge", Music="alt.ogg")]
+        record = media.build_song_media(SONG_DIR, self.roots, rows)
+        self.assertEqual(record.music, self.song1 / "song.ogg")
+        self.assertIsNone(record.music_length)
+        self.assertIsNone(record.sample_start)
+        self.assertIsNone(record.sample_length)
+
+    def test_opened_chart_is_song_music_two_others_override(self):
+        self._write(self.song1, "alt.ogg")
+        self._write_full_set(self.song1)
+        rows = [_row(), _row(Difficulty="Challenge", Music="alt.ogg"),
+                _row(Difficulty="Medium", Music="alt.ogg")]
+        record = media.build_song_media(SONG_DIR, self.roots, rows)
+        self.assertEqual(record.music, self.song1 / "song.ogg")
+        self.assertIsNone(record.music_length)
+        self.assertIsNone(record.sample_start)
+        self.assertIsNone(record.sample_length)
+
+    def test_opened_chart_override_two_others_differ(self):
+        # Two different overrides in one song: the window is dropped
+        # rather than applied to the wrong file.
+        self._write(self.song1, "alt.ogg")
+        self._write(self.song1, "other.ogg")
+        self._write_full_set(self.song1)
+        rows = [_row(Music="alt.ogg"), _row(Difficulty="Challenge"),
+                _row(Difficulty="Medium", Music="other.ogg")]
+        record = media.build_song_media(SONG_DIR, self.roots, rows)
+        self.assertEqual(record.music, self.song1 / "alt.ogg")
+        self.assertIsNone(record.music_length)
+        self.assertIsNone(record.sample_start)
+        self.assertIsNone(record.sample_length)
+
+    def test_all_charts_same_override_keeps_window(self):
+        # Every chart carries the same file, so the code cannot tell an
+        # override shared by all charts from the song's own music: the
+        # window is kept, and the limit is documented in build_song_media.
+        self._write(self.song1, "alt.ogg")
+        self._write_full_set(self.song1)
+        rows = [_row(Music="alt.ogg"),
+                _row(Difficulty="Challenge", Music="alt.ogg")]
+        record = media.build_song_media(SONG_DIR, self.roots, rows)
+        self.assertEqual(record.music, self.song1 / "alt.ogg")
+        self.assertEqual(record.music_length, 93.988)
+        self.assertEqual(record.sample_start, 64.58)
+
+    def test_song_dir_with_drive_letter(self):
+        self._write_full_set(self.song1)
+        record = media.build_song_media("C:/Windows", self.roots, [_row()])
+        self.assertIsNone(record.banner)
+        self.assertIsNone(record.background)
+        self.assertIsNone(record.jacket)
+        self.assertIsNone(record.cd_title)
+        self.assertIsNone(record.music)
+        self.assertIsNone(record.folder)
+        # The length and sample window are cache facts, so they survive
+        # even when the song dir itself is unusable.
+        self.assertEqual(record.music_length, 93.988)
+        self.assertEqual(record.sample_start, 64.58)
 
     def test_single_chart_song(self):
         self._write_full_set(self.song1)
