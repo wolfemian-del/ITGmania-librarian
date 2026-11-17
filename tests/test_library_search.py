@@ -30,6 +30,24 @@ class SearchQueryTests(unittest.TestCase):
         self.assertEqual(data.parse_numeric_bound("1:30-2:30", is_duration=True), ("range", 90.0, 150.0))
         self.assertEqual(data.parse_numeric_bound(">2:00", is_duration=True), (">", 120.0))
 
+    def test_parse_numeric_bound_rejects_underscores(self):
+        # Issue #195: float() accepts underscores, so "1_000" used to
+        # parse as 1000. There is no underscore convention in the
+        # search language, so an underscore makes the bound unreadable
+        # — the matcher then matches nothing for it, and it is reported
+        # as an unreadable directive like "meter:abc".
+        self.assertIsNone(data.parse_numeric_bound("1_000"))
+        self.assertIsNone(data.parse_numeric_bound("1_0_0_0"))
+        self.assertIsNone(data.parse_numeric_bound(">=1_000"))
+        self.assertIsNone(data.parse_numeric_bound("1_000-2_000"))
+        self.assertIsNone(data.parse_numeric_bound("1_000", is_duration=True))
+        self.assertIsNone(data.parse_numeric_bound("1:0_0", is_duration=True))
+        row = {"Meter": 1000, "Time": 1000}
+        self.assertFalse(data.match_chart_query(row, "meter:1_000"))
+        self.assertTrue(data.match_chart_query(row, "meter:1000"))
+        self.assertFalse(data.match_chart_query(row, "time:1_000"))
+        self.assertEqual(data.find_unreadable_directives("meter:1_000"), ["meter:1_000"])
+
     def test_meter_nan_matches_nan_rows(self):
         # Issue #171: meter:nan selects the NaN-meter rows (the "nan"
         # bar's filter), and only them. NaN is not equal to itself, so
