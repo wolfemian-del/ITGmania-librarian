@@ -758,6 +758,50 @@ class RefreshGenerationTests(unittest.TestCase):
             self.assertIs(args[6], False)  # nested_song_tree
             self.assertEqual(args[7], 3)  # skipped_blocks
 
+    def test_load_worker_skips_a_file_whose_parse_raises(self):
+        # Issue #205: a parse failure other than OSError/UnicodeError
+        # used to kill the whole load. Now the file is skipped and
+        # counted, and the load carries on with the good files.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache_dir = root / "Cache"
+            cache_dir.mkdir()
+            (cache_dir / "good.cache").write_text("good", encoding="utf-8")
+            (cache_dir / "bad.cache").write_text("bad", encoding="utf-8")
+            stats_file = root / "Stats.xml"
+            stats_file.write_text("<Stats/>", encoding="utf-8")
+
+            instance = object.__new__(loader.LibraryLoader)
+            instance._load_generation = 1
+            instance._snapshot_lock = threading.Lock()
+            instance._load_results = queue.Queue()
+            instance.snapshot_store = Mock()
+            instance.snapshot_store.write.return_value = "2026-01-01T00:00:00"
+            instance.root = Mock()
+
+            row = {"Title": "a"}
+
+            def parse_side_effect(path, scores):
+                if path.name == "bad.cache":
+                    raise ValueError("boom")
+                return [row], 0
+
+            with patch.object(loader, "parse_cache_file", side_effect=parse_side_effect):
+                instance._load_worker(cache_dir, stats_file, generation=1)
+
+            queued = []
+            while not instance._load_results.empty():
+                queued.append(instance._load_results.get_nowait())
+            loaded = [item for item in queued if item[0] == "loaded"]
+            failed = [item for item in queued if item[0] == "failed"]
+            self.assertEqual(len(loaded), 1)
+            self.assertEqual(failed, [])
+            kind, args, kwargs = loaded[0]
+            self.assertEqual(args[0], [row])
+            self.assertEqual(args[1], 2)  # two cache files scanned
+            self.assertEqual(kwargs["skipped_files"], 1)
+            self.assertEqual(instance.snapshot_store.write.call_args.args[4], 1)
+
     def test_poll_load_results_delivers_queued_results_and_reschedules(self):
         instance = object.__new__(loader.LibraryLoader)
         instance._load_results = queue.Queue()
