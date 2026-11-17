@@ -324,8 +324,9 @@ class LibraryApp:
         # and the folder button stays disabled off Windows, where
         # os.startfile does not exist.
         self._preview_player = SongPreviewPlayer()
-        play_callback = (self._play_preview if player_available() else None)
-        stop_callback = (self._stop_preview if player_available() else None)
+        player_on = player_available()
+        play_callback = (self._play_preview if player_on else None)
+        stop_callback = (self._stop_preview if player_on else None)
         self.song_page = SongPage(
             self.root, on_play=play_callback, on_stop=stop_callback,
             on_open_folder=open_song_folder if hasattr(os, "startfile") else None,

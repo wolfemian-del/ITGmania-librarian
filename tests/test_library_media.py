@@ -628,6 +628,19 @@ class NormalizeSampleWindowTests(unittest.TestCase):
             media.normalize_sample_window(10.0, 15.0, -5.0),
             (10.0, 15.0))
 
+    def test_huge_ints_read_as_missing(self):
+        # A huge int from a hand-edited snapshot's JSON number must
+        # not raise OverflowError into the Play action.
+        self.assertEqual(
+            media.normalize_sample_window(10 ** 10000, 15.0, 93.988),
+            (0.0, 12.0))
+        self.assertEqual(
+            media.normalize_sample_window(64.58, 10 ** 10000, 93.988),
+            (64.58, 12.0))
+        self.assertEqual(
+            media.normalize_sample_window(64.58, 15.0, 10 ** 10000),
+            (64.58, 15.0))
+
 
 class PlayerAvailableTests(unittest.TestCase):
     def test_installed_pygame_is_available(self):
@@ -655,6 +668,8 @@ class _FakeMusic:
         self.stop_calls = 0
         self.load_error = None
         self.stop_error = None
+        self.play_error = None
+        self.raise_on_nonzero_start = False
 
     def load(self, path):
         if self.load_error is not None:
@@ -663,6 +678,10 @@ class _FakeMusic:
 
     def play(self, loops=0, start=0.0, fade_ms=0):
         self.play_calls.append((loops, start))
+        if self.play_error is not None:
+            raise self.play_error
+        if self.raise_on_nonzero_start and start != 0.0:
+            raise NotImplementedError("position not implemented")
 
     def stop(self):
         self.stop_calls += 1
@@ -721,6 +740,20 @@ class SongPreviewPlayerTests(unittest.TestCase):
         self.mixer.music.load_error = RuntimeError("unreadable")
         self.assertIsNone(self.player.play(self.path, 64.58, 15.0, 93.988))
         self.assertEqual(self.mixer.music.play_calls, [])
+
+    def test_play_falls_back_to_the_start_when_the_mixer_cannot_seek(self):
+        # A mixer that cannot set the position for the file's format
+        # (WAV seeking is undocumented): the preview still plays,
+        # from the start for the window length.
+        self.mixer.music.raise_on_nonzero_start = True
+        self.assertEqual(
+            self.player.play(self.path, 64.58, 15.0, 93.988), 15.0)
+        self.assertEqual(self.mixer.music.play_calls,
+                         [(0, 64.58), (0, 0.0)])
+
+    def test_play_returns_none_when_even_the_fallback_fails(self):
+        self.mixer.music.play_error = RuntimeError("no device")
+        self.assertIsNone(self.player.play(self.path, 64.58, 15.0, 93.988))
 
     def test_failed_lazy_import_returns_none(self):
         player = media.SongPreviewPlayer()

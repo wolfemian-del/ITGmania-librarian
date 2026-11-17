@@ -266,7 +266,13 @@ def _finite_float(value):
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        number = float(value)
+        try:
+            number = float(value)
+        except OverflowError:
+            # A huge int from a hand-edited snapshot's JSON number
+            # (10**10000): too large to convert, so it reads as missing
+            # rather than raising into the page open or the Play action.
+            return None
     elif isinstance(value, str):
         try:
             number = float(value)
@@ -432,7 +438,11 @@ class SongPreviewPlayer:
         then the file plays from the effective start until stop() is
         called — the mixer takes no length, so the page owns the stop
         timer and stops it after the returned length. Returns None
-        when the preview could not start.
+        when the preview could not start. A mixer that cannot set the
+        position for the file's format (WAV seeking is undocumented
+        in pygame-ce's mixer docs, and an out-of-range start raises)
+        falls back to playing from the start for the window length,
+        rather than leaving the preview silent.
         """
         eff_start, eff_length = normalize_sample_window(start, length,
                                                         music_length)
@@ -443,7 +453,12 @@ class SongPreviewPlayer:
                 self._mixer.init()
                 self._initialized = True
             self._mixer.music.load(str(path))
-            self._mixer.music.play(loops=0, start=eff_start)
+            try:
+                self._mixer.music.play(loops=0, start=eff_start)
+            except Exception:
+                if eff_start == 0.0:
+                    raise
+                self._mixer.music.play(loops=0, start=0.0)
         except Exception:
             return None
         return eff_length

@@ -2,4 +2,4 @@
 # distribution charts in the Distribution side panel, and pygame-ce only adds the
 # song page's Play preview (without it Play stays disabled and everything else works).
 matplotlib
-pygame-ce
+pygame-ce>=2.5.8
