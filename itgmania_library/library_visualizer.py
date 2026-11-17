@@ -25,9 +25,11 @@ from itgmania_library.data_paths_dialog import DataPathsDialog
 from itgmania_library.library_filter import LibraryFilter
 from itgmania_library.library_loader import LibraryLoader
 from itgmania_library.library_media import (
+    SongPreviewPlayer,
     build_song_media,
     charts_for_song,
     open_song_folder,
+    player_available,
     song_roots,
 )
 from itgmania_library.library_table import LibraryTable
@@ -144,8 +146,13 @@ class LibraryApp:
         self.course_builder = None
         self.distribution_panel = None
         # The song page (song_page.py, proposal 0011 stage 3): built in
-        # _build, once, and re-raised by show(); None until then.
+        # _build, once, and re-raised by show(); None until then. The
+        # preview player (stage 4) is built with it; the media record
+        # for the song the page is showing is kept for the play callback,
+        # which needs the song's music length to normalize the window.
         self.song_page = None
+        self._preview_player = None
+        self._song_media = None
         # The Data paths dialog (UI redesign, proposal 0009 Step 3): the
         # component owns its window and note line. It is built first; its
         # load_callback and paths_match_loaded are late-bound lambdas (the
@@ -310,12 +317,18 @@ class LibraryApp:
         self.table_frame.pack(side="left", fill="both", expand=True)
         self.count_label = tk.StringVar(value="0 charts")
         # The song page component (song_page.py, proposal 0011 stage 3):
-        # built once at startup and re-raised by show(). Play stays
-        # disabled until stage 4 supplies the player, and the folder
-        # button stays disabled off Windows, where os.startfile does not
-        # exist.
+        # built once at startup and re-raised by show(). Playback (stage
+        # 4) runs through one preview player, handed to the page as its
+        # play/stop callbacks; the callbacks are None when pygame-ce is
+        # not installed, which is how the page knows to disable Play,
+        # and the folder button stays disabled off Windows, where
+        # os.startfile does not exist.
+        self._preview_player = SongPreviewPlayer()
+        player_on = player_available()
+        play_callback = (self._play_preview if player_on else None)
+        stop_callback = (self._stop_preview if player_on else None)
         self.song_page = SongPage(
-            self.root, on_play=None, on_stop=None,
+            self.root, on_play=play_callback, on_stop=stop_callback,
             on_open_folder=open_song_folder if hasattr(os, "startfile") else None,
             dpi_scale=self._dpi_scale, button_factory=self._button)
         # The table (proposal 0009 Step 6): constructed after the filter
@@ -540,7 +553,30 @@ class LibraryApp:
             "pack": row.get("Pack") or "",
             "charts": rows,
         }
+        self._song_media = media
         self.song_page.show(song, media)
+
+    def _play_preview(self, path, start, length):
+        """Start the song page's preview; the effective length, or None.
+
+        The player normalizes the window against the song's music
+        length, which the page does not pass (its contract is the
+        path and the raw window), so it comes from the record kept
+        when the page opened. A bare instance built for a test may
+        not have a player; that reads as "could not start".
+        """
+        player = getattr(self, "_preview_player", None)
+        if player is None:
+            return None
+        media = getattr(self, "_song_media", None)
+        total = media.music_length if media is not None else None
+        return player.play(path, start, length, total)
+
+    def _stop_preview(self):
+        """Stop the song page's preview, if one is playing."""
+        player = getattr(self, "_preview_player", None)
+        if player is not None:
+            player.stop()
 
     def _library_rows_for_course(self):
         """Every chart row in the loaded library (for the course builder's ambiguity check)."""
@@ -619,6 +655,7 @@ class LibraryApp:
         page = getattr(self, "song_page", None)
         if page is not None:
             page.close()
+        self._song_media = None
         if preserve_selection:
             # Invariant: the filter and the loader share one rows list.
             # A sync re-scores that list in place (merge_scores never

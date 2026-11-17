@@ -557,5 +557,225 @@ class OpenSongFolderTests(unittest.TestCase):
             self.assertFalse(media.open_song_folder(self.folder))
 
 
+class NormalizeSampleWindowTests(unittest.TestCase):
+    def test_valid_window_passes_through(self):
+        self.assertEqual(
+            media.normalize_sample_window(64.58, 15.0, 93.988),
+            (64.58, 15.0))
+
+    def test_window_ending_exactly_at_the_end_passes_through(self):
+        self.assertEqual(
+            media.normalize_sample_window(78.988, 15.0, 93.988),
+            (78.988, 15.0))
+
+    def test_blank_length_plays_twelve_seconds(self):
+        self.assertEqual(
+            media.normalize_sample_window(10.0, None, 93.988),
+            (10.0, 12.0))
+
+    def test_zero_length_plays_twelve_seconds(self):
+        self.assertEqual(
+            media.normalize_sample_window(10.0, 0, 93.988),
+            (10.0, 12.0))
+
+    def test_negative_length_plays_twelve_seconds(self):
+        # Stage-2 F5: a negative value is unusable, not a window.
+        self.assertEqual(
+            media.normalize_sample_window(10.0, -3.0, 93.988),
+            (10.0, 12.0))
+
+    def test_start_of_minus_one_starts_at_zero_for_twelve(self):
+        self.assertEqual(
+            media.normalize_sample_window(-1.0, 15.0, 93.988),
+            (0.0, 12.0))
+
+    def test_blank_start_starts_at_zero_for_twelve(self):
+        self.assertEqual(
+            media.normalize_sample_window(None, 15.0, 93.988),
+            (0.0, 12.0))
+
+    def test_overrunning_window_starts_at_zero_for_twelve(self):
+        self.assertEqual(
+            media.normalize_sample_window(90.0, 15.0, 93.988),
+            (0.0, 12.0))
+
+    def test_overrunning_a_short_song_plays_to_its_end(self):
+        self.assertEqual(
+            media.normalize_sample_window(90.0, 15.0, 8.0),
+            (0.0, 8.0))
+
+    def test_unknown_music_length_caps_nothing(self):
+        self.assertEqual(
+            media.normalize_sample_window(10.0, 15.0, None),
+            (10.0, 15.0))
+
+    def test_blank_window_plays_twelve_from_zero(self):
+        # A chart with its own #MUSIC has no window at all.
+        self.assertEqual(
+            media.normalize_sample_window(None, None, None),
+            (0.0, 12.0))
+
+    def test_non_finite_and_non_numeric_values_read_as_missing(self):
+        self.assertEqual(
+            media.normalize_sample_window("abc", "nan", "inf"),
+            (0.0, 12.0))
+
+    def test_zero_or_negative_music_length_is_unknown(self):
+        self.assertEqual(
+            media.normalize_sample_window(10.0, 15.0, 0),
+            (10.0, 15.0))
+        self.assertEqual(
+            media.normalize_sample_window(10.0, 15.0, -5.0),
+            (10.0, 15.0))
+
+    def test_huge_ints_read_as_missing(self):
+        # A huge int from a hand-edited snapshot's JSON number must
+        # not raise OverflowError into the Play action.
+        self.assertEqual(
+            media.normalize_sample_window(10 ** 10000, 15.0, 93.988),
+            (0.0, 12.0))
+        self.assertEqual(
+            media.normalize_sample_window(64.58, 10 ** 10000, 93.988),
+            (64.58, 12.0))
+        self.assertEqual(
+            media.normalize_sample_window(64.58, 15.0, 10 ** 10000),
+            (64.58, 15.0))
+
+
+class PlayerAvailableTests(unittest.TestCase):
+    def test_installed_pygame_is_available(self):
+        with mock.patch.object(media.importlib.util, "find_spec",
+                               return_value=object()):
+            self.assertTrue(media.player_available())
+
+    def test_missing_pygame_is_not_available(self):
+        with mock.patch.object(media.importlib.util, "find_spec",
+                               return_value=None):
+            self.assertFalse(media.player_available())
+
+    def test_broken_lookup_reads_as_no_player(self):
+        with mock.patch.object(media.importlib.util, "find_spec",
+                               side_effect=ImportError("broken")):
+            self.assertFalse(media.player_available())
+
+
+class _FakeMusic:
+    """A recording stand-in for pygame.mixer.music."""
+
+    def __init__(self):
+        self.load_calls = []
+        self.play_calls = []
+        self.stop_calls = 0
+        self.load_error = None
+        self.stop_error = None
+        self.play_error = None
+        self.raise_on_nonzero_start = False
+
+    def load(self, path):
+        if self.load_error is not None:
+            raise self.load_error
+        self.load_calls.append(path)
+
+    def play(self, loops=0, start=0.0, fade_ms=0):
+        self.play_calls.append((loops, start))
+        if self.play_error is not None:
+            raise self.play_error
+        if self.raise_on_nonzero_start and start != 0.0:
+            raise NotImplementedError("position not implemented")
+
+    def stop(self):
+        self.stop_calls += 1
+        if self.stop_error is not None:
+            raise self.stop_error
+
+
+class _FakeMixer:
+    """A recording stand-in for pygame.mixer."""
+
+    def __init__(self):
+        self.music = _FakeMusic()
+        self.init_calls = 0
+        self.init_error = None
+
+    def init(self):
+        self.init_calls += 1
+        if self.init_error is not None:
+            raise self.init_error
+
+
+class SongPreviewPlayerTests(unittest.TestCase):
+    def setUp(self):
+        self.mixer = _FakeMixer()
+        self.player = media.SongPreviewPlayer(mixer=self.mixer)
+        self.path = Path("Pack") / "Song" / "song.ogg"
+
+    def test_play_returns_the_effective_length(self):
+        self.assertEqual(
+            self.player.play(self.path, 64.58, 15.0, 93.988), 15.0)
+        self.assertEqual(self.mixer.init_calls, 1)
+        self.assertEqual(self.mixer.music.load_calls, [str(self.path)])
+        self.assertEqual(self.mixer.music.play_calls, [(0, 64.58)])
+
+    def test_second_play_does_not_init_again(self):
+        self.player.play(self.path, 64.58, 15.0, 93.988)
+        self.player.play(self.path, 10.0, 12.0, 93.988)
+        self.assertEqual(self.mixer.init_calls, 1)
+        self.assertEqual(self.mixer.music.play_calls,
+                         [(0, 64.58), (0, 10.0)])
+
+    def test_play_normalizes_the_window_first(self):
+        self.assertEqual(
+            self.player.play(self.path, -1.0, 15.0, 93.988), 12.0)
+        self.assertEqual(self.mixer.music.play_calls, [(0, 0.0)])
+
+    def test_init_failure_returns_none_and_retries(self):
+        self.mixer.init_error = RuntimeError("no device")
+        self.assertIsNone(self.player.play(self.path, 64.58, 15.0, 93.988))
+        self.mixer.init_error = None
+        self.assertEqual(
+            self.player.play(self.path, 64.58, 15.0, 93.988), 15.0)
+        self.assertEqual(self.mixer.init_calls, 2)
+
+    def test_load_failure_returns_none(self):
+        self.mixer.music.load_error = RuntimeError("unreadable")
+        self.assertIsNone(self.player.play(self.path, 64.58, 15.0, 93.988))
+        self.assertEqual(self.mixer.music.play_calls, [])
+
+    def test_play_falls_back_to_the_start_when_the_mixer_cannot_seek(self):
+        # A mixer that cannot set the position for the file's format
+        # (WAV seeking is undocumented): the preview still plays,
+        # from the start for the window length.
+        self.mixer.music.raise_on_nonzero_start = True
+        self.assertEqual(
+            self.player.play(self.path, 64.58, 15.0, 93.988), 15.0)
+        self.assertEqual(self.mixer.music.play_calls,
+                         [(0, 64.58), (0, 0.0)])
+
+    def test_play_returns_none_when_even_the_fallback_fails(self):
+        self.mixer.music.play_error = RuntimeError("no device")
+        self.assertIsNone(self.player.play(self.path, 64.58, 15.0, 93.988))
+
+    def test_failed_lazy_import_returns_none(self):
+        player = media.SongPreviewPlayer()
+        with mock.patch.object(media, "_import_mixer",
+                               side_effect=ImportError("no pygame")):
+            self.assertIsNone(
+                player.play(self.path, 64.58, 15.0, 93.988))
+
+    def test_stop_stops_the_music(self):
+        self.player.play(self.path, 64.58, 15.0, 93.988)
+        self.player.stop()
+        self.assertEqual(self.mixer.music.stop_calls, 1)
+
+    def test_stop_before_play_is_a_no_op(self):
+        self.player.stop()
+        self.assertEqual(self.mixer.music.stop_calls, 0)
+
+    def test_stop_never_raises(self):
+        self.player.play(self.path, 64.58, 15.0, 93.988)
+        self.mixer.music.stop_error = RuntimeError("gone")
+        self.player.stop()
+
+
 if __name__ == "__main__":
     unittest.main()

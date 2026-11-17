@@ -1,8 +1,11 @@
-"""Song media resolution (Proposal 0011, stage 2).
+"""Song media resolution (Proposal 0011, stage 2) and preview playback
+(stage 4).
 
 Tk-free helpers for the song page: where the game's song folders live,
 how a media filename from the cache resolves to a file on disk, which
-charts belong to one song, and the media record the page is shown.
+charts belong to one song, the media record the page is shown, and the
+preview player seam — pygame-ce's mixer, imported lazily so the page
+still opens without it.
 
 The engine resolves the VFS path ``Songs/<pack>/<song>/<file>`` against
 its mounts at open time, first hit wins per file (StepMania.cpp:715-725,
@@ -12,6 +15,7 @@ for v1, so a song whose media lives only in a zip shows placeholders.
 """
 
 import dataclasses
+import importlib.util
 import math
 import os
 import re
@@ -23,9 +27,12 @@ __all__ = [
     "AUDIO_EXTENSIONS",
     "IMAGE_EXTENSIONS",
     "SongMedia",
+    "SongPreviewPlayer",
     "build_song_media",
     "charts_for_song",
+    "normalize_sample_window",
     "open_song_folder",
+    "player_available",
     "resolve_media_file",
     "song_roots",
 ]
@@ -259,7 +266,13 @@ def _finite_float(value):
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        number = float(value)
+        try:
+            number = float(value)
+        except OverflowError:
+            # A huge int from a hand-edited snapshot's JSON number
+            # (10**10000): too large to convert, so it reads as missing
+            # rather than raising into the page open or the Play action.
+            return None
     elif isinstance(value, str):
         try:
             number = float(value)
@@ -348,3 +361,113 @@ def open_song_folder(path):
     except OSError:
         return False
     return True
+
+
+# The engine's default sample length in seconds (Song.cpp:72): the
+# fallback wherever the cache gives no usable window.
+DEFAULT_SAMPLE_LENGTH = 12.0
+
+
+def normalize_sample_window(start, length, music_length):
+    """A sample window as (start, length) in seconds, fit to play.
+
+    The cache values are post-normalisation — the engine tidies them
+    before writing the cache (Song.cpp:387/:395) — so a real cache
+    needs nothing here; this only handles the blank and garbage cases
+    the page must not hand to play(): a blank, zero or negative length
+    plays the default 12 s (stage-2 F5: a negative value is unusable);
+    a blank or negative start, or a window running past the music
+    length, starts at 0 for 12 s or to the end of the song, whichever
+    is shorter (Proposal 0011 §4). A music length of zero or less is
+    treated as unknown. The returned length is always positive.
+    """
+    start = _finite_float(start)
+    length = _finite_float(length)
+    total = _finite_float(music_length)
+    if total is not None and total <= 0:
+        total = None
+    if length is None or length <= 0:
+        length = DEFAULT_SAMPLE_LENGTH
+    if (start is None or start < 0
+            or (total is not None and start + length > total)):
+        start = 0.0
+        length = (DEFAULT_SAMPLE_LENGTH if total is None
+                  else min(DEFAULT_SAMPLE_LENGTH, total))
+    return start, length
+
+
+def player_available():
+    """Whether pygame-ce is installed — without importing it.
+
+    The shell decides from this whether to hand the page its play
+    callbacks; find_spec answers without importing anything, so the
+    lazy design holds. A broken install reads as no player.
+    """
+    try:
+        return importlib.util.find_spec("pygame") is not None
+    except Exception:
+        return False
+
+
+def _import_mixer():
+    """pygame's mixer module, imported lazily on the first play."""
+    import pygame
+    return pygame.mixer
+
+
+class SongPreviewPlayer:
+    """One song preview at a time through pygame-ce's mixer.
+
+    The mixer is imported lazily on the first play, so the module
+    imports cleanly without pygame-ce installed; the shell only hands
+    the page its play callbacks when player_available() is true. A
+    mixer may be passed in (the tests pass a stub) — otherwise the
+    real one is imported on first use. Any audio failure — no device,
+    a failed init, a missing or unreadable file — reads as "could not
+    start" and never raises into the page.
+    """
+
+    def __init__(self, mixer=None):
+        self._mixer = mixer
+        self._initialized = False
+
+    def play(self, path, start, length, music_length):
+        """Start the preview; the effective length in seconds, or None.
+
+        The window is normalized first (see normalize_sample_window),
+        then the file plays from the effective start until stop() is
+        called — the mixer takes no length, so the page owns the stop
+        timer and stops it after the returned length. Returns None
+        when the preview could not start. A mixer that cannot set the
+        position for the file's format (WAV seeking is undocumented
+        in pygame-ce's mixer docs, and an out-of-range start raises)
+        falls back to playing from the start for the window length,
+        rather than leaving the preview silent.
+        """
+        eff_start, eff_length = normalize_sample_window(start, length,
+                                                        music_length)
+        try:
+            if self._mixer is None:
+                self._mixer = _import_mixer()
+            if not self._initialized:
+                self._mixer.init()
+                self._initialized = True
+            self._mixer.music.load(str(path))
+            try:
+                self._mixer.music.play(loops=0, start=eff_start)
+            except Exception:
+                if eff_start == 0.0:
+                    raise
+                self._mixer.music.play(loops=0, start=0.0)
+        except Exception:
+            return None
+        return eff_length
+
+    def stop(self):
+        """Stop the preview, if one is playing; never raises."""
+        if self._mixer is None or not self._initialized:
+            return
+        try:
+            self._mixer.music.stop()
+        except Exception:
+            pass

@@ -1,6 +1,6 @@
 # ITGmania Library Visualizer
 
-A small Windows-friendly desktop app for browsing ITGmania cached charts alongside a player's `Stats.xml`. It runs on Python's standard library alone (including Tkinter), so no package installation is required. One optional package, `matplotlib`, adds the distribution charts (see below).
+A small Windows-friendly desktop app for browsing ITGmania cached charts alongside a player's `Stats.xml`. It runs on Python's standard library alone (including Tkinter), so no package installation is required. Two optional packages add features (see below): `matplotlib` adds the distribution charts, and `pygame-ce` adds the song page's Play preview.
 
 ![The library window, showing the song table with scores and grades](docs/images/main-window.png)
 
@@ -14,7 +14,7 @@ Install Python 3.10 or newer with Tcl/Tk, then run:
 python launch.py
 ```
 
-Optional: install `matplotlib` (`pip install matplotlib`, or `pip install -r requirements.txt`) to display interactive collection distribution charts (Meter, Difficulty, and BPM) in the collapsible side panel. Without it the panel shows an install hint and everything else works as usual.
+Optional: install `matplotlib` (`pip install matplotlib`, or `pip install -r requirements.txt`) to display interactive collection distribution charts (Meter, Difficulty, and BPM) in the collapsible side panel. Without it the panel shows an install hint and everything else works as usual. Install `pygame-ce` (`pip install pygame-ce`, or `pip install -r requirements.txt`) to play a song's preview from its song page; without it the Play button stays disabled and everything else works as usual. If the older `pygame` package is installed, uninstall it first (`pip uninstall pygame`) so the two do not conflict.
 
 The app starts with the usual ITGmania cache location for your platform filled in when it exists. Choose the flat `Cache/Songs` folder and the player's `Stats.xml` in **File → Data paths…**, then choose **Load / refresh**. The `Stats.xml` can be selected from a local profile folder; it is read only. After the first refresh, the app saves a local snapshot of the parsed chart library and restores it on later launches. Use **Load / refresh** when you want to reread the cache and scores; the saved snapshot does not update automatically when those files change. Use **File → Sync scores from Stats.xml** when only the scores changed (after a play session): it re-reads `Stats.xml` and refreshes the score columns without re-parsing the cache, so it is much faster than a full refresh. It only updates scores for songs already in the library — new songs still need Load / refresh. When `Stats.xml` is newer than the saved library, the status line says so at startup. While it reads, the progress bar shows files done out of the total, with an estimated time left once the scan is under way.
 
