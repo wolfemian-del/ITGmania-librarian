@@ -140,7 +140,7 @@ def aggregate_meter_distribution(rows: list[dict], active_val: str | None = None
             continue
         try:
             m_val = float(meter_raw)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             missing_count += 1
             continue
         if math.isnan(m_val):
@@ -223,7 +223,7 @@ def _bpm_range(row: dict) -> tuple[float, float] | None:
         if low in (None, "") or high in (None, ""):
             return None
         return float(low), float(high)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -284,7 +284,7 @@ def distribution_summary_stats(metric: str, rows: list[dict]) -> str:
                     # "inf"/"nan"; they are excluded, like missing ones.
                     if math.isfinite(v):
                         vals.append(int(v) if v.is_integer() else v)
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
                     pass
         if not vals:
             return f"{len(rows):,} charts"
@@ -318,7 +318,7 @@ def distribution_summary_stats(metric: str, rows: list[dict]) -> str:
                     # As for Meter: non-finite tempos would read "inf"/"nan".
                     if math.isfinite(v):
                         vals.append(v)
-                except (TypeError, ValueError):
+                except (TypeError, ValueError, OverflowError):
                     pass
         if not vals:
             return f"{len(rows):,} charts"

@@ -42,6 +42,16 @@ class SearchQueryTests(unittest.TestCase):
         self.assertFalse(data.match_chart_query(
             nan_row, data.parse_search_query("meter:10")))
 
+    def test_a_huge_int_in_a_row_does_not_match(self):
+        # Issue #215: a huge int from a hand-edited snapshot's JSON
+        # number (10**10000) must not crash the matcher; it simply
+        # matches nothing, like any other unparseable value.
+        self.assertFalse(data.match_chart_query(
+            {"Meter": 10**10000}, data.parse_search_query("meter:10")))
+        self.assertFalse(data.match_chart_query(
+            {"bpm_min": 100.0, "bpm_max": 10**10000},
+            data.parse_search_query("bpm:>250")))
+
     def test_parse_search_query_directives(self):
         q = "Smiley meter:11 bpm:200-300 time:>2:00 diff:Challenge"
         res = data.parse_search_query(q)

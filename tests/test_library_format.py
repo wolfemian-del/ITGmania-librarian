@@ -201,6 +201,28 @@ class NonFiniteFormatTests(unittest.TestCase):
         self.assertEqual(data.format_bpm_display(None, 150, 150), "150")
 
 
+class HugeIntValueTests(unittest.TestCase):
+    """Issue #215: a huge int from a hand-edited snapshot's JSON number
+    (10**10000) reads as missing, not a crash out of the format helpers."""
+
+    def test_number_treats_a_huge_int_as_missing(self):
+        self.assertEqual(data.number(10**10000), 0)
+        self.assertEqual(data.number(10**10000, ""), "")
+
+    def test_format_duration_treats_a_huge_int_as_missing(self):
+        self.assertEqual(data.format_duration(10**10000), "")
+
+    def test_bpm_sort_key_treats_a_huge_int_as_missing(self):
+        self.assertEqual(
+            data.bpm_sort_key({"bpm_max": 10**10000, "bpm_min": 150}),
+            (float("inf"), float("inf")),
+        )
+        self.assertEqual(
+            data.bpm_sort_key({"bpm_max": 300, "bpm_min": 100}),
+            (300.0, 100.0),
+        )
+
+
 class FormatRefreshTimeTests(unittest.TestCase):
     """format_refresh_time: an ISO timestamp in, a display string out."""
 
