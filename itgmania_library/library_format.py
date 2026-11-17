@@ -16,9 +16,18 @@ def number(value: str | None, default: float = 0) -> float:
         return default
 
 
+# A duration longer than this is not a song or a course total, it is
+# corrupt data: it reads as missing (blank) instead of rendering a
+# hundreds-of-characters cell (issue #194). 359999 seconds is 99 hours,
+# 59 minutes, 59 seconds — the longest "h:mm:ss" that still fits in
+# eight characters.
+_MAX_DURATION_SECONDS = 359999
+
+
 def format_duration(seconds) -> str:
-    """Format seconds as m:ss (or h:mm:ss); a non-finite or unparseable
-    value reads as missing (blank), the way an empty Time already does."""
+    """Format seconds as m:ss (or h:mm:ss); a non-finite, unparseable,
+    or absurdly long value reads as missing (blank), the way an empty
+    Time already does."""
     try:
         total = float(seconds)
     except (TypeError, ValueError, OverflowError):
@@ -26,6 +35,8 @@ def format_duration(seconds) -> str:
     if not math.isfinite(total):
         return ""
     total = max(0, round(total))
+    if total > _MAX_DURATION_SECONDS:
+        return ""
     hours, remainder = divmod(total, 3600)
     minutes, seconds = divmod(remainder, 60)
     return f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
