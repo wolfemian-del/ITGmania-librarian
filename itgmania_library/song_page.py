@@ -142,6 +142,25 @@ class SongPage:
         window.transient(self.parent)
 
         pad = scale_pixels(_PAGE_PADX, self.dpi_scale)
+        # The button row is built and packed first, at the bottom of the
+        # window: pack hands out space in packing order, so a row packed
+        # after the content gets nothing when the window is shorter than
+        # it (issue #220 — after a manual resize to a short height the
+        # buttons were cut off). First in packing order, the row keeps
+        # its space and the chart list absorbs the shortfall, which is
+        # what it is for. It still appears at the bottom, because of
+        # side="bottom" — only the packing order, not the layout, moves.
+        btn_row = tk.Frame(window, bg=theme.BG_WINDOW)
+        btn_row.pack(fill="x", padx=pad, side="bottom",
+                     pady=(scale_pixels(12, self.dpi_scale), pad))
+        self._play_button = self.button_factory(btn_row, "Play preview", self._play)
+        self._play_button.pack(side="left")
+        self._stop_button = self.button_factory(btn_row, "Stop", self._stop)
+        self._stop_button.pack(side="left", padx=(scale_pixels(8, self.dpi_scale), 0))
+        self._folder_button = self.button_factory(btn_row, "Open song folder",
+                                                  self._open_folder)
+        self._folder_button.pack(side="left", padx=(scale_pixels(8, self.dpi_scale), 0))
+        self.button_factory(btn_row, "Close", self.close).pack(side="right")
         self._banner_label = tk.Label(window, bg=theme.BG_WINDOW, fg=theme.TEXT_MUTED,
                                       font=theme.FONT_BODY)
         self._banner_label.pack(fill="x", padx=pad, pady=(pad, 0))
@@ -199,17 +218,6 @@ class SongPage:
                                  self._on_charts_canvas_configure)
         self._bind_wheel(self._charts_canvas)
         self._bind_wheel(self._charts_frame)
-        btn_row = tk.Frame(window, bg=theme.BG_WINDOW)
-        btn_row.pack(fill="x", padx=pad,
-                     pady=(scale_pixels(12, self.dpi_scale), pad))
-        self._play_button = self.button_factory(btn_row, "Play preview", self._play)
-        self._play_button.pack(side="left")
-        self._stop_button = self.button_factory(btn_row, "Stop", self._stop)
-        self._stop_button.pack(side="left", padx=(scale_pixels(8, self.dpi_scale), 0))
-        self._folder_button = self.button_factory(btn_row, "Open song folder",
-                                                  self._open_folder)
-        self._folder_button.pack(side="left", padx=(scale_pixels(8, self.dpi_scale), 0))
-        self.button_factory(btn_row, "Close", self.close).pack(side="right")
 
         window.protocol("WM_DELETE_WINDOW", self.close)
         window.bind("<Escape>", lambda _event: self.close() or "break")

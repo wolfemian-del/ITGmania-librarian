@@ -2439,11 +2439,20 @@ class LiveSongPageDirectTests(unittest.TestCase):
                 for _ in range(n)]
 
     def _assert_buttons_visible(self, page):
-        window_height = page.window.winfo_height()
+        # winfo_y() is relative to the button row, not the window, so it
+        # cannot tell whether the row is inside the window (issue #220);
+        # root coordinates can. A button that pack gave no space to is
+        # unmapped, so that is asserted first.
+        window = page.window
+        window_top = window.winfo_rooty()
+        window_height = window.winfo_height()
         for button in (page._play_button, page._stop_button,
                        page._folder_button):
+            self.assertTrue(button.winfo_ismapped())
             self.assertLessEqual(
-                button.winfo_y() + button.winfo_height(), window_height)
+                button.winfo_rooty() - window_top
+                + button.winfo_height(),
+                window_height)
 
     def test_a_one_chart_song_opens_shorter_than_a_sixteen_chart_song(self):
         root = self.make_root()
@@ -2544,6 +2553,36 @@ class LiveSongPageDirectTests(unittest.TestCase):
         self.assertEqual(page.window.winfo_height(), resized)
         self.assertTrue(page._charts_scrollbar.winfo_ismapped())
         self.assertEqual(len(page._charts_frame.winfo_children()), 30)
+
+    def test_buttons_stay_visible_after_a_short_resize(self):
+        # Issue #220: after a manual resize to a short height, a song
+        # with more charts reopened at the saved height with the buttons
+        # cut off — pack gave the button row (packed last) no space. The
+        # row is now packed first at the bottom, so it keeps its space
+        # and the chart list absorbs the shortfall. The large images make
+        # the fixed top part taller than the window's minimum height, so
+        # the short resize reproduces the bug; without them the minimum
+        # size alone would keep the buttons in view.
+        root = self.make_root()
+        fixtures = Path(__file__).parent / "fixtures"
+        media = self._media(
+            banner=fixtures / "song_banner_large.png",
+            background=fixtures / "song_background_large.png",
+            jacket=fixtures / "song_jacket_large.png")
+        page = self._page(root)
+        page.show(self._song(charts=self._many_charts(1)), media)
+        root.update()
+        page.window.geometry("760x420")
+        root.update()
+        # The window manager may clamp the resize, so the test records
+        # the height the window actually reached, as the resize test
+        # above does.
+        resized = page.window.winfo_height()
+        page.close()
+        page.show(self._song(charts=self._many_charts(16)), media)
+        root.update()
+        self.assertEqual(page.window.winfo_height(), resized)
+        self._assert_buttons_visible(page)
 
     def test_a_plain_close_does_not_pin_the_size(self):
         # The refinement (Proposal 0013): closing the page without
