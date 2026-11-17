@@ -186,6 +186,14 @@ class NonFiniteFormatTests(unittest.TestCase):
         self.assertEqual(data.format_duration(3661), "1:01:01")
         self.assertEqual(data.format_duration("120"), "2:00")
 
+    def test_format_duration_treats_an_extreme_finite_value_as_missing(self):
+        # Issue #194: 1e308 is finite, so it used to format as a
+        # 311-character string; beyond the cap it reads as missing,
+        # the way a non-finite value already does.
+        self.assertEqual(data.format_duration(1e308), "")
+        self.assertEqual(data.format_duration(359999), "99:59:59")
+        self.assertEqual(data.format_duration(360000), "")
+
     def test_format_bpm_display_treats_non_finite_as_missing(self):
         self.assertEqual(data.format_bpm_display(None, float("inf"), float("inf")), "")
         self.assertEqual(data.format_bpm_display("nan", 150, 150), "")

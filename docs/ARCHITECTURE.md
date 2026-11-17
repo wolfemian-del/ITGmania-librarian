@@ -7,7 +7,7 @@ guide stays in `README.md`.
 
 Run `launch.py` from the repository root (`python launch.py`). It is the
 only file you run: it imports `main` from
-`itgmania_library.library_visualizer` and calls it. The other 18 modules
+`itgmania_library.library_visualizer` and calls it. The other 20 modules
 live in the `itgmania_library` package and are imported by it (directly or
 through each other), by their absolute package names
 (`from itgmania_library.library_sources import ...`). As an aside,
@@ -17,7 +17,7 @@ through the package's `__main__.py`.
 ## Layers
 
 A module only imports modules in lower layers. The layering below was
-measured from the import graph (no cycles) at v1.3.0, not drawn from intent.
+measured from the import graph (no cycles) at main `be300eda`, not drawn from intent.
 
 ```
 5  library_visualizer.py — the shell (LibraryApp)
@@ -26,6 +26,7 @@ measured from the import graph (no cycles) at v1.3.0, not drawn from intent.
    distribution_panel.py · data_paths_dialog.py
 2  library_filter.py · course_builder.py · library_sources.py
    library_dialog_query.py · library_distribution.py
+   library_media.py · song_page.py
 1  library_format.py · library_search.py · row_tints.py
 0  library_constants.py · library_geometry.py · library_course.py · theme.py
 ```
@@ -36,17 +37,18 @@ other and on the standard library.
 
 Two naming facts to know before you trust the prefixes:
 
-- The `library_` prefix does **not** mean Tk-free. The nine Tk-free data
+- The `library_` prefix does **not** mean Tk-free. The ten Tk-free data
   modules are `library_constants`, `library_format`, `library_sources`,
   `library_geometry`, `library_course`, `library_search`,
-  `library_dialog_query`, `library_stores` and `library_distribution`.
+  `library_dialog_query`, `library_stores`, `library_distribution` and
+  `library_media`.
   `library_loader`, `library_filter` and `library_table` are UI components
   that carry the same prefix: the loader and the table import Tkinter, while
   the filter does not import it (it works on the widgets it is handed, so a
   Tk-free stand-in can drive it in tests).
 - The UI components without the prefix are `advanced_search`,
-  `course_builder`, `data_paths_dialog` and `distribution_panel`, plus
-  `row_tints` and `theme`.
+  `course_builder`, `data_paths_dialog`, `distribution_panel` and
+  `song_page`, plus `row_tints` and `theme`.
 
 ## Modules
 
@@ -119,6 +121,13 @@ Each component is built by the main window with the few things it needs.
   path variables it edits, a zero-argument load callback, the settings save,
   the entry and button factories, the display scale factor, and a callable
   that reports whether the paths match the loaded snapshot.
+- **Song page** (`song_page.py`): its parent window, the play and stop
+  callbacks (None when pygame-ce is not installed, which is how the page
+  knows to disable Play), a callback that opens the song folder (None off
+  Windows, where `os.startfile` does not exist), the display scale factor,
+  and the button factory. It owns the window, built once and re-raised by
+  `show()`; the shell holds the media record and the preview player, which
+  reach the page through `show()` and the play and stop callbacks.
 - **Load/sync engine** (`library_loader.py`): the snapshot store, the two
   path variables, the status variable, the progress bar, the Load button, a
   callable that enables or disables File → Sync scores, the callbacks that

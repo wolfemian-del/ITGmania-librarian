@@ -299,7 +299,14 @@ class LibraryLoader:
                     if not chart_rows:
                         files_without_charts += 1
                     rows.extend(chart_rows)
-                except (OSError, UnicodeError):
+                except Exception:
+                    # Any failure parsing one file skips that file: a
+                    # malformed cache must not kill the whole load
+                    # (issue #205). The count reaches the load summary
+                    # the way unreadable files already do. The catch is
+                    # deliberately broad — the parse touches the file,
+                    # the tag regex and the scores index, and no single
+                    # file's failure mode should sink the scan.
                     skipped_files += 1
                 # Every 25 files, and on the last one: often enough for the
                 # bar to move smoothly, rarely enough to churn the queue.

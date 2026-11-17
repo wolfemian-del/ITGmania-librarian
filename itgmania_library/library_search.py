@@ -118,6 +118,13 @@ def parse_numeric_bound(raw: str, is_duration: bool = False) -> tuple | None:
         return None
 
     def conv(s: str) -> float | None:
+        # float() accepts underscores ("1_000" -> 1000.0), but there is
+        # no underscore convention in the search language, so an
+        # underscore makes the bound unreadable (issue #195). This sits
+        # above both conversions, so it covers plain numbers and
+        # durations alike (including "1:0_0").
+        if "_" in s:
+            return None
         if is_duration:
             return parse_duration_seconds(s)
         try:
