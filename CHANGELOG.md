@@ -7,6 +7,7 @@
 - A chart with an absurd Time value no longer renders as a hundreds-of-characters duration in the Time column; anything longer than 99 hours, 59 minutes reads as blank, the way a missing Time already does.
 - Loading the library no longer fails outright when one cache file cannot be parsed; that file is skipped and counted in the load summary, the way an unreadable file already is.
 - A numeric search value with an underscore in it (for example `meter:1_000`) no longer reads as a number; it matches nothing, the way an unreadable value already does, and the count line says so.
+- The song page's preview window now comes from the song's own music file, stored on every chart row, instead of being guessed from the charts: a song whose charts all share one `#MUSIC` override no longer plays the song's sample window against that other track, and a chart with its own `#MUSIC` no longer keeps a window it should not have. The snapshot schema bumps to 6, so an old snapshot rebuilds once.
 
 ## 1.3.0 - 2026-11-15
 

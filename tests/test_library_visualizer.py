@@ -1766,6 +1766,7 @@ class OpenSongPageTests(unittest.TestCase):
     def test_open_song_page_shows_the_songs_charts_with_the_opened_chart_first(self):
         opened = {"Title": "One", "Artist": "A", "Pack": "P",
                   "Course path": "P/One", "Music": "song.ogg",
+                  "SongMusic": "song.ogg",
                   "Banner": "", "Background": "", "Jacket": "", "CDTitle": "",
                   "SampleStart": 64.58, "SampleLength": 15.0, "Time": 93.987999}
         sibling = dict(opened, Difficulty="Challenge")
@@ -1805,6 +1806,7 @@ class OpenSongPageTests(unittest.TestCase):
     def test_open_song_page_keeps_the_media_for_the_play_callback(self):
         opened = {"Title": "One", "Artist": "A", "Pack": "P",
                   "Course path": "P/One", "Music": "song.ogg",
+                  "SongMusic": "song.ogg",
                   "Banner": "", "Background": "", "Jacket": "", "CDTitle": "",
                   "SampleStart": 64.58, "SampleLength": 15.0, "Time": 93.987999}
         with tempfile.TemporaryDirectory() as tmp:
@@ -1901,6 +1903,7 @@ class LiveSongPageOpenTests(unittest.TestCase):
                         "BPM": bpm, "Time": time_value,
                         "Score": 985000.0 if title == "One" and difficulty == "Hard" else "",
                         "Course path": course_path, "Music": "song.ogg",
+                        "SongMusic": "song.ogg",
                         "Banner": banner, "Background": "", "Jacket": "", "CDTitle": "",
                         "SampleStart": 64.58 if title == "One" else 10.0,
                         "SampleLength": 15.0 if title == "One" else 12.0})

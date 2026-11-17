@@ -591,8 +591,10 @@ class ParsingTests(unittest.TestCase):
 
 class MediaParsingTests(unittest.TestCase):
     # Proposal 0011, stage 1: the seven media tags land as hidden row keys.
-    MEDIA_KEYS = ("Music", "Banner", "Background", "Jacket", "CDTitle",
-                  "SampleStart", "SampleLength")
+    # Issue #193 adds an eighth: SongMusic, the song's own #MUSIC, carried
+    # on every chart row so the media record need not infer it.
+    MEDIA_KEYS = ("Music", "SongMusic", "Banner", "Background", "Jacket",
+                  "CDTitle", "SampleStart", "SampleLength")
 
     @staticmethod
     def _write_cache(directory, song_tags, charts):
@@ -624,6 +626,7 @@ class MediaParsingTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         row = rows[0]
         self.assertEqual(row["Music"], "song.ogg")
+        self.assertEqual(row["SongMusic"], "song.ogg")
         self.assertEqual(row["Banner"], "banner.png")
         self.assertEqual(row["Background"], "bg.jpg")
         self.assertEqual(row["Jacket"], "jacket.png")
@@ -673,6 +676,10 @@ class MediaParsingTests(unittest.TestCase):
         self.assertEqual(len(rows), 2)
         self.assertEqual(rows[0]["Music"], "chart.ogg")
         self.assertEqual(rows[1]["Music"], "song.ogg")
+        # Both rows carry the song's own #MUSIC (issue #193), even the
+        # chart that overrides it.
+        self.assertEqual(rows[0]["SongMusic"], "song.ogg")
+        self.assertEqual(rows[1]["SongMusic"], "song.ogg")
 
     def test_chart_level_tags_other_than_music_do_not_override(self):
         # Only #MUSIC has a chart-level override (NotesLoaderSSC.cpp

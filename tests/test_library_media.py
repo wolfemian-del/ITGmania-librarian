@@ -18,6 +18,7 @@ def _row(**overrides):
         "Type": "dance-single",
         "Difficulty": "Beginner",
         "Music": "song.ogg",
+        "SongMusic": "song.ogg",
         "Banner": "banner.png",
         "Background": "bg.png",
         "Jacket": "jacket.png",
@@ -405,29 +406,31 @@ class BuildSongMediaTests(unittest.TestCase):
         self.assertEqual(record.banner, self.song1 / "banner.png")
 
     def test_opened_chart_is_song_music_other_chart_overrides(self):
-        # The opened chart carries the song's music and another chart
-        # overrides: the window is dropped, since the song's file
-        # cannot be told apart from the override. Harmless — the
-        # player seam defaults to the start of the song.
+        # Issue #193: the opened chart carries the song's music and
+        # another chart overrides. The stored SongMusic says the opened
+        # chart's file IS the song's, so the window is kept — the other
+        # chart's override is irrelevant to this chart's preview. (The
+        # old inference dropped it here, since the charts disagreed.)
         self._write(self.song1, "alt.ogg")
         self._write_full_set(self.song1)
         rows = [_row(), _row(Difficulty="Challenge", Music="alt.ogg")]
         record = media.build_song_media(SONG_DIR, self.roots, rows)
         self.assertEqual(record.music, self.song1 / "song.ogg")
-        self.assertIsNone(record.music_length)
-        self.assertIsNone(record.sample_start)
-        self.assertIsNone(record.sample_length)
+        self.assertEqual(record.music_length, 93.988)
+        self.assertEqual(record.sample_start, 64.58)
+        self.assertEqual(record.sample_length, 15.0)
 
     def test_opened_chart_is_song_music_two_others_override(self):
+        # As above, with two overriding charts: the window is kept.
         self._write(self.song1, "alt.ogg")
         self._write_full_set(self.song1)
         rows = [_row(), _row(Difficulty="Challenge", Music="alt.ogg"),
                 _row(Difficulty="Medium", Music="alt.ogg")]
         record = media.build_song_media(SONG_DIR, self.roots, rows)
         self.assertEqual(record.music, self.song1 / "song.ogg")
-        self.assertIsNone(record.music_length)
-        self.assertIsNone(record.sample_start)
-        self.assertIsNone(record.sample_length)
+        self.assertEqual(record.music_length, 93.988)
+        self.assertEqual(record.sample_start, 64.58)
+        self.assertEqual(record.sample_length, 15.0)
 
     def test_opened_chart_override_two_others_differ(self):
         # Two different overrides in one song: the window is dropped
@@ -443,18 +446,35 @@ class BuildSongMediaTests(unittest.TestCase):
         self.assertIsNone(record.sample_start)
         self.assertIsNone(record.sample_length)
 
-    def test_all_charts_same_override_keeps_window(self):
-        # Every chart carries the same file, so the code cannot tell an
-        # override shared by all charts from the song's own music: the
-        # window is kept, and the limit is documented in build_song_media.
+    def test_all_charts_same_override_drops_window(self):
+        # Issue #193: every chart carries the same override file, so
+        # the old inference could not tell it from the song's own music
+        # and kept the window. The stored SongMusic says the song's file
+        # is song.ogg, not alt.ogg, so the window is dropped.
         self._write(self.song1, "alt.ogg")
         self._write_full_set(self.song1)
         rows = [_row(Music="alt.ogg"),
                 _row(Difficulty="Challenge", Music="alt.ogg")]
         record = media.build_song_media(SONG_DIR, self.roots, rows)
         self.assertEqual(record.music, self.song1 / "alt.ogg")
-        self.assertEqual(record.music_length, 93.988)
-        self.assertEqual(record.sample_start, 64.58)
+        self.assertIsNone(record.music_length)
+        self.assertIsNone(record.sample_start)
+        self.assertIsNone(record.sample_length)
+
+    def test_single_chart_with_override_drops_window(self):
+        # Issue #193: a single chart with its own #MUSIC. The old code
+        # kept the window (nothing to disagree with), which played the
+        # song's sample window against a different track. The stored
+        # SongMusic says the chart's file is not the song's, so the
+        # window is dropped.
+        self._write(self.song1, "alt.ogg")
+        self._write_full_set(self.song1)
+        record = media.build_song_media(
+            SONG_DIR, self.roots, [_row(Music="alt.ogg")])
+        self.assertEqual(record.music, self.song1 / "alt.ogg")
+        self.assertIsNone(record.music_length)
+        self.assertIsNone(record.sample_start)
+        self.assertIsNone(record.sample_length)
 
     def test_song_dir_with_drive_letter(self):
         self._write_full_set(self.song1)
