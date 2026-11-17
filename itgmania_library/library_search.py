@@ -162,7 +162,7 @@ def _compare_bound(bound: tuple, actual) -> bool:
         return False
     try:
         val = float(actual)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
 
     op = bound[0]
@@ -195,7 +195,7 @@ def _compare_bpm_bound(bound: tuple, row: dict) -> bool:
     try:
         b_min = float(b_min)
         b_max = float(b_max)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return False
 
     op = bound[0]

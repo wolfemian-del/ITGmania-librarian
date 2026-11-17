@@ -156,6 +156,30 @@ class DistributionTests(unittest.TestCase):
         # ? is non-interactive (filter_token is empty string)
         self.assertEqual(dict(zip([d[0] for d in dist], [d[2] for d in dist]))["?"], "")
 
+    def test_a_huge_int_in_a_row_reads_as_missing(self):
+        # Issue #215: a huge int from a hand-edited snapshot's JSON
+        # number (10**10000) must not crash the distribution panel;
+        # it reads as missing, like any other unparseable value.
+        rows = [{"Meter": 10**10000}, {"Meter": 10}]
+        dist = {label: count for label, count, *_ in data.aggregate_meter_distribution(rows)}
+        self.assertEqual(dist["10"], 1)
+        self.assertEqual(dist["?"], 1)
+        bpm_rows = [
+            {"bpm_min": 100.0, "bpm_max": 10**10000},
+            {"bpm_min": 100.0, "bpm_max": 300.0},
+        ]
+        bpm = {label: count for label, count, *_ in data.aggregate_bpm_distribution(bpm_rows)}
+        self.assertEqual(bpm["200+"], 1)
+        self.assertEqual(bpm["?"], 1)
+        self.assertEqual(
+            data.distribution_summary_stats("Meter", [{"Meter": 10**10000}]),
+            "1 charts",
+        )
+        self.assertEqual(
+            data.distribution_summary_stats("BPM", [{"bpm_max": 10**10000}]),
+            "1 charts",
+        )
+
     def test_chart_without_a_meter_tag_gets_a_clickable_zero_bar(self):
         # parse_cache_file stores a missing METER tag as 0, so real data never reaches the "?" bar.
         self.assertEqual(number(None), 0.0)

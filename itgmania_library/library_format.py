@@ -12,7 +12,7 @@ from itgmania_library.library_constants import DIFFICULTY_ORDER, DIFFICULTY_RANK
 def number(value: str | None, default: float = 0) -> float:
     try:
         return float(value or default)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return default
 
 
@@ -21,7 +21,7 @@ def format_duration(seconds) -> str:
     value reads as missing (blank), the way an empty Time already does."""
     try:
         total = float(seconds)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return ""
     if not math.isfinite(total):
         return ""
@@ -125,7 +125,12 @@ def bpm_sort_key(row: dict):
     bpm_min = row.get("bpm_min", "")
     if bpm_max in (None, "") or bpm_min in (None, ""):
         return (float("inf"), float("inf"))
-    return (float(bpm_max), float(bpm_min))
+    try:
+        return (float(bpm_max), float(bpm_min))
+    except (TypeError, ValueError, OverflowError):
+        # A huge int from a hand-edited snapshot's JSON number
+        # (10**10000) reads as missing, like an empty bound.
+        return (float("inf"), float("inf"))
 
 
 def tag_map(text: str) -> dict[str, str]:
