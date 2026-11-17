@@ -1,3 +1,5 @@
 # Optional. The app runs on Python's standard library alone; matplotlib only adds the
-# distribution charts in the Distribution side panel.
+# distribution charts in the Distribution side panel, and pygame-ce only adds the
+# song page's Play preview (without it Play stays disabled and everything else works).
 matplotlib
+pygame-ce

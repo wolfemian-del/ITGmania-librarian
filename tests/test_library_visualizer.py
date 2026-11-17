@@ -1802,6 +1802,61 @@ class OpenSongPageTests(unittest.TestCase):
         instance.song_page.show.assert_not_called()
 
 
+    def test_open_song_page_keeps_the_media_for_the_play_callback(self):
+        opened = {"Title": "One", "Artist": "A", "Pack": "P",
+                  "Course path": "P/One", "Music": "song.ogg",
+                  "Banner": "", "Background": "", "Jacket": "", "CDTitle": "",
+                  "SampleStart": 64.58, "SampleLength": 15.0, "Time": 93.987999}
+        with tempfile.TemporaryDirectory() as tmp:
+            instance = self._instance(
+                [opened], str(Path(tmp) / "Cache" / "Songs"))
+            instance._open_song_page(opened)
+        shown_media = instance.song_page.show.call_args.args[1]
+        self.assertIs(instance._song_media, shown_media)
+
+
+class PlayPreviewShellTests(unittest.TestCase):
+    """The shell's play/stop callbacks (proposal 0011, stage 4): the
+    player gets the shown song's music length, and a missing player
+    reads as "could not start"."""
+
+    def test_play_preview_passes_the_shown_songs_music_length(self):
+        player = Mock()
+        player.play.return_value = 15.0
+        instance = object.__new__(app.LibraryApp)
+        instance._preview_player = player
+        instance._song_media = library_media.SongMedia(music_length=93.988)
+        path = Path("P/One/song.ogg")
+        self.assertEqual(instance._play_preview(path, 64.58, 15.0), 15.0)
+        player.play.assert_called_once_with(path, 64.58, 15.0, 93.988)
+
+    def test_play_preview_without_a_player_returns_none(self):
+        instance = object.__new__(app.LibraryApp)
+        self.assertIsNone(
+            instance._play_preview(Path("song.ogg"), 0.0, 12.0))
+
+    def test_play_preview_without_shown_media_passes_no_length(self):
+        player = Mock()
+        player.play.return_value = 12.0
+        instance = object.__new__(app.LibraryApp)
+        instance._preview_player = player
+        self.assertEqual(
+            instance._play_preview(Path("song.ogg"), None, None), 12.0)
+        player.play.assert_called_once_with(
+            Path("song.ogg"), None, None, None)
+
+    def test_stop_preview_stops_the_player(self):
+        player = Mock()
+        instance = object.__new__(app.LibraryApp)
+        instance._preview_player = player
+        instance._stop_preview()
+        player.stop.assert_called_once_with()
+
+    def test_stop_preview_without_a_player_is_silent(self):
+        instance = object.__new__(app.LibraryApp)
+        instance._stop_preview()
+
+
 class LiveSongPageOpenTests(unittest.TestCase):
     """The song page opens from a double-click or Enter on a chart row
     (Proposal 0011, stage 3): the gestures, the focused row, and the
@@ -2037,6 +2092,46 @@ class LiveSongPageOpenTests(unittest.TestCase):
         self.assertEqual(page._banner_label["text"], "No banner")
         self.assertEqual(page._music_label["text"], "No music file")
 
+    def test_play_reaches_the_preview_player_through_the_shell(self):
+        # Stage 4 wiring, end to end with a stub player (no real audio):
+        # with pygame-ce "installed", the page gets the shell's play
+        # callbacks, and Play on a song reaches the player with the
+        # song's file and window.
+        stub = _StubPreviewPlayer(play_length=30.0)
+        with patch.object(app, "player_available", return_value=True):
+            application, root, songs_dir = self._layout_and_app()
+        application._preview_player = stub
+        items = self._items_by_row(application)
+        self._double_click(application, root, items[("One", "Hard")])
+        page = application.song_page
+        self.assertIsNotNone(page.on_play)
+        self.assertEqual(page._play_button["state"], "normal")
+        page._play_button.invoke()
+        root.update()
+        self.assertEqual(stub.play_calls, [(
+            songs_dir / "P" / "One" / "song.ogg", 64.58, 15.0, 93.987999)])
+        self.assertEqual(page._stop_button["state"], "normal")
+        page._stop_button.invoke()
+        root.update()
+        self.assertEqual(stub.stop_calls, 1)
+        self.assertEqual(page._stop_button["state"], "disabled")
+
+
+class _StubPreviewPlayer:
+    """A recording stand-in for SongPreviewPlayer (no real audio)."""
+
+    def __init__(self, play_length):
+        self.play_length = play_length
+        self.play_calls = []
+        self.stop_calls = 0
+
+    def play(self, path, start, length, music_length):
+        self.play_calls.append((path, start, length, music_length))
+        return self.play_length
+
+    def stop(self):
+        self.stop_calls += 1
+
 
 class LiveSongPageDirectTests(unittest.TestCase):
     """The song page on its own (Proposal 0011, stage 3): the media it
@@ -2061,8 +2156,8 @@ class LiveSongPageDirectTests(unittest.TestCase):
     def _button(parent, text, command):
         return app.tk.Button(parent, text=text, command=command)
 
-    def _page(self, root, on_open_folder=None):
-        return app.SongPage(root, on_play=None, on_stop=None,
+    def _page(self, root, on_play=None, on_stop=None, on_open_folder=None):
+        return app.SongPage(root, on_play=on_play, on_stop=on_stop,
                             on_open_folder=on_open_folder, dpi_scale=1.0,
                             button_factory=self._button)
 
@@ -2195,13 +2290,121 @@ class LiveSongPageDirectTests(unittest.TestCase):
         self.assertEqual(page_no_callback._folder_button["state"], "disabled")
 
     def test_play_and_stop_are_disabled_without_a_player(self):
-        # Stage 3 ships no player (playback is stage 4), so both stay disabled.
+        # Without a player callback both stay disabled, even when the
+        # song has music.
         root = self.make_root()
         page = self._page(root)
         page.show(self._song(), self._media(music=Path("song.ogg")))
         root.update()
         self.assertEqual(page._play_button["state"], "disabled")
         self.assertEqual(page._stop_button["state"], "disabled")
+
+    @staticmethod
+    def _pump(root, seconds=0.3):
+        deadline = time.monotonic() + seconds
+        while time.monotonic() < deadline:
+            root.update()
+            time.sleep(0.01)
+
+    def test_play_starts_the_preview_and_stop_ends_it(self):
+        root = self.make_root()
+        on_play = Mock(return_value=15.0)
+        on_stop = Mock()
+        music = Path("song.ogg")
+        page = self._page(root, on_play=on_play, on_stop=on_stop)
+        page.show(self._song(), self._media(
+            music=music, music_length=93.988,
+            sample_start=64.58, sample_length=15.0))
+        root.update()
+        self.assertEqual(page._play_button["state"], "normal")
+        page._play_button.invoke()
+        on_play.assert_called_once_with(music, 64.58, 15.0)
+        self.assertEqual(page._stop_button["state"], "normal")
+        self.assertIsNotNone(page._stop_after_id)
+        page._stop_button.invoke()
+        on_stop.assert_called_once_with()
+        self.assertEqual(page._stop_button["state"], "disabled")
+        self.assertIsNone(page._stop_after_id)
+
+    def test_play_that_cannot_start_leaves_stop_disabled(self):
+        root = self.make_root()
+        on_play = Mock(return_value=None)
+        on_stop = Mock()
+        page = self._page(root, on_play=on_play, on_stop=on_stop)
+        page.show(self._song(), self._media(music=Path("song.ogg")))
+        root.update()
+        page._play_button.invoke()
+        on_play.assert_called_once()
+        on_stop.assert_not_called()
+        self.assertEqual(page._stop_button["state"], "disabled")
+        self.assertIsNone(page._stop_after_id)
+
+    def test_play_without_music_stays_disabled(self):
+        root = self.make_root()
+        on_play = Mock(return_value=15.0)
+        page = self._page(root, on_play=on_play, on_stop=Mock())
+        page.show(self._song(), self._media())
+        root.update()
+        self.assertEqual(page._play_button["state"], "disabled")
+        page._play_button.invoke()
+        on_play.assert_not_called()
+
+    def test_timer_stops_the_preview_when_the_window_elapses(self):
+        root = self.make_root()
+        on_play = Mock(return_value=0.05)
+        on_stop = Mock()
+        page = self._page(root, on_play=on_play, on_stop=on_stop)
+        page.show(self._song(), self._media(music=Path("song.ogg")))
+        root.update()
+        page._play_button.invoke()
+        self._pump(root)
+        on_stop.assert_called_once_with()
+        self.assertEqual(page._stop_button["state"], "disabled")
+        self.assertIsNone(page._stop_after_id)
+
+    def test_show_on_another_song_stops_the_playing_preview(self):
+        # The old timer is cancelled, not just the audio: after the
+        # show, pumping long enough for it to fire must not stop
+        # anything a second time.
+        root = self.make_root()
+        on_play = Mock(return_value=0.05)
+        on_stop = Mock()
+        page = self._page(root, on_play=on_play, on_stop=on_stop)
+        page.show(self._song(), self._media(music=Path("song.ogg")))
+        root.update()
+        page._play_button.invoke()
+        page.show(self._song("Two"), self._media(music=Path("two.ogg")))
+        root.update()
+        self._pump(root)
+        on_stop.assert_called_once_with()
+        self.assertEqual(page._stop_button["state"], "disabled")
+        self.assertIsNone(page._stop_after_id)
+
+    def test_play_stop_play_again_runs_the_full_window(self):
+        root = self.make_root()
+        on_play = Mock(return_value=15.0)
+        on_stop = Mock()
+        page = self._page(root, on_play=on_play, on_stop=on_stop)
+        page.show(self._song(), self._media(music=Path("song.ogg")))
+        root.update()
+        page._play_button.invoke()
+        page._stop_button.invoke()
+        page._play_button.invoke()
+        self.assertEqual(on_play.call_count, 2)
+        self.assertEqual(on_stop.call_count, 1)
+        self.assertEqual(page._stop_button["state"], "normal")
+        self.assertIsNotNone(page._stop_after_id)
+
+    def test_close_stops_the_playing_preview(self):
+        root = self.make_root()
+        on_play = Mock(return_value=30.0)
+        on_stop = Mock()
+        page = self._page(root, on_play=on_play, on_stop=on_stop)
+        page.show(self._song(), self._media(music=Path("song.ogg")))
+        root.update()
+        page._play_button.invoke()
+        page.close()
+        on_stop.assert_called_once_with()
 
     def test_show_refills_the_same_window_and_close_destroys_it(self):
         root = self.make_root()

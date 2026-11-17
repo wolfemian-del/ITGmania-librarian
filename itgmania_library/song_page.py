@@ -3,8 +3,9 @@
 Display only (Proposal 0011, stage 3): the page is given the song and its
 already-resolved media and calls back for everything else. It never
 resolves a path itself and never touches the filter, the loader, or the
-stores. Playback arrives in stage 4, so in this stage there is no player
-and the Play and Stop buttons stay disabled.
+stores. Playback (stage 4) runs through the on_play/on_stop callbacks:
+the page owns the stop timer and stops the preview whenever the page
+closes, shows another song, or Stop is pressed.
 """
 
 from __future__ import annotations
@@ -46,9 +47,13 @@ class SongPage:
     """The song page: one window for a song's media and charts.
 
     parent: the root window, for the Toplevel
-    on_play: starts the preview — on_play(path, start, length) -> bool;
-        None when there is no player (stage 4 supplies it), which is how
-        the page knows to disable Play
+    on_play: starts the preview — on_play(path, start, length) -> float
+        | None; the effective preview length in seconds, or None when
+        it could not start. None when there is no player (no pygame-ce),
+        which is how the page knows to disable Play. (The proposal's
+        contract said bool; the page needs the effective length for its
+        stop timer, so the callback returns it — None still means "could
+        not start".)
     on_stop: stops the preview, None when there is no player
     on_open_folder: opens the song's folder — on_open_folder(path) -> bool;
         None where the folder cannot be opened (off Windows, where
@@ -84,6 +89,14 @@ class SongPage:
         self._play_button = None
         self._stop_button = None
         self._folder_button = None
+        # The pending stop timer's after id, or None when nothing plays:
+        # the page stops the preview after the effective length, since
+        # the player takes no length of its own. _playing is the
+        # preview's state: the timer id alone cannot say it, because
+        # after the timer fires the audio is still playing until
+        # on_stop is called.
+        self._stop_after_id = None
+        self._playing = False
 
     def show(self, song, media):
         """Show the song page for one song, raising it if it is already open.
@@ -92,6 +105,9 @@ class SongPage:
             "charts" (every row sharing the song's "Course path", the
             opened chart first). media: the SongMedia record for the song.
         """
+        # Showing another song ends the one playing: the preview is one
+        # at a time, and a stale timer must never cut the next one short.
+        self._stop_preview()
         self._song = song
         self._media = media
         if self.window is not None and self.window.winfo_exists():
@@ -206,8 +222,8 @@ class SongPage:
         play_state = ("normal" if self.on_play is not None
                       and media.music is not None else "disabled")
         self._play_button.configure(state=play_state)
-        # Nothing is playing in stage 3 (there is no player yet), so Stop
-        # stays disabled; stage 4 enables it while a preview plays.
+        # Nothing is playing after a fill (show() stops any preview
+        # first), so Stop stays disabled until Play starts one.
         self._stop_button.configure(state="disabled")
         folder_state = ("normal" if self.on_open_folder is not None
                         and media.folder is not None else "disabled")
@@ -287,16 +303,61 @@ class SongPage:
             label.configure(image=image, text="")
 
     def _play(self):
-        """Start the preview from the sample window (stage 4 supplies the player)."""
+        """Start the preview from the sample window.
+
+        The player returns the effective length — the window it is
+        actually playing, after normalization — and the page stops it
+        after that length, since the player takes no length of its own.
+        A new Play stops the old preview first, and a preview that
+        could not start (None) leaves Stop disabled with no timer.
+        """
         if self.on_play is None or self._media is None or self._media.music is None:
             return
-        self.on_play(self._media.music, self._media.sample_start,
-                     self._media.sample_length)
+        self._stop_preview()
+        length = self.on_play(self._media.music, self._media.sample_start,
+                              self._media.sample_length)
+        if length is None:
+            return
+        self._playing = True
+        self._stop_button.configure(state="normal")
+        try:
+            self._stop_after_id = self.window.after(
+                int(length * 1000), self._on_preview_finished)
+        except (tk.TclError, OverflowError):
+            # A garbage window the seam did not bound (a hand-edited
+            # snapshot with a huge sample length and no music length)
+            # cannot be scheduled; the preview still plays, and Stop
+            # still stops it.
+            self._stop_after_id = None
+
+    def _on_preview_finished(self):
+        """The preview's length elapsed: stop it and drop the timer."""
+        self._stop_after_id = None
+        self._stop_preview()
 
     def _stop(self):
         """Stop the preview."""
-        if self.on_stop is not None:
-            self.on_stop()
+        self._stop_preview()
+
+    def _stop_preview(self):
+        """Stop any playing preview and its timer; safe when nothing plays.
+
+        Called by show() on another song, by a new Play, by Stop, by
+        the timer, and by close(), so playback never outlives the page
+        or the song it is playing for. on_stop is only called when a
+        preview is actually playing — the player is idempotent, but
+        the page should not ask it to stop nothing.
+        """
+        if self._stop_after_id is not None and self.window is not None:
+            if self.window.winfo_exists():
+                self.window.after_cancel(self._stop_after_id)
+            self._stop_after_id = None
+        if self._playing:
+            self._playing = False
+            if self.on_stop is not None:
+                self.on_stop()
+        if self._stop_button is not None:
+            self._stop_button.configure(state="disabled")
 
     def _open_folder(self):
         """Open the song's folder in the file manager."""
@@ -308,6 +369,7 @@ class SongPage:
     def close(self):
         """Close the song page, remembering its geometry for the next open
         in this session (not persisted — the page has no settings key)."""
+        self._stop_preview()
         self.save_window_geometry()
         if self.window is not None:
             self.window.destroy()
@@ -325,6 +387,7 @@ class SongPage:
         self._play_button = None
         self._stop_button = None
         self._folder_button = None
+        self._stop_after_id = None
 
     def save_window_geometry(self):
         """Remember the window's geometry in canonical units, or nothing.

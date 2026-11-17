@@ -62,7 +62,7 @@ Two naming facts to know before you trust the prefixes:
 | `itgmania_library/library_table.py` | the song table: sorting, column order and widths, row tinting | `tests/test_library_table.py` |
 | `itgmania_library/distribution_panel.py` | the distribution side panel and its charts | `tests/test_ui_distribution.py` |
 | `itgmania_library/library_sources.py` | scores, cache, and path helpers | `tests/test_library_sources.py` |
-| `itgmania_library/library_media.py` | song media: folder roots, media-file resolution, the song's charts and media record | `tests/test_library_media.py` |
+| `itgmania_library/library_media.py` | song media: folder roots, media-file resolution, the song's charts and media record, and the preview player seam | `tests/test_library_media.py` |
 | `itgmania_library/song_page.py` | the song page: one window for a song's media and charts | `tests/test_library_visualizer.py` |
 | `itgmania_library/library_distribution.py` | the distribution charts: meter, difficulty, and BPM aggregation | `tests/test_distribution.py` |
 | `itgmania_library/advanced_search.py` | the Advanced Search dialog | `tests/test_advanced_search.py` |
