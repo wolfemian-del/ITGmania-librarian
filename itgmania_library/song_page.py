@@ -232,9 +232,10 @@ class SongPage:
 
     @staticmethod
     def _chart_line(row):
-        """One chart's line: difficulty, meter, BPM, and score — the same
-        values the table shows for the row."""
-        parts = [str(row.get("Difficulty") or "")]
+        """One chart's line: game type, difficulty, meter, BPM, and score —
+        the same values the table shows for the row. A missing game type is
+        simply omitted, the way a missing meter is."""
+        parts = [str(row.get("Type") or ""), str(row.get("Difficulty") or "")]
         meter = row.get("Meter")
         if meter not in (None, ""):
             parts.append(f"Meter {_cell(meter)}")

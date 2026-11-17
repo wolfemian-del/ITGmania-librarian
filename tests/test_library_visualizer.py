@@ -2070,10 +2070,10 @@ class LiveSongPageDirectTests(unittest.TestCase):
     def _song(title="One", charts=None):
         return {"title": title, "artist": f"Artist {title}", "pack": "P",
                 "charts": charts if charts is not None else [
-                    {"Difficulty": "Hard", "Meter": 10.0, "BPM": "150",
-                     "Score": 985000.0},
-                    {"Difficulty": "Challenge", "Meter": 13.0, "BPM": "150-180",
-                     "Score": ""}]}
+                    {"Type": "dance-single", "Difficulty": "Hard",
+                     "Meter": 10.0, "BPM": "150", "Score": 985000.0},
+                    {"Type": "dance-single", "Difficulty": "Challenge",
+                     "Meter": 13.0, "BPM": "150-180", "Score": ""}]}
 
     @staticmethod
     def _media(**overrides):
@@ -2153,9 +2153,24 @@ class LiveSongPageDirectTests(unittest.TestCase):
         root.update()
         labels = page._charts_frame.winfo_children()
         self.assertEqual(len(labels), 2)
-        self.assertEqual(labels[0]["text"], "Hard · Meter 10 · 150 · Score 985000")
+        self.assertEqual(labels[0]["text"],
+                         "dance-single · Hard · Meter 10 · 150 · Score 985000")
         self.assertEqual(labels[1]["text"],
-                         "Challenge · Meter 13 · 150-180 · No score")
+                         "dance-single · Challenge · Meter 13 · 150-180 · No score")
+
+    def test_chart_line_shows_the_rows_own_game_type_and_omits_a_missing_one(self):
+        root = self.make_root()
+        page = self._page(root)
+        charts = [{"Type": "dance-double", "Difficulty": "Hard",
+                   "Meter": 10.0, "BPM": "150", "Score": ""},
+                  {"Difficulty": "Easy", "Meter": 3.0, "BPM": "135",
+                   "Score": ""}]
+        page.show(self._song(charts=charts), self._media())
+        root.update()
+        labels = page._charts_frame.winfo_children()
+        self.assertEqual(labels[0]["text"],
+                         "dance-double · Hard · Meter 10 · 150 · No score")
+        self.assertEqual(labels[1]["text"], "Easy · Meter 3 · 135 · No score")
 
     def test_folder_button_state_follows_the_callback_and_the_folder(self):
         root = self.make_root()
