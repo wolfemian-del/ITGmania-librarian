@@ -1,5 +1,6 @@
 import contextlib
 import json
+import os
 import re
 import sys
 import tempfile
@@ -1958,10 +1959,11 @@ class LiveSongPageOpenTests(unittest.TestCase):
         self.assertEqual(page._music_label["text"],
                          "Music: song.ogg · 1:34 · preview 1:05–1:20")
         self.assertEqual(page._folder_label["text"], str(songs_dir / "P" / "One"))
-        # Off Windows there is no os.startfile, so the folder button stays
-        # disabled even when the folder exists; the enabled case is for the
-        # owner's Windows checks.
-        self.assertEqual(page._folder_button["state"], "disabled")
+        # The button is enabled only where the shell could pass a callback:
+        # on Windows (os.startfile exists) with the folder present; off
+        # Windows it stays disabled even when the folder exists.
+        expected = "normal" if hasattr(os, "startfile") else "disabled"
+        self.assertEqual(page._folder_button["state"], expected)
 
     def test_single_click_does_not_open_the_page(self):
         application, root, _songs_dir = self._layout_and_app()
