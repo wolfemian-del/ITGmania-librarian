@@ -9,8 +9,8 @@ appears or a module that should never touch Tkinter starts importing it.
 The Tkinter boundary is pinned as an exact set: the eight modules that
 import Tkinter today are the window code, plus the loader (which shows
 the loading window). A ninth module gaining a tkinter import fails here
-first, and the fix is either to keep the Tkinter use in the window layer
-or to update this set deliberately, with the layer diagram.
+first, and a window module losing one fails the same way, so the set is
+updated deliberately in either direction, with the layer diagram.
 """
 
 import ast
@@ -37,7 +37,10 @@ TK_MODULES = frozenset((
 def _package_imports():
     """The intra-package import graph and the set of modules importing
     tkinter, read from the package sources with ast. A graph entry maps a
-    module to the sibling modules it imports."""
+    module to the sibling modules it imports. A name imported from
+    outside the package (a typo) becomes a leaf with no imports of its
+    own, so the cycle check never crashes on it — the module itself
+    fails loudly elsewhere, since it cannot be imported."""
     graph = {}
     tk_modules = set()
     for path in sorted(PACKAGE.glob("*.py")):
@@ -57,6 +60,9 @@ def _package_imports():
                 elif module.startswith("itgmania_library."):
                     imports.add(module.split(".")[1])
         graph[path.stem] = imports
+    for imports in list(graph.values()):
+        for name in imports:
+            graph.setdefault(name, set())
     return graph, tk_modules
 
 
