@@ -5,7 +5,11 @@ already-resolved media and calls back for everything else. It never
 resolves a path itself and never touches the filter, the loader, or the
 stores. Playback (stage 4) runs through the on_play/on_stop callbacks:
 the page owns the stop timer and stops the preview whenever the page
-closes, shows another song, or Stop is pressed.
+closes, shows another song, or Stop is pressed. Sizing (Proposal 0013):
+the window opens at the height its song needs, capped at the screen, and
+the chart list scrolls when the song has more charts than fit; a move or
+resize is remembered for the session, and any other open sizes to its
+song again.
 """
 
 from __future__ import annotations
@@ -14,8 +18,10 @@ import math
 from pathlib import Path
 try:
     import tkinter as tk
+    from tkinter import ttk
 except ImportError:
     tk = None
+    ttk = None
 
 from itgmania_library import theme
 from itgmania_library.library_format import format_duration
@@ -73,9 +79,13 @@ class SongPage:
         # The window and its content while it is open; the geometry the
         # window was last closed at, in canonical units, so the next open
         # in this session puts it back where it was (not persisted — the
-        # page has no settings key in v1).
+        # page has no settings key in v1). _opening_geometry is the
+        # geometry the window opened with, recorded once it has been
+        # placed and sized: close() compares against it to tell a plain
+        # close from a move or resize.
         self.window = None
         self._saved_geometry = None
+        self._opening_geometry = None
         self._song = None
         self._media = None
         self._images = {}
@@ -85,6 +95,9 @@ class SongPage:
         self._music_label = None
         self._folder_label = None
         self._charts_frame = None
+        self._charts_canvas = None
+        self._charts_scrollbar = None
+        self._charts_window_id = None
         self._image_labels = {}
         self._play_button = None
         self._stop_button = None
@@ -121,7 +134,8 @@ class SongPage:
         window = tk.Toplevel(self.parent)
         self.window = window
         window.title(self._song.get("title") or "Song")
-        window.geometry(self._geometry_for_open())
+        opening_geometry = self._geometry_for_open()
+        window.geometry(opening_geometry)
         window.minsize(scale_pixels(theme.SONG_PAGE_MIN_SIZE[0], self.dpi_scale),
                        scale_pixels(theme.SONG_PAGE_MIN_SIZE[1], self.dpi_scale))
         window.configure(bg=theme.BG_WINDOW)
@@ -161,8 +175,30 @@ class SongPage:
         tk.Label(window, text="Charts", bg=theme.BG_WINDOW, fg=theme.TEXT_FIELD_LABEL,
                  font=theme.FONT_BODY_BOLD, anchor="w").pack(
                      fill="x", padx=pad, pady=(scale_pixels(10, self.dpi_scale), 0))
-        self._charts_frame = tk.Frame(window, bg=theme.BG_WINDOW)
-        self._charts_frame.pack(fill="both", expand=True, padx=pad)
+        # The chart list scrolls inside the window (Proposal 0013): the
+        # labels live in a frame inside a canvas, so a song with more
+        # charts than fit scrolls instead of pushing the buttons off.
+        charts_outer = tk.Frame(window, bg=theme.BG_WINDOW)
+        charts_outer.pack(fill="both", expand=True, padx=pad)
+        charts_outer.columnconfigure(0, weight=1)
+        charts_outer.rowconfigure(0, weight=1)
+        self._charts_canvas = tk.Canvas(charts_outer, bg=theme.BG_WINDOW,
+                                        highlightthickness=0, borderwidth=0)
+        self._charts_canvas.grid(row=0, column=0, sticky="nsew")
+        self._charts_scrollbar = ttk.Scrollbar(
+            charts_outer, orient="vertical",
+            command=self._charts_canvas.yview)
+        self._charts_scrollbar.grid(row=0, column=1, sticky="ns")
+        self._charts_canvas.configure(yscrollcommand=self._on_charts_scroll)
+        self._charts_frame = tk.Frame(self._charts_canvas, bg=theme.BG_WINDOW)
+        self._charts_window_id = self._charts_canvas.create_window(
+            (0, 0), window=self._charts_frame, anchor="nw")
+        self._charts_frame.bind("<Configure>",
+                                self._on_charts_frame_configure)
+        self._charts_canvas.bind("<Configure>",
+                                 self._on_charts_canvas_configure)
+        self._bind_wheel(self._charts_canvas)
+        self._bind_wheel(self._charts_frame)
         btn_row = tk.Frame(window, bg=theme.BG_WINDOW)
         btn_row.pack(fill="x", padx=pad,
                      pady=(scale_pixels(12, self.dpi_scale), pad))
@@ -182,6 +218,21 @@ class SongPage:
         # of closing this one.
         window.focus_force()
         self._fill()
+        # An untouched open sizes the window to the song it shows; once
+        # the owner moves or resizes it, the saved geometry is used
+        # instead (Proposal 0013, the refinement). The width stays the
+        # opening geometry's — reading it back from the window would
+        # give the requested width once the idle tasks have run.
+        if self._saved_geometry is None:
+            self._size_to_content(opening_geometry.split("x", 1)[0])
+        # Remember the geometry the window opened with once the event
+        # loop has placed and sized it: close() compares against it to
+        # tell a plain close from a move or resize. A <Map> binding
+        # would record too early — the window is still 1x1 when it
+        # first maps, before the sizing above has been applied — while
+        # an idle callback runs after the pending placement and sizing
+        # have been processed.
+        window.after_idle(self._record_opening_geometry)
 
     def _fill(self):
         """Refill the open window with the current song and media."""
@@ -216,9 +267,11 @@ class SongPage:
         for child in self._charts_frame.winfo_children():
             child.destroy()
         for row in song.get("charts") or []:
-            tk.Label(self._charts_frame, text=self._chart_line(row),
-                     bg=theme.BG_WINDOW, fg=theme.TEXT_PRIMARY,
-                     font=theme.FONT_BODY, anchor="w").pack(fill="x")
+            label = tk.Label(self._charts_frame, text=self._chart_line(row),
+                             bg=theme.BG_WINDOW, fg=theme.TEXT_PRIMARY,
+                             font=theme.FONT_BODY, anchor="w")
+            label.pack(fill="x")
+            self._bind_wheel(label)
         play_state = ("normal" if self.on_play is not None
                       and media.music is not None else "disabled")
         self._play_button.configure(state=play_state)
@@ -228,6 +281,87 @@ class SongPage:
         folder_state = ("normal" if self.on_open_folder is not None
                         and media.folder is not None else "disabled")
         self._folder_button.configure(state=folder_state)
+
+    def _on_charts_frame_configure(self, _event):
+        """The chart labels changed size: follow them with the canvas.
+
+        The scroll region is the labels' bounding box, so the scrollbar
+        and the wheel know how far the list runs. The canvas also asks
+        for the labels' height, so the window's requested height is the
+        content's height — that is what _size_to_content measures. The
+        guard keeps a width change from feeding back into a height
+        change (the labels never wrap, so the height cannot change
+        through the width).
+        """
+        frame_height = self._charts_frame.winfo_reqheight()
+        if self._charts_canvas["height"] != frame_height:
+            self._charts_canvas.configure(height=frame_height)
+        self._charts_canvas.configure(
+            scrollregion=self._charts_canvas.bbox("all"))
+
+    def _on_charts_canvas_configure(self, event):
+        """The canvas changed size: keep the chart labels as wide as it.
+
+        The labels fill the inner frame, so the frame must be as wide as
+        the canvas or the list would end at its widest label.
+        """
+        self._charts_canvas.itemconfigure(self._charts_window_id,
+                                          width=event.width)
+
+    def _on_charts_scroll(self, first, last):
+        """The canvas view changed: move the scrollbar, hiding it when
+        the whole list fits — a fitting list looks exactly as it did
+        before the scrolling was added."""
+        self._charts_scrollbar.set(first, last)
+        if float(first) <= 0.0 and float(last) >= 1.0:
+            self._charts_scrollbar.grid_remove()
+        else:
+            self._charts_scrollbar.grid()
+
+    def _bind_wheel(self, widget):
+        """Scroll the chart list from the mouse wheel over a widget.
+
+        <MouseWheel> is the Windows and macOS event (delta is ±120 per
+        notch); <Button-4>/<Button-5> are the X11 events, so the binding
+        also works in the sandbox. Bound on the canvas, the inner frame,
+        and each chart label, since a binding on a parent does not fire
+        for events on its children.
+        """
+        widget.bind("<MouseWheel>", self._on_mousewheel)
+        widget.bind("<Button-4>", self._on_mousewheel)
+        widget.bind("<Button-5>", self._on_mousewheel)
+
+    def _on_mousewheel(self, event):
+        """Scroll the chart list one line per wheel notch."""
+        if event.num == 4:
+            self._charts_canvas.yview_scroll(-1, "units")
+        elif event.num == 5:
+            self._charts_canvas.yview_scroll(1, "units")
+        else:
+            self._charts_canvas.yview_scroll(int(-event.delta / 120),
+                                             "units")
+        return "break"
+
+    def _size_to_content(self, width):
+        """Size a newly built window to the song it shows.
+
+        The height is the window's requested height after the fill — the
+        chrome plus one line per chart — capped at the screen height, so
+        a song with more charts than fit opens at screen height with a
+        scrollbar instead of pushing the buttons off, and never below
+        the window's minimum height (a shorter request would only be
+        clamped by the window manager, leaving the recorded geometry
+        disagreeing with the window). The width is the opening
+        geometry's, and the window manager places the window (the
+        geometry is size-only, with no position).
+        """
+        window = self.window
+        window.update_idletasks()
+        min_height = scale_pixels(theme.SONG_PAGE_MIN_SIZE[1],
+                                  self.dpi_scale)
+        height = max(min(window.winfo_reqheight(),
+                         window.winfo_screenheight()), min_height)
+        window.geometry(f"{width}x{height}")
 
     @staticmethod
     def _music_text(media):
@@ -367,8 +501,10 @@ class SongPage:
         self.on_open_folder(self._media.folder)
 
     def close(self):
-        """Close the song page, remembering its geometry for the next open
-        in this session (not persisted — the page has no settings key)."""
+        """Close the song page. A move or resize is remembered for the
+        next open in this session; a plain close records nothing, so the
+        next open sizes to its song again (not persisted — the page has
+        no settings key)."""
         self._stop_preview()
         self.save_window_geometry()
         if self.window is not None:
@@ -383,27 +519,52 @@ class SongPage:
         self._music_label = None
         self._folder_label = None
         self._charts_frame = None
+        self._charts_canvas = None
+        self._charts_scrollbar = None
+        self._charts_window_id = None
         self._image_labels = {}
         self._play_button = None
         self._stop_button = None
         self._folder_button = None
         self._stop_after_id = None
+        self._opening_geometry = None
+
+    def _record_opening_geometry(self):
+        """Remember the geometry the window opened with, once.
+
+        Runs as an idle callback after the window has been placed and
+        sized, so the position the window manager gave it is known. A
+        later call (after a minimize and restore, for example) must not
+        overwrite it: the comparison is against the geometry the window
+        opened with. Does nothing if the page was closed before the
+        callback ran.
+        """
+        if self._opening_geometry is None and self.window is not None:
+            self._opening_geometry = scale_geometry(
+                self.window.geometry(), 1.0 / self.dpi_scale)
 
     def save_window_geometry(self):
         """Remember the window's geometry in canonical units, or nothing.
 
-        Called when the page closes and when the app exits with the page
-        open. Does nothing when the page is closed, and nothing while the
-        window is minimized or maximized: those states report a parked or
-        full-screen geometry the user did not choose as the window's place.
+        Called when the page closes. Does nothing when the page is
+        closed, and nothing while the window is minimized or maximized:
+        those states report a parked or full-screen geometry the user
+        did not choose as the window's place. A plain close — the window
+        never moved or resized — also records nothing, so the next open
+        sizes to its song again (Proposal 0013, the refinement); a move
+        or resize is what sticks for the session.
         """
         if self.window is None or not self.window.winfo_exists():
             return
         if self.window.state() != "normal":
             return
+        if self._opening_geometry is None:
+            return
         # The window reports physical pixels; store canonical 100% units.
-        self._saved_geometry = scale_geometry(self.window.geometry(),
-                                              1.0 / self.dpi_scale)
+        current = scale_geometry(self.window.geometry(),
+                                 1.0 / self.dpi_scale)
+        if current != self._opening_geometry:
+            self._saved_geometry = current
 
     def _geometry_for_open(self):
         return scale_geometry(self._saved_geometry or theme.SONG_PAGE_GEOMETRY,
