@@ -23,7 +23,11 @@ them in a sortable, filterable table, and can build .CRS course files. Read READ
   and so must the other over-limit lines in the block you are changing — don't
   leave a long line standing in the middle of a block you just edited. For a
   long string, split the literal across lines rather than rewording it — never
-  change user-facing text just to shorten a line.
+  change user-facing text just to shorten a line. This applies to code files
+  (Python and config). Markdown prose is exempt — it is read rendered, so
+  source line length is invisible; keep paragraphs flowing. Fenced code
+  blocks and tables should stay readable, but a table row is one line and
+  cannot be wrapped.
 - Features that need data most users lack (for example the notes repo's modeled-difficulty JSON)
   must be optional, toggleable or a plugin.
 - If more than one reasonable approach exists, describe the options briefly (what it is, effect on
