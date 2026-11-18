@@ -9,6 +9,7 @@ whatever tuple it is given, so the subset pins the logic (including the
 
 import inspect
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -392,7 +393,12 @@ class SnapshotStoreTests(unittest.TestCase):
             cache_dir = Path(directory) / "Cache"
             stats_file = Path(directory) / "Stats.xml"
             path.write_text("old contents", encoding="utf-8")
-            with patch("os.replace", side_effect=OSError("locked")):
+            # Patch the store's os reference, not os.replace itself
+            # (that patches the shared module and leaks to every
+            # module in the process). wraps keeps the rest of os real,
+            # including getpid, which names the temp file.
+            with patch("itgmania_library.library_stores.os", wraps=os) as mock_os:
+                mock_os.replace.side_effect = OSError("locked")
                 with self.assertRaises(OSError):
                     store.write(cache_dir, stats_file, [self.sample_row()], 1, 0, 0, False)
             self.assertEqual(list(Path(directory).glob(".*.tmp")), [])
@@ -414,7 +420,8 @@ class SnapshotStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "library_cache.json"
             path.write_text("old contents", encoding="utf-8")
-            with patch("os.replace", side_effect=OSError("locked")):
+            with patch("itgmania_library.library_stores.os", wraps=os) as mock_os:
+                mock_os.replace.side_effect = OSError("locked")
                 with self.assertRaises(OSError):
                     library_stores.write_file_atomically("new contents", path)
             self.assertEqual(path.read_text(encoding="utf-8"), "old contents")

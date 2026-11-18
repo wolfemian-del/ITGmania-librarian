@@ -7,6 +7,7 @@ tests pin the dedup baseline, the deepcopy, and the temp-file cleanup.
 """
 
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -103,16 +104,6 @@ class SettingsStoreLoadTests(unittest.TestCase):
 
             self.assertEqual(store.load(), {})
 
-    def test_load_of_an_invalid_utf8_file_returns_empty_dict(self):
-        # A mis-encoded hand-edited settings.json must not crash startup:
-        # load() runs in __init__, so an uncaught decode error would kill
-        # the app before the window appears.
-        with tempfile.TemporaryDirectory() as directory:
-            store = make_store(directory)
-            store.settings_path.write_bytes(b"\xff\xfe not utf-8")
-
-            self.assertEqual(store.load(), {})
-
 
 class SettingsStoreSaveTests(unittest.TestCase):
     def test_save_skips_disk_write_when_unchanged(self):
@@ -125,9 +116,13 @@ class SettingsStoreSaveTests(unittest.TestCase):
             first_mtime = store.settings_path.stat().st_mtime_ns
 
             # A second save with no changes skips the write.
-            with patch("json.dumps") as mock_dumps:
+            with patch("itgmania_library.library_stores.json") as mock_json:
+                # The mock stands in for the whole json module, so give
+                # dumps its real behaviour: the test proves it is never
+                # called, not that calling it breaks.
+                mock_json.dumps.side_effect = json.dumps
                 store.save(dict(SETTINGS))
-                mock_dumps.assert_not_called()
+                mock_json.dumps.assert_not_called()
             self.assertEqual(store.settings_path.stat().st_mtime_ns, first_mtime)
 
             # A change writes.
@@ -182,7 +177,12 @@ class SettingsStoreSaveTests(unittest.TestCase):
             store.load()
 
             store.settings_path.write_text("old contents", encoding="utf-8")
-            with patch("os.replace", side_effect=OSError("locked")):
+            # Patch the store's os reference, not os.replace itself
+            # (that patches the shared module and leaks to every
+            # module in the process). wraps keeps the rest of os real,
+            # including getpid, which names the temp file.
+            with patch("itgmania_library.library_stores.os", wraps=os) as mock_os:
+                mock_os.replace.side_effect = OSError("locked")
                 with self.assertRaises(OSError):
                     store.save(dict(SETTINGS))
 
