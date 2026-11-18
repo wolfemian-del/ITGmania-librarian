@@ -168,7 +168,7 @@ class LibraryApp:
             save_settings=self._save_settings,
             button_factory=self._button, entry_factory=self._entry,
             dpi_scale=self._dpi_scale,
-            paths_match_loaded=lambda: self._loader._current_paths_match_loaded())
+            paths_match_loaded=lambda: self._loader.paths_match_loaded())
         self._style()
         self._build()
         # The loader (proposal 0009 Step 4): built once the status
@@ -176,25 +176,22 @@ class LibraryApp:
         # lambdas, so it can take the loader's methods here.
         saved = self.saved_settings
         self._loader = LibraryLoader(
-            self._snapshot_store, self.cache_var, self.stats_var,
-            self.status, self.progress, self.load_button,
-            self._set_sync_menu_state, self._on_library_changed,
-            self._on_nothing_loaded, self._data_paths_dialog,
-            self._save_settings, self.root,
-            self._report_discarded_settings,
-            "cache_dir" in saved or "stats_file" in saved)
+            snapshot_store=self._snapshot_store,
+            cache_var=self.cache_var,
+            stats_var=self.stats_var,
+            status=self.status,
+            progress=self.progress,
+            load_button=self.load_button,
+            set_sync_menu_state=self._set_sync_menu_state,
+            on_library_changed=self._on_library_changed,
+            on_nothing_loaded=self._on_nothing_loaded,
+            report_discarded_settings=self._report_discarded_settings,
+            save_settings=self._save_settings,
+            dialog=self._data_paths_dialog,
+            had_saved_paths="cache_dir" in saved or "stats_file" in saved,
+            root=self.root)
         self._report_discarded_settings()
-        for var in (self.cache_var, self.stats_var):
-            var.trace_add("write", lambda *_: self._loader._source_paths_changed())
-        self.root.after(75, self._loader._poll_load_results)
-        # The saved snapshot is loaded once the window has painted, not here:
-        # reading and rendering it can take a moment at library scale, and doing
-        # it before the event loop starts would leave the user watching the
-        # console (or an unpainted window) with no explanation.
-        if self.library_cache_path.is_file():
-            self.status.set("Loading saved library…")
-            self.progress.start(12)
-        self.root.after(50, self._loader._load_initial_snapshot)
+        self._loader.start()
 
     def _style(self):
         style = ttk.Style()

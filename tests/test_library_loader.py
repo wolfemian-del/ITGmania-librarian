@@ -370,20 +370,119 @@ class LibrarySnapshotTests(unittest.TestCase):
 
 
 
+def make_loader(app=None, **overrides):
+    """A real LibraryLoader built through its keyword constructor (proposal 0014).
+
+    Every input defaults to a Mock; pass any of them as a keyword to replace it.
+    With app= (a bare LibraryApp instance), the loader shares the app's status,
+    progress and Load button, and its on_library_changed is the app's real
+    handler, so a load exercises the loader -> app handoff end to end; the loader
+    is also attached as app._loader, the way the shell's __init__ does."""
+    parts = dict(
+        snapshot_store=Mock(), cache_var=Mock(), stats_var=Mock(),
+        status=Mock(), progress=Mock(), load_button=Mock(),
+        set_sync_menu_state=Mock(), on_library_changed=Mock(),
+        on_nothing_loaded=Mock(), report_discarded_settings=Mock(),
+        save_settings=Mock(), dialog=Mock(), had_saved_paths=False,
+        root=Mock())
+    if app is not None:
+        parts.update(status=app.status, progress=app.progress,
+                     load_button=app.load_button,
+                     on_library_changed=app._on_library_changed)
+    parts.update(overrides)
+    instance = loader.LibraryLoader(**parts)
+    if app is not None:
+        app._loader = instance
+    return instance
+
+
+class LoaderConstructionTests(unittest.TestCase):
+    """The loader's constructor contract (proposal 0014): keyword-only inputs,
+    every input kept, and the snapshot summary declared from the start."""
+
+    INPUTS = ("snapshot_store", "cache_var", "stats_var", "status", "progress",
+              "load_button", "set_sync_menu_state", "on_library_changed",
+              "on_nothing_loaded", "report_discarded_settings", "save_settings",
+              "dialog", "had_saved_paths", "root")
+
+    def test_every_input_is_kept_under_its_own_name(self):
+        parts = {name: Mock() for name in self.INPUTS}
+        instance = loader.LibraryLoader(**parts)
+        for name, value in parts.items():
+            self.assertIs(getattr(instance, name), value, name)
+
+    def test_inputs_are_keyword_only(self):
+        with self.assertRaises(TypeError):
+            loader.LibraryLoader(*[Mock() for _ in self.INPUTS])
+
+    def test_the_snapshot_summary_is_declared_in_the_constructor(self):
+        instance = make_loader()
+        self.assertEqual(
+            (instance._snapshot_files, instance._snapshot_skipped_files,
+             instance._snapshot_files_without_charts,
+             instance._snapshot_nested_song_tree,
+             instance._snapshot_skipped_blocks),
+            (0, 0, 0, False, 0))
+
+
+class LoaderStartTests(unittest.TestCase):
+    """LibraryLoader.start() runs the startup the shell used to do inline, in
+    the same order: the two path traces, the 75 ms result poll, the loading
+    status and progress when a snapshot file exists, then the 50 ms initial
+    snapshot load (proposal 0014)."""
+
+    @staticmethod
+    def make_started(snapshot_exists):
+        events = []
+        cache_var, stats_var = Mock(), Mock()
+        cache_var.trace_add.side_effect = lambda *a: events.append(("trace", "cache"))
+        stats_var.trace_add.side_effect = lambda *a: events.append(("trace", "stats"))
+        root = Mock()
+        root.after.side_effect = lambda delay, cb: events.append(("after", delay, cb))
+        status, progress = Mock(), Mock()
+        status.set.side_effect = lambda text: events.append(("status", text))
+        progress.start.side_effect = lambda ms: events.append(("progress", ms))
+        store = Mock()
+        store.snapshot_path.is_file.return_value = snapshot_exists
+        instance = make_loader(snapshot_store=store, cache_var=cache_var,
+                               stats_var=stats_var, root=root, status=status,
+                               progress=progress)
+        instance.start()
+        return instance, events, cache_var, stats_var
+
+    def test_start_runs_the_steps_in_order_when_a_snapshot_exists(self):
+        instance, events, _, _ = self.make_started(snapshot_exists=True)
+        self.assertEqual(events, [
+            ("trace", "cache"), ("trace", "stats"),
+            ("after", 75, instance._poll_load_results),
+            ("status", "Loading saved library…"), ("progress", 12),
+            ("after", 50, instance._load_initial_snapshot)])
+
+    def test_start_skips_the_loading_status_when_there_is_no_snapshot(self):
+        instance, events, _, _ = self.make_started(snapshot_exists=False)
+        self.assertEqual(events, [
+            ("trace", "cache"), ("trace", "stats"),
+            ("after", 75, instance._poll_load_results),
+            ("after", 50, instance._load_initial_snapshot)])
+
+    def test_the_traces_are_write_traces_that_check_the_paths(self):
+        instance, _, cache_var, stats_var = self.make_started(snapshot_exists=False)
+        instance._source_paths_changed = Mock()
+        for var in (cache_var, stats_var):
+            mode, callback = var.trace_add.call_args[0]
+            self.assertEqual(mode, "write")
+            callback("name", "", "write")
+        self.assertEqual(instance._source_paths_changed.call_count, 2)
+
+
 class InitialSnapshotTests(unittest.TestCase):
     """The deferred startup load (startup polish): _load_initial_snapshot is
     the after() callback __init__ schedules so the window paints first."""
 
     @staticmethod
     def make_instance():
-        instance = object.__new__(loader.LibraryLoader)
-        instance.progress = Mock()
+        instance = make_loader()
         instance.load_cached_data = Mock()
-        instance._load_generation = 0
-        instance.loaded_source_paths = None
-        instance.report_discarded_settings = Mock()
-        instance.dialog = Mock()
-        instance.had_saved_paths = False
         return instance
 
     def test_it_loads_and_stops_the_progress_bar(self):
@@ -412,64 +511,65 @@ class InitialSnapshotTests(unittest.TestCase):
 
 
 class SourcePathsChangedTests(unittest.TestCase):
-    """The loader's _current_paths_match_loaded and _source_paths_changed:
+    """The loader's paths_match_loaded and _source_paths_changed:
     whether the selected paths match the loaded snapshot's sources, and the
     status line and dialog note that report the answer."""
 
     @staticmethod
     def make_instance(cache, stats, loaded=None, rows=(), refreshed_at=""):
-        instance = object.__new__(loader.LibraryLoader)
+        cache_var = Mock()
+        cache_var.get.return_value = cache
+        stats_var = Mock()
+        stats_var.get.return_value = stats
+        holder = []
+        # A real dialog so paths_changed() computes the note from the loader's
+        # paths_match_loaded; set_note is mocked to record the call (the dialog
+        # was never opened, so a real set_note would be a no-op).
+        real_dialog = dialog.DataPathsDialog(
+            parent=Mock(), cache_var=cache_var, stats_var=stats_var,
+            load_callback=Mock(), save_settings=Mock(), button_factory=Mock(),
+            entry_factory=Mock(), dpi_scale=1.0,
+            paths_match_loaded=lambda: holder[0].paths_match_loaded())
+        real_dialog.set_note = Mock()
+        instance = make_loader(cache_var=cache_var, stats_var=stats_var,
+                               dialog=real_dialog)
+        holder.append(instance)
         instance.loaded_source_paths = loaded
-        instance.cache_var = Mock()
-        instance.cache_var.get.return_value = cache
-        instance.stats_var = Mock()
-        instance.stats_var.get.return_value = stats
         instance.rows = list(rows)
         instance.last_refreshed_at = refreshed_at
-        instance.status = Mock()
-        # A real dialog so paths_changed() computes the note from the app's
-        # _current_paths_match_loaded; set_note is mocked to record the call
-        # (the dialog was never opened, so a real set_note would be a no-op).
-        instance.dialog = dialog.DataPathsDialog(
-            parent=Mock(), cache_var=instance.cache_var,
-            stats_var=instance.stats_var, load_callback=Mock(),
-            save_settings=Mock(), button_factory=Mock(), entry_factory=Mock(),
-            dpi_scale=1.0,
-            paths_match_loaded=lambda: instance._current_paths_match_loaded())
-        instance.dialog.set_note = Mock()
         return instance
 
     def test_no_loaded_snapshot_reports_match(self):
         instance = self.make_instance("/cache", "/stats.xml")
-        self.assertTrue(instance._current_paths_match_loaded())
+        self.assertTrue(instance.paths_match_loaded())
 
     def test_matching_paths_report_match(self):
         instance = self.make_instance(
             "/cache", "/stats.xml", loaded=("/cache", "/stats.xml"))
-        self.assertTrue(instance._current_paths_match_loaded())
+        self.assertTrue(instance.paths_match_loaded())
 
     def test_spelling_difference_still_matches(self):
         # _normalized_source_path runs abspath: a "." component in the
         # selected path is the same folder as the saved one. [CODE]
         instance = self.make_instance(
             "/cache/.", "/stats.xml", loaded=("/cache", "/stats.xml"))
-        self.assertTrue(instance._current_paths_match_loaded())
+        self.assertTrue(instance.paths_match_loaded())
 
     def test_different_cache_path_reports_mismatch(self):
         instance = self.make_instance(
             "/other", "/stats.xml", loaded=("/cache", "/stats.xml"))
-        self.assertFalse(instance._current_paths_match_loaded())
+        self.assertFalse(instance.paths_match_loaded())
 
     def test_different_stats_path_reports_mismatch(self):
         instance = self.make_instance(
             "/cache", "/other.xml", loaded=("/cache", "/stats.xml"))
-        self.assertFalse(instance._current_paths_match_loaded())
+        self.assertFalse(instance.paths_match_loaded())
 
     def test_missing_path_variables_report_match(self):
         # A bare instance without path state reports True the same way.
         instance = object.__new__(loader.LibraryLoader)
         instance.loaded_source_paths = ("/cache", "/stats.xml")
-        self.assertTrue(instance._current_paths_match_loaded())
+        self.assertTrue(instance.paths_match_loaded())
 
     def test_no_loaded_snapshot_leaves_status_and_note_alone(self):
         instance = self.make_instance("/cache", "/stats.xml")
@@ -1048,7 +1148,7 @@ class ScoresSyncTests(unittest.TestCase):
             # Re-seed the filter with this test's rows (the table reads
             # its count total through the filter).
             instance._filter.set_rows(rows)
-            loaded = _make_wired_loader(instance)
+            loaded = make_loader(app=instance)
             loaded.rows = rows
             # Scored-only shows nothing before the sync: the chart has
             # no grade yet.
@@ -1642,39 +1742,6 @@ class LoadProgressTests(unittest.TestCase):
         self.assertEqual(callback, instance._poll_load_results)
 
 
-def _make_wired_loader(app_instance):
-    """A LibraryLoader whose on_library_changed is the app instance's real
-    handler, so a load exercises the loader -> app handoff end to end.
-    The loader shares the app instance's status, progress, and Load button,
-    the way the real __init__ wires them."""
-    instance = object.__new__(loader.LibraryLoader)
-    instance.status = app_instance.status
-    instance.progress = app_instance.progress
-    instance.load_button = app_instance.load_button
-    instance.set_sync_menu_state = Mock()
-    instance.on_library_changed = app_instance._on_library_changed
-    instance.on_nothing_loaded = Mock()
-    instance.dialog = Mock()
-    instance.save_settings = Mock()
-    instance.root = Mock()
-    instance.report_discarded_settings = Mock()
-    instance.had_saved_paths = False
-    instance.rows = []
-    instance.loaded_source_paths = None
-    instance.last_refreshed_at = ""
-    instance._load_generation = 0
-    instance._scan_in_flight = False
-    instance._sync_in_flight = False
-    instance._snapshot_lock = threading.Lock()
-    instance._load_results = queue.Queue()
-    instance._load_started_at = None
-    # The loader holds the rows the app's export and sync read
-    # (loader.rows), the way the real __init__ attaches it; the table
-    # gets its rows from the load handoff via set_rows, not from here.
-    app_instance._loader = instance
-    return instance
-
-
 class LoaderFilterPersistenceTests(unittest.TestCase):
     """The load handoff (proposal 0009 Step 4): the loader's _loaded sets
     the status and counters, and the app's on_library_changed resets the
@@ -1733,7 +1800,7 @@ class LoaderFilterPersistenceTests(unittest.TestCase):
     def test_loaded_keeps_values_that_are_in_the_new_library(self):
         instance = self.make_loaded_instance(pack="Pack2", type_="dance-single", difficulty="Challenge")
         rows = self.rows(("Pack1", "dance-single", "Hard"), ("Pack2", "dance-double", "Challenge"))
-        loaded = _make_wired_loader(instance)
+        loaded = make_loader(app=instance)
 
         loaded._loaded(rows, len(rows), from_cache=True, refreshed_at="2026-01-01T00:00:00")
 
@@ -1745,7 +1812,7 @@ class LoaderFilterPersistenceTests(unittest.TestCase):
     def test_loaded_reports_skipped_chart_blocks_in_the_summary(self):
         instance = self.make_loaded_instance()
         rows = self.rows(("Pack1", "dance-single", "Hard"), ("Pack2", "dance-single", "Hard"))
-        loaded = _make_wired_loader(instance)
+        loaded = make_loader(app=instance)
 
         loaded._loaded(rows, len(rows), skipped_blocks=2)
 
@@ -1756,7 +1823,7 @@ class LoaderFilterPersistenceTests(unittest.TestCase):
     def test_loaded_omits_the_skipped_blocks_fragment_when_zero(self):
         instance = self.make_loaded_instance()
         rows = self.rows(("Pack1", "dance-single", "Hard"))
-        loaded = _make_wired_loader(instance)
+        loaded = make_loader(app=instance)
 
         loaded._loaded(rows, len(rows))
 
@@ -1765,7 +1832,7 @@ class LoaderFilterPersistenceTests(unittest.TestCase):
     def test_loaded_falls_back_for_values_missing_from_the_new_library(self):
         instance = self.make_loaded_instance(pack="Gone", type_="gone-type", difficulty="Gone")
         rows = self.rows(("Pack1", "dance-single", "Hard"))
-        loaded = _make_wired_loader(instance)
+        loaded = make_loader(app=instance)
 
         loaded._loaded(rows, len(rows), from_cache=True, refreshed_at="2026-01-01T00:00:00")
 
@@ -1780,7 +1847,7 @@ class LoaderFilterPersistenceTests(unittest.TestCase):
         choices) passed this test, because it only checked dropdown
         persistence. Each load must put its own rows in the filter."""
         instance = self.make_loaded_instance()
-        loaded = _make_wired_loader(instance)
+        loaded = make_loader(app=instance)
         first = self.rows(("Pack1", "dance-single", "Hard"), ("Pack2", "dance-single", "Hard"))
         loaded._loaded(first, len(first), from_cache=True, refreshed_at="2026-01-01T00:00:00")
         instance.pack_var.set("Pack2")
@@ -1807,7 +1874,7 @@ class LoaderFilterPersistenceTests(unittest.TestCase):
             seeded = instance._settings_store.load()
             instance.pack_var.set(seeded.get("filter_pack", "All packs"))
             rows = self.rows(("Pack1", "dance-single", "Hard"))
-            loaded = _make_wired_loader(instance)
+            loaded = make_loader(app=instance)
             loaded._loaded(rows, len(rows), from_cache=True, refreshed_at="2026-01-01T00:00:00")
             self.assertEqual(instance.pack_var.get(), "All packs")
             self.add_save_machinery(instance, settings_path)
@@ -1821,7 +1888,7 @@ class LoaderFilterPersistenceTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             instance = self.make_loaded_instance(type_="dance-double")
             instance.settings_path = Path(directory) / "settings.json"
-            loaded = _make_wired_loader(instance)
+            loaded = make_loader(app=instance)
             # The initial refresh arrives through on_nothing_loaded, wired
             # to the app's real handler, which calls the (mocked) refresh.
             loaded.on_nothing_loaded = instance._on_nothing_loaded
@@ -1908,7 +1975,7 @@ class LoadDeliversRowsTests(unittest.TestCase):
         instance.progress = Mock()
         instance.status = Mock()
         instance.course_builder = None
-        loaded = _make_wired_loader(instance)
+        loaded = make_loader(app=instance)
 
         # Deliver fresh copies, not the list the setup seeded: only a real
         # set_rows in the load path puts these rows in the filter (GLM,
@@ -1970,7 +2037,7 @@ class LoadBatchesFilterChangesTests(unittest.TestCase):
         instance.diff_var.set.side_effect = lambda *args: refresh()
         instance.pack_var.set.side_effect = lambda *args: refresh()
         instance.type_var.set.side_effect = lambda *args: refresh()
-        loaded = _make_wired_loader(instance)
+        loaded = make_loader(app=instance)
 
         rows = [
             {"Title": "Song A", "Pack": "Pack1", "Type": "dance-single", "Difficulty": "Hard"},
