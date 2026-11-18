@@ -79,9 +79,9 @@ class LibraryTable:
         gestures do nothing; the focused row is the one opened, never
         selection()[0], so a multi-selection is left untouched.
 
-    The table owns its sort and column state — sort_keys, column_order,
-    and column_widths are not inputs, because sort_by rebinds sort_keys
-    and reset_column_layout rebinds column_order, so a shared input
+    The table owns its sort and column state — _sort_keys, _column_order,
+    and _column_widths are not inputs, because sort_by rebinds _sort_keys
+    and reset_column_layout rebinds _column_order, so a shared input
     would go stale in the app after a sort click or a reset. It exposes
     layout_state(), which _save_settings reads (it reads the actual
     widths back from tree.column), so the app never holds a stale copy.
@@ -111,12 +111,12 @@ class LibraryTable:
         # batches. The rows themselves live in the filter (option C):
         # the table reads them through filter.library_rows().
         self._render_generation = 0
-        self.tree_item_rows = {}
+        self._tree_item_rows = {}
         self._dragged_column = None
         self._drag_start_x = None
         self._tree_tint = None
         self._parse_seed(saved_layout)
-        self.default_column_widths = {
+        self._default_column_widths = {
             column: _default_column_width(column) for column in HEADERS}
         self._build_tree()
 
@@ -135,40 +135,40 @@ class LibraryTable:
         for column in saved_order:
             if column in HEADERS and column not in valid_order:
                 valid_order.append(column)
-        self.column_order = valid_order + [
+        self._column_order = valid_order + [
             column for column in HEADERS if column not in valid_order]
         if "Time" not in valid_order:
-            self.column_order.remove("Time")
-            meter_index = self.column_order.index("Meter")
-            self.column_order.insert(meter_index + 1, "Time")
+            self._column_order.remove("Time")
+            meter_index = self._column_order.index("Meter")
+            self._column_order.insert(meter_index + 1, "Time")
         if "BPM" not in valid_order:
-            self.column_order.remove("BPM")
-            time_index = self.column_order.index("Time")
-            self.column_order.insert(time_index + 1, "BPM")
+            self._column_order.remove("BPM")
+            time_index = self._column_order.index("Time")
+            self._column_order.insert(time_index + 1, "BPM")
         if "Subtitle" not in valid_order:
             # A saved order from before Subtitle existed appends it at the
             # far right; put it beside Title instead, like Time/BPM above.
-            self.column_order.remove("Subtitle")
-            title_index = self.column_order.index("Title")
-            self.column_order.insert(title_index + 1, "Subtitle")
+            self._column_order.remove("Subtitle")
+            title_index = self._column_order.index("Title")
+            self._column_order.insert(title_index + 1, "Subtitle")
         saved_widths = saved_layout.get("column_widths", {})
         if not isinstance(saved_widths, dict):
             saved_widths = {}
-        self.column_widths = {
+        self._column_widths = {
             column: _valid_column_width(saved_widths.get(column), column)
             for column in HEADERS
         }
-        self.sort_keys = []
+        self._sort_keys = []
         saved_sort_keys = saved_layout.get("sort_keys", [])
         if isinstance(saved_sort_keys, list):
             for item in saved_sort_keys:
                 if (isinstance(item, list) and len(item) == 2
                         and item[0] in HEADERS
                         and isinstance(item[1], bool)
-                        and item[0] not in {col for col, _ in self.sort_keys}):
-                    self.sort_keys.append((item[0], item[1]))
-        if not self.sort_keys:
-            self.sort_keys = [("Pack", False)]
+                        and item[0] not in {col for col, _ in self._sort_keys}):
+                    self._sort_keys.append((item[0], item[1]))
+        if not self._sort_keys:
+            self._sort_keys = [("Pack", False)]
 
     def _build_tree(self):
         """Create the Treeview in the parent frame, with its scrollbars,
@@ -178,7 +178,7 @@ class LibraryTable:
         for col in HEADERS:
             self.tree.heading(col, text=col,
                               command=lambda c=col: self.sort_by(c))
-            width = self.column_widths[col] or self.default_column_widths[col]
+            width = self._column_widths[col] or self._default_column_widths[col]
             # Canonical widths (saved or default), scaled to this display.
             self.tree.column(col, width=scale_pixels(width, self._dpi_scale),
                              minwidth=scale_pixels(55, self._dpi_scale),
@@ -203,7 +203,7 @@ class LibraryTable:
         self.tree.bind("<Control-A>", self._select_all_rows, add="+")
         self.tree.bind("<Double-Button-1>", self._open_focused_row, add="+")
         self.tree.bind("<Return>", self._open_focused_row_key, add="+")
-        visible_columns = [column for column in self.column_order
+        visible_columns = [column for column in self._column_order
                            if self.column_visibility[column].get()]
         if visible_columns:
             self.tree.configure(displaycolumns=visible_columns)
@@ -217,23 +217,23 @@ class LibraryTable:
         """The layout _save_settings persists: the column order, the widths
         read back from the tree in canonical units, and the sort keys.
 
-        The table owns sort_keys, column_order, and column_widths (sort_by
+        The table owns _sort_keys, _column_order, and _column_widths (sort_by
         and reset_column_layout rebind them), so the app reads the state
         from here instead of holding a copy that would go stale.
         """
         return {
-            "column_order": list(self.column_order),
+            "column_order": list(self._column_order),
             "column_widths": {
                 column: scale_pixels(self.tree.column(column, "width"),
                                      1.0 / self._dpi_scale)
                 for column in HEADERS
             },
             "sort_keys": [[column, descending]
-                          for column, descending in self.sort_keys],
+                          for column, descending in self._sort_keys],
         }
 
     def column_visibility_changed(self, changed_column):
-        visible = [column for column in self.column_order if self.column_visibility[column].get()]
+        visible = [column for column in self._column_order if self.column_visibility[column].get()]
         if not visible:
             self.column_visibility[changed_column].set(True)
             return
@@ -251,7 +251,7 @@ class LibraryTable:
         previous = {column: self.column_visibility[column].get() for column in COLUMN_GROUPS[group]}
         for column in previous:
             self.column_visibility[column].set(show)
-        visible = [column for column in self.column_order if self.column_visibility[column].get()]
+        visible = [column for column in self._column_order if self.column_visibility[column].get()]
         if not visible:
             # Same rule as a single column: at least one column must stay on, so the click is undone.
             for column, was_visible in previous.items():
@@ -263,13 +263,13 @@ class LibraryTable:
         self._save_settings()
 
     def reset_column_layout(self):
-        self.column_order = list(HEADERS)
+        self._column_order = list(HEADERS)
         for column, variable in self.column_visibility.items():
             variable.set(column in DEFAULT_VISIBLE_COLUMNS)
         self._sync_group_checks()
-        for column, width in self.default_column_widths.items():
+        for column, width in self._default_column_widths.items():
             self.tree.column(column, width=scale_pixels(width, self._dpi_scale))
-        visible = [column for column in self.column_order if self.column_visibility[column].get()]
+        visible = [column for column in self._column_order if self.column_visibility[column].get()]
         self.tree.configure(displaycolumns=visible)
         self._save_settings()
 
@@ -292,14 +292,14 @@ class LibraryTable:
         target = self._displayed_column_at(event.x, event.y)
         if target is None or target == source:
             return
-        visible = [column for column in self.column_order if self.column_visibility[column].get()]
+        visible = [column for column in self._column_order if self.column_visibility[column].get()]
         target_index = visible.index(target)
         bounds = self._displayed_column_bounds(target_index)
         insert_after = bounds is not None and event.x >= (bounds[0] + bounds[1]) / 2
-        self.column_order.remove(source)
-        insert_at = self.column_order.index(target) + int(insert_after)
-        self.column_order.insert(insert_at, source)
-        visible = [column for column in self.column_order if self.column_visibility[column].get()]
+        self._column_order.remove(source)
+        insert_at = self._column_order.index(target) + int(insert_after)
+        self._column_order.insert(insert_at, source)
+        visible = [column for column in self._column_order if self.column_visibility[column].get()]
         self.tree.configure(displaycolumns=visible)
         self._save_settings()
         return "break"
@@ -310,7 +310,8 @@ class LibraryTable:
         display_id = self.tree.identify_column(x)
         try:
             index = int(display_id[1:]) - 1
-            visible = [column for column in self.column_order if self.column_visibility[column].get()]
+            visible = [column for column in self._column_order
+                       if self.column_visibility[column].get()]
             return visible[index] if 0 <= index < len(visible) else None
         except (ValueError, IndexError):
             return None
@@ -346,7 +347,7 @@ class LibraryTable:
         if self._on_open_row is None:
             return
         focused = self.tree.focus()
-        row = self.tree_item_rows.get(focused) if focused else None
+        row = self._tree_item_rows.get(focused) if focused else None
         if row is not None:
             self._on_open_row(row)
 
@@ -369,7 +370,7 @@ class LibraryTable:
             return "break"
 
     def sort_by(self, column, additive=False):
-        keys = list(self.sort_keys)
+        keys = list(self._sort_keys)
         existing_index = next((index for index, (name, _) in enumerate(keys) if name == column), None)
         if additive:
             if existing_index is None:
@@ -383,12 +384,14 @@ class LibraryTable:
                 keys[0] = (name, not descending)
             else:
                 keys = [(column, False)]
-        self.sort_keys = keys
+        self._sort_keys = keys
         self.refresh_table(preserve_selection=True)
         self._save_settings()
 
     def _update_sort_headings(self):
-        priorities = {column: (index, descending) for index, (column, descending) in enumerate(self.sort_keys, 1)}
+        priorities = {
+            column: (index, descending)
+            for index, (column, descending) in enumerate(self._sort_keys, 1)}
         for column in HEADERS:
             if column in priorities:
                 index, descending = priorities[column]
@@ -402,14 +405,14 @@ class LibraryTable:
         selected_rows = set()
         if preserve_selection:
             selected_rows = {
-                id(self.tree_item_rows[item]) for item in self.tree.selection()
-                if item in self.tree_item_rows
+                id(self._tree_item_rows[item]) for item in self.tree.selection()
+                if item in self._tree_item_rows
             }
         self._render_generation += 1
         generation = self._render_generation
         self._update_sort_headings()
         visible = self._filter.filter_rows()
-        for column, descending in reversed(self.sort_keys):
+        for column, descending in reversed(self._sort_keys):
             present = [row for row in visible if row.get(column) not in (None, "")]
             missing = [row for row in visible if row.get(column) in (None, "")]
             if column in NUMERIC_COLUMNS:
@@ -424,7 +427,7 @@ class LibraryTable:
                 present.sort(key=lambda row: str(row.get(column, "")).casefold(), reverse=descending)
             visible = present + missing
         self.tree.delete(*self.tree.get_children())
-        self.tree_item_rows = {}
+        self._tree_item_rows = {}
         self._tree_tint.reset()
         # The count label is set by _insert_batch: a progress count while rows
         # are still streaming in, the final totals once the last batch lands.
@@ -452,7 +455,7 @@ class LibraryTable:
                 values.append(value)
             keep_selected = id(row) in selected_rows
             item = self.tree.insert("", "end", values=values, tags=row_tints.row_tags(row, keep_selected))
-            self.tree_item_rows[item] = row
+            self._tree_item_rows[item] = row
             if keep_selected:
                 self.tree.selection_add(item)
                 self._tree_tint.note_selected(item)
@@ -473,7 +476,7 @@ class LibraryTable:
     def selected_rows(self):
         """The chart rows currently selected in the main table (for the course builder)."""
         return [row for item in self.tree.selection()
-                if (row := self.tree_item_rows.get(item)) is not None]
+                if (row := self._tree_item_rows.get(item)) is not None]
 
     def library_rows(self):
         """Every chart row in the loaded library (for the course builder's ambiguity check).

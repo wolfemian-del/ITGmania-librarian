@@ -381,9 +381,10 @@ class LiveSavedColumnOrderTests(unittest.TestCase):
                 with patch.object(app.LibraryApp, "_settings_file_path",
                                  staticmethod(lambda: settings_path)):
                     application = app.LibraryApp(root)
-                self.assertEqual(application._table.column_order[0], "Title")
-                self.assertEqual(application._table.column_order[1], "Subtitle")
-                self.assertEqual(application._table.column_order[2:], saved[1:])
+                order = application._table.layout_state()["column_order"]
+                self.assertEqual(order[0], "Title")
+                self.assertEqual(order[1], "Subtitle")
+                self.assertEqual(order[2:], saved[1:])
         finally:
             root.destroy()
 
@@ -404,7 +405,8 @@ class LiveSavedColumnOrderTests(unittest.TestCase):
                 with patch.object(app.LibraryApp, "_settings_file_path",
                                  staticmethod(lambda: settings_path)):
                     application = app.LibraryApp(root)
-                self.assertEqual(application._table.column_order, saved)
+                order = application._table.layout_state()["column_order"]
+                self.assertEqual(order, saved)
         finally:
             root.destroy()
 
@@ -2054,8 +2056,14 @@ class LiveSongPageOpenTests(unittest.TestCase):
         return application, root, songs_dir
 
     def _items_by_row(self, application):
-        return {(row["Title"], row["Difficulty"]): item
-                for item, row in application._table.tree_item_rows.items()}
+        # The table's item-to-row map is private; find items by the
+        # Title/Difficulty the tree displays, which are the row values.
+        tree = application._table.tree
+        title_at = app.HEADERS.index("Title")
+        difficulty_at = app.HEADERS.index("Difficulty")
+        return {(tree.item(item, "values")[title_at],
+                 tree.item(item, "values")[difficulty_at]): item
+                for item in tree.get_children()}
 
     def _double_click(self, application, root, item):
         # Tk's event generate does not take Double (or Triple/Quadruple)

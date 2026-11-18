@@ -139,7 +139,7 @@ class OpenRowBindingTests(unittest.TestCase):
     @staticmethod
     def make_table(on_open_row=None):
         table, tree = make_table(on_open_row=on_open_row)
-        table.tree_item_rows = {"item1": OpenRowBindingTests.ROW}
+        table._tree_item_rows = {"item1": OpenRowBindingTests.ROW}
         tree.focus.return_value = "item1"
         return table, tree
 
@@ -282,10 +282,10 @@ class ColumnGroupTests(unittest.TestCase):
 
     def test_reset_column_layout_restores_the_default_columns(self):
         table = self.make_table(app.HEADERS)
-        table.column_order = list(reversed(app.HEADERS))
+        table._column_order = list(reversed(app.HEADERS))
         table.reset_column_layout()
         self.assertEqual(self.shown(table), set(app.DEFAULT_VISIBLE_COLUMNS))
-        self.assertEqual(table.column_order, list(app.HEADERS))
+        self.assertEqual(table.layout_state()["column_order"], list(app.HEADERS))
         self.assertEqual(table.tree.configure.call_args.kwargs["displaycolumns"],
                          [col for col in app.HEADERS if col in app.DEFAULT_VISIBLE_COLUMNS])
         # The widths go back to defaults too (GLM, PR #168 review): a
@@ -310,7 +310,7 @@ class ColumnDragTests(unittest.TestCase):
     @staticmethod
     def make_table():
         table, tree = make_table(column_order=list(ColumnDragTests.COLUMNS))
-        table.column_order = list(ColumnDragTests.COLUMNS)
+        table._column_order = list(ColumnDragTests.COLUMNS)
         tree.identify_region.return_value = "heading"
         # Each displayed column owns a 100px span: #1 is 0-99, #2 is
         # 100-199, #3 is 200-299.
@@ -396,7 +396,7 @@ class ColumnDragTests(unittest.TestCase):
         result = table._column_drag_end(self.event(53))
 
         self.assertIsNone(result)
-        self.assertEqual(table.column_order, self.COLUMNS)
+        self.assertEqual(table.layout_state()["column_order"], self.COLUMNS)
         table._save_settings.assert_not_called()
 
     def test_drag_end_on_the_same_column_does_nothing(self):
@@ -407,7 +407,7 @@ class ColumnDragTests(unittest.TestCase):
         result = table._column_drag_end(self.event(55))
 
         self.assertIsNone(result)
-        self.assertEqual(table.column_order, self.COLUMNS)
+        self.assertEqual(table.layout_state()["column_order"], self.COLUMNS)
         table._save_settings.assert_not_called()
 
     def test_drag_end_on_no_column_does_nothing(self):
@@ -420,7 +420,7 @@ class ColumnDragTests(unittest.TestCase):
         result = table._column_drag_end(self.event(250))
 
         self.assertIsNone(result)
-        self.assertEqual(table.column_order, self.COLUMNS)
+        self.assertEqual(table.layout_state()["column_order"], self.COLUMNS)
         table._save_settings.assert_not_called()
 
     def test_drag_right_past_the_midpoint_moves_the_column_after_its_target(self):
@@ -431,7 +431,7 @@ class ColumnDragTests(unittest.TestCase):
         result = table._column_drag_end(self.event(250))
 
         self.assertEqual(result, "break")
-        self.assertEqual(table.column_order, ["Artist", "Pack", "Title"])
+        self.assertEqual(table.layout_state()["column_order"], ["Artist", "Pack", "Title"])
         table.tree.configure.assert_called_once_with(
             displaycolumns=["Artist", "Pack", "Title"])
         table._save_settings.assert_called_once()
@@ -444,7 +444,7 @@ class ColumnDragTests(unittest.TestCase):
         result = table._column_drag_end(self.event(210))
 
         self.assertEqual(result, "break")
-        self.assertEqual(table.column_order, ["Artist", "Title", "Pack"])
+        self.assertEqual(table.layout_state()["column_order"], ["Artist", "Title", "Pack"])
         table.tree.configure.assert_called_once_with(
             displaycolumns=["Artist", "Title", "Pack"])
         table._save_settings.assert_called_once()
@@ -457,7 +457,7 @@ class ColumnDragTests(unittest.TestCase):
         result = table._column_drag_end(self.event(50))
 
         self.assertEqual(result, "break")
-        self.assertEqual(table.column_order, ["Title", "Pack", "Artist"])
+        self.assertEqual(table.layout_state()["column_order"], ["Title", "Pack", "Artist"])
         table.tree.configure.assert_called_once_with(
             displaycolumns=["Title", "Pack", "Artist"])
         table._save_settings.assert_called_once()
@@ -500,7 +500,7 @@ class SelectedRowsForCourseTests(unittest.TestCase):
         rows = {"item1": {"Title": "A"}, "item2": {"Title": "B"}}
         table, tree = make_table()
         tree.selection.return_value = ["item2", "gone", "item1"]
-        table.tree_item_rows = rows
+        table._tree_item_rows = rows
 
         self.assertEqual(table.selected_rows(), [rows["item2"], rows["item1"]])
 
@@ -630,8 +630,8 @@ class RefreshDeliversRowsTests(unittest.TestCase):
 
 class RebindingHazardTests(unittest.TestCase):
     """The sort/column rebinding hazard (proposal 0009, Claude's review):
-    sort_by rebinds self.sort_keys and reset_column_layout rebinds
-    self.column_order, so the state _save_settings persists must be the
+    sort_by rebinds self._sort_keys and reset_column_layout rebinds
+    self._column_order, so the state _save_settings persists must be the
     table's own state after the gesture — a shared-input design would go
     stale here. These pins say what reaches disk."""
 
@@ -685,7 +685,7 @@ class RebindingHazardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             settings_path = Path(directory) / "settings.json"
             instance, table = self.make_save_table(settings_path)
-            table.sort_keys = [("Title", False)]
+            table._sort_keys = [("Title", False)]
             table.refresh_table = Mock()
 
             table.sort_by("Title")
@@ -697,7 +697,7 @@ class RebindingHazardTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             settings_path = Path(directory) / "settings.json"
             instance, table = self.make_save_table(settings_path)
-            table.column_order = list(reversed(app.HEADERS))
+            table._column_order = list(reversed(app.HEADERS))
 
             table.reset_column_layout()
 
@@ -746,7 +746,7 @@ class TableWiringGuardTests(unittest.TestCase):
 
         title_command()
 
-        self.assertEqual(table.sort_keys, [("Title", False)])
+        self.assertEqual(table.layout_state()["sort_keys"], [["Title", False]])
         table.refresh_table.assert_called_once_with(preserve_selection=True)
 
     def test_tree_bindings_land_on_the_table(self):
@@ -817,7 +817,6 @@ class SavedLayoutSeedTests(unittest.TestCase):
     def test_valid_sort_keys_round_trip_through_the_seed(self):
         table, _tree = make_table(
             sort_keys=[["Title", True], ["Meter", False]])
-        self.assertEqual(table.sort_keys, [("Title", True), ("Meter", False)])
         self.assertEqual(table.layout_state()["sort_keys"],
                          [["Title", True], ["Meter", False]])
 
@@ -825,26 +824,26 @@ class SavedLayoutSeedTests(unittest.TestCase):
         table, _tree = make_table(sort_keys=[
             ["Bogus", True], ["Title", "yes"], ["Title", False],
             ["Title", True], ["Meter", False]])
-        self.assertEqual(table.sort_keys,
-                         [("Title", False), ("Meter", False)])
+        self.assertEqual(table.layout_state()["sort_keys"],
+                         [["Title", False], ["Meter", False]])
 
     def test_no_valid_sort_key_falls_back_to_the_default(self):
         table, _tree = make_table(
             sort_keys=[["Bogus", True], ["Title", "yes"]])
-        self.assertEqual(table.sort_keys, [("Pack", False)])
+        self.assertEqual(table.layout_state()["sort_keys"], [["Pack", False]])
 
     def test_saved_widths_apply_and_unknown_columns_are_ignored(self):
         table, _tree = make_table(
             column_widths={"Title": 999, "Bogus": 50})
-        self.assertEqual(table.column_widths["Title"], 999)
-        self.assertNotIn("Bogus", table.column_widths)
+        self.assertEqual(table._column_widths["Title"], 999)
+        self.assertNotIn("Bogus", table._column_widths)
 
     def test_non_list_seed_values_fall_back_to_defaults(self):
         table, _tree = make_table(column_order="x", column_widths=[],
                                   sort_keys="x")
-        self.assertEqual(table.column_order, list(app.HEADERS))
-        self.assertEqual(table.sort_keys, [("Pack", False)])
-        self.assertIsNone(table.column_widths["Title"])
+        self.assertEqual(table.layout_state()["column_order"], list(app.HEADERS))
+        self.assertEqual(table.layout_state()["sort_keys"], [["Pack", False]])
+        self.assertIsNone(table._column_widths["Title"])
 
 
 class ShiftSortClickTests(unittest.TestCase):
@@ -858,7 +857,7 @@ class ShiftSortClickTests(unittest.TestCase):
     def make_table():
         table, tree = make_table(
             column_order=list(ShiftSortClickTests.COLUMNS))
-        table.column_order = list(ShiftSortClickTests.COLUMNS)
+        table._column_order = list(ShiftSortClickTests.COLUMNS)
         tree.identify_region.return_value = "heading"
         tree.identify_column.side_effect = (
             lambda x: "#1" if x < 100 else ("#2" if x < 200 else "#3"))
@@ -880,8 +879,8 @@ class ShiftSortClickTests(unittest.TestCase):
 
         table._shift_sort_click(self.event(150))
 
-        self.assertEqual(table.sort_keys,
-                         [("Pack", False), ("Artist", False)])
+        self.assertEqual(table.layout_state()["sort_keys"],
+                         [["Pack", False], ["Artist", False]])
         table._save_settings.assert_called_once()
 
     def test_shift_click_on_an_existing_key_toggles_its_direction(self):
@@ -891,8 +890,8 @@ class ShiftSortClickTests(unittest.TestCase):
 
         table._shift_sort_click(self.event(150))
 
-        self.assertEqual(table.sort_keys,
-                         [("Pack", False), ("Artist", True)])
+        self.assertEqual(table.layout_state()["sort_keys"],
+                         [["Pack", False], ["Artist", True]])
 
     def test_a_click_without_shift_does_nothing(self):
         table = self.make_table()
@@ -900,5 +899,5 @@ class ShiftSortClickTests(unittest.TestCase):
 
         table._shift_sort_click(self.event(150, shift=False))
 
-        self.assertEqual(table.sort_keys, [("Pack", False)])
+        self.assertEqual(table.layout_state()["sort_keys"], [["Pack", False]])
         table.refresh_table.assert_not_called()
