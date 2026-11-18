@@ -1544,9 +1544,13 @@ class PerformanceAndExportTests(unittest.TestCase):
             first_mtime = settings_path.stat().st_mtime_ns
 
             # Second save with no changes (e.g. routine table row click) skips write
-            with patch("json.dumps") as mock_dumps:
+            with patch("itgmania_library.library_stores.json") as mock_json:
+                # The mock stands in for the whole json module, so give
+                # dumps its real behaviour: the test proves it is never
+                # called, not that calling it breaks.
+                mock_json.dumps.side_effect = json.dumps
                 instance._save_settings()
-                mock_dumps.assert_not_called()
+                mock_json.dumps.assert_not_called()
             self.assertEqual(settings_path.stat().st_mtime_ns, first_mtime)
 
             # Changing a column width causes it to save
@@ -1581,7 +1585,12 @@ class PerformanceAndExportTests(unittest.TestCase):
             instance._settings_store.load()
             instance.status = Mock()
 
-            with patch("os.replace", side_effect=OSError("locked")):
+            # Patch the store's os reference, not os.replace itself
+            # (that patches the shared module and leaks to every
+            # module in the process). wraps keeps the rest of os real,
+            # including getpid, which names the temp file.
+            with patch("itgmania_library.library_stores.os", wraps=os) as mock_os:
+                mock_os.replace.side_effect = OSError("locked")
                 instance._save_settings()
 
             self.assertEqual([p for p in Path(directory).iterdir()
@@ -1633,7 +1642,8 @@ class PerformanceAndExportTests(unittest.TestCase):
 
         with patch.object(app, "filedialog", mock_filedialog), \
              patch.object(app, "messagebox", mock_messagebox), \
-             patch("builtins.open", side_effect=PermissionError("Access denied")):
+             patch("itgmania_library.library_visualizer.open", create=True,
+                   side_effect=PermissionError("Access denied")):
             instance.export_csv()
 
         mock_messagebox.showerror.assert_called_once()
