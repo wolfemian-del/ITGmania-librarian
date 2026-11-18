@@ -27,6 +27,7 @@ from itgmania_library.library_format import format_refresh_time
 from itgmania_library.library_sources import (
     _normalized_source_path,
     any_scores_match,
+    edit_fallback_index,
     invalid_paths_note,
     looks_like_song_tree,
     merge_scores,
@@ -287,6 +288,10 @@ class LibraryLoader:
             # The total is known before any file is parsed: report it at once
             # so the bar can go determinate, then report as the loop goes.
             self._load_results.put(("progress", 0, total, generation))
+            # The Edit fallback index is built once for the whole scan and
+            # shared by every file's parse, so the fallback never rescans
+            # the scores dict per undescribed Edit chart (issue #203).
+            edit_index = edit_fallback_index(scores)
             skipped_files = 0
             files_without_charts = 0
             skipped_blocks = 0
@@ -294,7 +299,7 @@ class LibraryLoader:
                 if self._load_is_stale(generation):
                     return
                 try:
-                    chart_rows, blocks = parse_cache_file(path, scores)
+                    chart_rows, blocks = parse_cache_file(path, scores, edit_index)
                     skipped_blocks += blocks
                     if not chart_rows:
                         files_without_charts += 1
@@ -435,7 +440,11 @@ class LibraryLoader:
                                     "no scores were changed.",
                                     generation))
             return
-        if not any_scores_match(rows, scores):
+        # The Edit fallback index is built once for this sync and shared
+        # by the match check and the merge, so the fallback never rescans
+        # the scores dict per undescribed Edit row (issue #203).
+        edit_index = edit_fallback_index(scores)
+        if not any_scores_match(rows, scores, edit_index):
             # The Stats.xml has scores, but none for the songs in this
             # library (for example a profile from another install).
             # Merging it would blank every score and report success.
@@ -448,7 +457,7 @@ class LibraryLoader:
                                     generation))
             return
         try:
-            changed = merge_scores(rows, scores)
+            changed = merge_scores(rows, scores, edit_index)
         except Exception as exc:
             # A row with a non-text Course path / Type / Difficulty / Chart
             # would otherwise end the thread silently; deliver the failure.

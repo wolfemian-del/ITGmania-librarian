@@ -67,17 +67,34 @@ def stats_index(stats_file: Path) -> dict[tuple, dict]:
     return result
 
 
-def _merged_edit_fallback(scores: dict, base_key: tuple[str, str, str]) -> dict:
+def edit_fallback_index(scores: dict) -> dict[tuple, list[dict]]:
+    """Group the scores dict's entries by their 3-tuple base key, once.
+
+    _merged_edit_fallback used to scan the whole dict per undescribed Edit
+    chart; the index is built once per load (or sync) and shared by every
+    lookup in that run, so a parse is no longer quadratic in undescribed
+    Edits times score entries (issue #203). The grouping is exactly the
+    filter the fallback used: tuple keys of length 3 or 4, grouped by
+    their first three elements, in the dict's order.
+    """
+    index: dict[tuple, list[dict]] = {}
+    for key, entry in scores.items():
+        if isinstance(key, tuple) and len(key) in (3, 4):
+            index.setdefault(key[:3], []).append(entry)
+    return index
+
+
+def _merged_edit_fallback(edit_index: dict, base_key: tuple[str, str, str]) -> dict:
     """Rebuild the shared Edit score used when the cache chart has no description.
 
     stats_index keeps described Edits apart, but a cache chart without a
     description cannot be matched to one of them. In that case keep the
     pre-isolation result: the best score entry, the highest play count and
     the latest last-played date across the song's Edit entries (including an
-    undescribed entry stored under the plain 3-tuple key).
+    undescribed entry stored under the plain 3-tuple key). The candidates
+    come from the once-per-run index, not a fresh scan (issue #203).
     """
-    candidates = [entry for key, entry in scores.items()
-                  if isinstance(key, tuple) and len(key) in (3, 4) and key[:3] == base_key]
+    candidates = edit_index.get(base_key, [])
     if not candidates:
         return {}
     scored = [entry for entry in candidates if "PercentDP" in entry]
@@ -96,7 +113,7 @@ def _merged_edit_fallback(scores: dict, base_key: tuple[str, str, str]) -> dict:
 
 
 def _score_for_chart(scores: dict, base_key: tuple[str, str, str],
-                     difficulty: str, description: str) -> dict:
+                     difficulty: str, description: str, edit_index: dict) -> dict:
     """Return the best Stats.xml entry for one chart.
 
     This is the score lookup parse_cache_file uses, factored out so the
@@ -105,7 +122,8 @@ def _score_for_chart(scores: dict, base_key: tuple[str, str, str],
     #DESCRIPTION (falling back to #CHARTNAME); for a sync it is the row's
     carried "Score description" field, falling back to the Chart field
     for a row that lacks it (the schema bump to 4 discards snapshots
-    written before the field existed).
+    written before the field existed). `edit_index` is the once-per-run
+    index edit_fallback_index built from `scores` (issue #203).
     """
     diff = difficulty.casefold()
     chart = (description or "").strip()
@@ -117,7 +135,7 @@ def _score_for_chart(scores: dict, base_key: tuple[str, str, str],
     elif diff == "edit":
         # The cache chart has no description: fall back to the shared
         # result across the song's Edit entries, described or not.
-        score = _merged_edit_fallback(scores, base_key)
+        score = _merged_edit_fallback(edit_index, base_key)
     else:
         score = scores.get(base_key, {})
     return score or {}
@@ -147,7 +165,7 @@ _SCORE_FIELDS = ("Score", "Grade", "Best %", "Plays", "Last played",
                  *TAP_FIELDS, "Max combo")
 
 
-def _score_for_row(scores: dict, row: dict) -> dict:
+def _score_for_row(scores: dict, row: dict, edit_index: dict) -> dict:
     """Return the Stats.xml entry for one already-parsed row.
 
     The score key is re-derived from the row: the base key
@@ -157,7 +175,8 @@ def _score_for_row(scores: dict, row: dict) -> dict:
     A hand-edited snapshot can carry a non-string "Score description"
     (the snapshot read only checks key presence). Treat it as absent
     so the lookup falls back to the Chart field instead of failing
-    the whole sync on one bad row.
+    the whole sync on one bad row. `edit_index` is the once-per-run
+    index edit_fallback_index built from `scores` (issue #203).
     """
     base_key = (
         row["Course path"].casefold(),
@@ -168,10 +187,10 @@ def _score_for_row(scores: dict, row: dict) -> dict:
     if not isinstance(score_description, str):
         score_description = ""
     description = score_description or row["Chart"]
-    return _score_for_chart(scores, base_key, row["Difficulty"], description)
+    return _score_for_chart(scores, base_key, row["Difficulty"], description, edit_index)
 
 
-def any_scores_match(rows: list[dict], scores: dict) -> bool:
+def any_scores_match(rows: list[dict], scores: dict, edit_index: dict | None = None) -> bool:
     """True if at least one row finds a Stats.xml entry with an actual score.
 
     A Stats.xml can hold real scores that belong to another install:
@@ -181,12 +200,16 @@ def any_scores_match(rows: list[dict], scores: dict) -> bool:
     scores for this library is refused instead of merged. A row only
     counts as matching when its entry carries a PercentDP record: an
     entry with only plays/last_played (an empty HighScoreList) is not
-    a score for the chart.
+    a score for the chart. `edit_index` is the once-per-run index
+    edit_fallback_index built from `scores`; a caller without one
+    gets a fresh index for this call (issue #203).
     """
-    return any("PercentDP" in _score_for_row(scores, row) for row in rows)
+    if edit_index is None:
+        edit_index = edit_fallback_index(scores)
+    return any("PercentDP" in _score_for_row(scores, row, edit_index) for row in rows)
 
 
-def merge_scores(rows: list[dict], scores: dict) -> int:
+def merge_scores(rows: list[dict], scores: dict, edit_index: dict | None = None) -> int:
     """Re-derive the score fields of already-parsed rows, in place.
 
     The score key is re-derived from each row: the base key
@@ -202,24 +225,34 @@ def merge_scores(rows: list[dict], scores: dict) -> int:
     carrying both #DESCRIPTION and a different #CHARTNAME. The schema
     bump to 4 discards snapshots written before this field existed, so
     they rebuild with it; the Chart fallback is only a defensive path
-    for a row that somehow lacks the field.
+    for a row that somehow lacks the field. `edit_index` is the
+    once-per-run index edit_fallback_index built from `scores`; a
+    caller without one gets a fresh index for this call (issue #203).
     """
+    if edit_index is None:
+        edit_index = edit_fallback_index(scores)
     changed = 0
     for row in rows:
         before = tuple(row.get(field) for field in _SCORE_FIELDS)
-        score = _score_for_row(scores, row)
+        score = _score_for_row(scores, row, edit_index)
         _apply_score_fields(row, score)
         if tuple(row.get(field) for field in _SCORE_FIELDS) != before:
             changed += 1
     return changed
 
 
-def parse_cache_file(path: Path, scores: dict) -> tuple[list[dict], int]:
+def parse_cache_file(path: Path, scores: dict,
+                     edit_index: dict | None = None) -> tuple[list[dict], int]:
     """Parse a cache file into chart rows, and count skipped chart blocks.
 
     Returns (rows, skipped_blocks): skipped_blocks counts chart blocks
     dropped for missing #STEPSTYPE/#DIFFICULTY metadata (issue #18).
+    `edit_index` is the once-per-run index edit_fallback_index built
+    from `scores`; a caller without one gets a fresh index for this
+    file (issue #203).
     """
+    if edit_index is None:
+        edit_index = edit_fallback_index(scores)
     # Cache files are UTF-8 Simfile text; split away the song metadata before chart parsing.
     text = path.read_text(encoding="utf-8-sig", errors="replace")
     chunks = re.split(r"(?m)^#NOTEDATA:;\s*\r?\n", text)
@@ -267,7 +300,7 @@ def parse_cache_file(path: Path, scores: dict) -> tuple[list[dict], int]:
         # there instead (older SSC loading), not a replacement for it.
         score_description = tags.get("DESCRIPTION", "").strip() or tags.get("CHARTNAME", "").strip()
         base_key = (song_dir.casefold(), chart_type.casefold(), difficulty.casefold())
-        score = _score_for_chart(scores, base_key, difficulty, score_description)
+        score = _score_for_chart(scores, base_key, difficulty, score_description, edit_index)
         row = {
             "Title": song_tags.get("TITLE", path.stem),
             "Subtitle": song_tags.get("SUBTITLE", ""), "Artist": song_tags.get("ARTIST", ""),
