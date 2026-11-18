@@ -59,7 +59,7 @@ class LibraryFilter:
         # The rows the filter filters, and the table refresh it notifies.
         self._rows: list[dict] = []
         self._subscribers = []
-        self._batching_filter_changes = False
+        self._batch_depth = 0
         self._search_refresh_after_id = None
         # The variable traces: a dropdown or scored pick refreshes at
         # once, a search keystroke refreshes after a short pause.
@@ -187,15 +187,17 @@ class LibraryFilter:
         Each filter variable refreshes the table by itself when it changes (the search box after a
         short delay), so one chart click that sets two of them would rebuild the table and the chart
         several times. Inside this block those automatic refreshes are skipped, and one refresh runs
-        when the block ends. The flag is on/off, not a depth count: a batch
-        started inside another refreshes when the inner block ends, so
-        nested batches refresh more than once.
+        when the block ends. The depth is counted, not a flag: a batch
+        started inside another refreshes only when the outermost block
+        ends, so nested batches refresh once (issue #198).
         """
-        self._batching_filter_changes = True
+        self._batch_depth += 1
         try:
             yield
         finally:
-            self._batching_filter_changes = False
+            self._batch_depth -= 1
+        if self._batch_depth:
+            return
         if self._search_refresh_after_id is not None:
             self.root.after_cancel(self._search_refresh_after_id)
             self._search_refresh_after_id = None
@@ -228,12 +230,12 @@ class LibraryFilter:
         self.search_entry.focus_set()
 
     def _refresh_unless_batching(self):
-        if not self._batching_filter_changes:
+        if not self._batch_depth:
             self._notify()
 
     def _schedule_search_refresh(self):
         """Refresh the table once the user pauses typing in the search box."""
-        if self._batching_filter_changes:
+        if self._batch_depth:
             return
         if self._search_refresh_after_id is not None:
             self.root.after_cancel(self._search_refresh_after_id)

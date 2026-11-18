@@ -9,6 +9,7 @@
 - A numeric search value with an underscore in it (for example `meter:1_000`) no longer reads as a number; it matches nothing, the way an unreadable value already does, and the count line says so.
 - The song page's preview window now comes from the song's own music file, stored on every chart row, instead of being guessed from the charts: a song whose charts all share one `#MUSIC` override no longer plays the song's sample window against that other track, and a chart with its own `#MUSIC` no longer keeps a window it should not have. The snapshot schema bumps to 6, so an old snapshot rebuilds once.
 - A filter subscriber that raises an error no longer stops the remaining subscribers from being told about the change; the first failure is still reported after all of them have run. Today there is only one subscriber, so nothing changes visibly — this keeps a second one from being silently skipped.
+- A batch of filter changes started inside another batch no longer refreshes the table when the inner block ends; the refresh waits for the outermost block, so nested batches refresh once. Nothing nests batches today, so nothing changes visibly.
 
 ## 1.3.0 - 2026-11-15
 

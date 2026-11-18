@@ -224,6 +224,59 @@ class FilterWiringGuardTests(unittest.TestCase):
             instance.diff_var.set("Hard")
         instance.refresh_table.assert_called_once_with()
 
+    def test_a_nested_batch_refreshes_exactly_once_at_the_outer_exit(self):
+        # Issue #198: the old on/off flag refreshed when the inner block
+        # ended; the depth count refreshes only when the outermost ends.
+        instance = self.make_app_and_filter()
+        instance._filter.set_rows(list(ROWS))
+        instance.refresh_table.reset_mock()
+        with instance._filter.batch():
+            instance.pack_var.set("Pack1")
+            with instance._filter.batch():
+                instance.type_var.set("dance-single")
+            # The inner block ended: still no refresh.
+            instance.refresh_table.assert_not_called()
+            instance.diff_var.set("Hard")
+        instance.refresh_table.assert_called_once_with()
+
+    def test_a_pending_search_debounce_is_cancelled_by_the_outer_batch_exit_not_the_inner(self):
+        # Issue #198: the inner exit must not cancel the pending debounce
+        # (the outer exit does), or the old callback could fire a second
+        # refresh after the batch's own.
+        root = _FakeRoot()
+        instance = self.make_app_and_filter(root=root)
+        filt = instance._filter
+        filt.set_rows(list(ROWS))
+        instance.refresh_table.reset_mock()
+        # A search keystroke arms the debounce; nothing refreshes yet.
+        instance.search_var.set("song")
+        self.assertEqual(len(root._pending), 1)
+        with filt.batch():
+            with filt.batch():
+                instance.pack_var.set("Pack1")
+            # The inner block ended: the debounce is still pending.
+            self.assertEqual(len(root._pending), 1)
+            instance.refresh_table.assert_not_called()
+        # The outer block ended: the debounce is cancelled, one refresh.
+        self.assertEqual(len(root._pending), 0)
+        instance.refresh_table.assert_called_once_with()
+        # The old callback is gone: firing what is left refreshes nothing.
+        root.fire_pending()
+        instance.refresh_table.assert_called_once_with()
+
+    def test_a_batch_body_that_raises_leaves_the_depth_at_zero(self):
+        # The counter is decremented in a finally, so a raising body does
+        # not leave the filter thinking it is still batching.
+        instance = self.make_app_and_filter()
+        filt = instance._filter
+        filt.set_rows(list(ROWS))
+        instance.refresh_table.reset_mock()
+        with self.assertRaises(RuntimeError):
+            with filt.batch():
+                raise RuntimeError("boom")
+        instance.pack_var.set("Pack1")
+        instance.refresh_table.assert_called_once_with()
+
     def test_a_pending_search_debounce_is_cancelled_by_a_batch(self):
         """ChatGPT-6, PR #167 review: a search debounce pending when a
         batch runs must be cancelled by the batch exit, so the old
