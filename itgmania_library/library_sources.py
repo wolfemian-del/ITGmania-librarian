@@ -284,8 +284,13 @@ def parse_cache_file(path: Path, scores: dict) -> tuple[list[dict], int]:
             # never columns. Music is the chart's effective value — a
             # chart-level #MUSIC override wins, else the song's; only
             # #MUSIC has a chart-level override, so the other six ride
-            # the song's tags.
+            # the song's tags. SongMusic is the song's own #MUSIC,
+            # carried on every chart row (issue #193): the media record
+            # reads it instead of inferring the song's file from the
+            # charts, which could not tell a shared override from the
+            # song's own music.
             "Music": tags.get("MUSIC") or song_music,
+            "SongMusic": song_music,
             "Banner": song_banner,
             "Background": song_background,
             "Jacket": song_jacket,

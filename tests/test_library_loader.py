@@ -326,6 +326,28 @@ class LibrarySnapshotTests(unittest.TestCase):
         instance._loaded.assert_not_called()
         self.assertIn("invalid or outdated", instance.status.set.call_args.args[0])
 
+    def test_snapshot_schema_version_5_is_rejected_as_outdated(self):
+        # Issue #193: the schema bumped 5 to 6 for the SongMusic key, so
+        # a snapshot written under schema 5 rebuilds instead of loading
+        # silently with no SongMusic on any row.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache_dir, stats_file = root / "Cache", root / "Stats.xml"
+            instance = self.make_app(root / "settings.json", cache_dir, stats_file)
+            instance.snapshot_store.write(
+                cache_dir, stats_file, [self.sample_row()], 1, 0, 0, False)
+            with instance.library_cache_path.open("r+", encoding="utf-8") as handle:
+                payload = json.load(handle)
+                payload["schema_version"] = 5
+                handle.seek(0)
+                json.dump(payload, handle)
+                handle.truncate()
+
+            instance.load_cached_data()
+
+        instance._loaded.assert_not_called()
+        self.assertIn("invalid or outdated", instance.status.set.call_args.args[0])
+
     def test_snapshot_row_missing_a_column_is_rejected_as_outdated(self):
         # Issue #49: the HEADERS check independently invalidates a snapshot
         # whose rows predate a new column, even at the current schema version.

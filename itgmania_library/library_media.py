@@ -295,23 +295,20 @@ def build_song_media(song_dir, roots, rows):
     ``rows`` are the song's charts, with the opened chart first: the
     record's music is the opened chart's effective Music, and the length
     and sample window are included only when that music is the song's
-    music. The song's music is inferred, not stored: stage 1 keeps only
-    each chart's effective Music, so the record keeps the window only
-    when every chart carries the same Music as the opened chart. When
-    charts disagree, the song's file cannot be told apart from a chart
-    override, so the window is dropped rather than applied to the wrong
-    file; a single chart keeps its window, since there is nothing to
-    disagree with — which is also wrong when that one chart has an
-    override, and cannot be known from the rows. A song under no root
+    music. The song's music is stored, not inferred: every row carries
+    the song's own #MUSIC as ``SongMusic`` (issue #193), so the record
+    compares the opened chart's Music with it. A song under no root
     has no folder and no media, never a crash.
     """
     if not rows:
         return SongMedia()
     opened = rows[0]
     opened_music = _media_value(opened, "Music")
+    song_music = _media_value(opened, "SongMusic")
     music_is_song_music = (
         opened_music is not None
-        and all(row.get("Music") == opened_music for row in rows)
+        and song_music is not None
+        and opened_music == song_music
     )
     folder = None
     parts = _song_dir_parts(song_dir)
