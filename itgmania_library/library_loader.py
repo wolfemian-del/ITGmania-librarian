@@ -188,9 +188,13 @@ class LibraryLoader:
             return
         if self.paths_match_loaded():
             stamp = format_refresh_time(self.last_refreshed_at)
-            self.status.set(f"Showing saved library snapshot · {len(self.rows):,} charts · last refreshed {stamp}.")
+            self.status.set(
+                f"Showing saved library snapshot · {len(self.rows):,} charts"
+                f" · last refreshed {stamp}.")
         else:
-            self.status.set("Displayed library uses different data paths. Click Load / refresh to show the selected sources.")
+            self.status.set(
+                "Displayed library uses different data paths."
+                " Click Load / refresh to show the selected sources.")
         # While the Data paths dialog is open, the same news shows inside it
         # (the conditional note), not only on the status line behind the modal.
         # At first run there is no snapshot loaded, so the early return above
@@ -416,7 +420,9 @@ class LibraryLoader:
             self.status.set("No library loaded. Load / refresh first, then sync scores.")
             return
         if not self.paths_match_loaded():
-            self.status.set("The selected data paths differ from the loaded library. Load / refresh first, then sync scores.")
+            self.status.set(
+                "The selected data paths differ from the loaded library."
+                " Load / refresh first, then sync scores.")
             return
         cache, stats = Path(self.cache_var.get()), Path(self.stats_var.get())
         if not stats.is_file():
