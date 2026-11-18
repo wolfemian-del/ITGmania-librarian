@@ -329,6 +329,24 @@ class MigrateConfigDirTests(unittest.TestCase):
             self.assertTrue(old_dir.is_dir())
             self.assertFalse(new_path.parent.exists())
 
+    def test_new_path_is_a_file_falls_back_to_the_old_path(self):
+        # Grok on PR #233: the new path existing as a file (not a
+        # directory) was the one untested branch — the rename onto it
+        # raises OSError and the migration falls back to the old path.
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            old_dir = root / "ITGmania Library Visualizer"
+            old_dir.mkdir()
+            (old_dir / "settings.json").write_text("{}", encoding="utf-8")
+            new_path = root / "ITGmania Librarian" / "settings.json"
+            new_path.parent.write_text("not a directory", encoding="utf-8")
+
+            result = library_stores._migrate_config_dir(new_path)
+
+            self.assertEqual(result, old_dir / "settings.json")
+            self.assertTrue(old_dir.is_dir())
+            self.assertTrue(new_path.parent.is_file())
+
 
 if __name__ == "__main__":
     unittest.main()
