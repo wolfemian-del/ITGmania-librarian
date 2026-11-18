@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — for review |
+| **Status** | Accepted by Owner (2026-11-18) |
 | **Author** | Muse (Muse Spark 1.3) |
 | **Date** | 2026-11-18 |
 | **Base** | main `0bc6328e` (merge of PR #231, issues #196+#197) |
