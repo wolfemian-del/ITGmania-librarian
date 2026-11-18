@@ -2,11 +2,17 @@
 
 | | |
 |---|---|
-| **Status** | Draft — for review (Revision 1) |
+| **Status** | Accepted — approved by the owner on 2026-11-18, with the review resolutions below |
 | **Author** | Claude (Sonnet 5.5) |
 | **Date** | 2026-11-17; revised 2026-11-18 |
 | **Base** | main `048ca38` (PR #226 merged). The first draft was measured at `be300eda`. |
 | **Related** | Issue #208 (open); PR #225; proposals 0005 (Q5, the sibling-frame callable), 0009 (loader and dialog contracts), 0011 stages 3–4 (song page and player wiring), 0012 (package). |
+
+## Review resolutions (2026-11-18)
+
+- **Q1: Option C, as recommended.** Keyword-only loader inputs, a public `start()` and named startup steps. Option B stays available as a later step.
+- **Q6: named shell delegates, as recommended.** Option D (explicit attach) is not taken, because it would change the 0009 dialog contract.
+- **Q2 to Q5: the recommendations stand.** No reviewer disagreed, and the owner accepted the proposal as written.
 
 ## Revision 1 (2026-11-18, from the five reviews of PR #225)
 
@@ -124,7 +130,7 @@ Two PRs, loader first. The guard rule: a guard is removed only when no test reli
 
 Also update: the README architecture paragraph if it names the loader's startup, and the proposals README index.
 
-## 7. Open Questions for Reviewers
+## 7. Open Questions — Resolved
 
 - **Q1.** Option C over Option B? **Recommend C**, on cost, and because B can follow from it. The design review preferred B for call-site clarity; if the owner values that most, B is a sound choice, and `start()` and the named steps still apply.
 - **Q2.** Move `had_saved_paths` into the dialog's constructor? **Recommend no, not in this change.** It would alter the accepted 0009 first-run contract for the sake of one parameter.
