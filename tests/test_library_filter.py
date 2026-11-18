@@ -3,7 +3,7 @@ from unittest.mock import Mock
 
 from itgmania_library import distribution_panel as dp
 from itgmania_library import library_filter as filter_module
-from itgmania_library import library_visualizer as app
+from itgmania_library import library_librarian as app
 from itgmania_library.library_filter import LibraryFilter
 
 

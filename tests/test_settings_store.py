@@ -273,5 +273,62 @@ class SettingsStoreValidatorTests(unittest.TestCase):
                     library_stores._valid_column_width(value, "Pack"))
 
 
+class MigrateConfigDirTests(unittest.TestCase):
+    """The settings-folder migration (proposal 0015)."""
+
+    def test_old_dir_with_both_files_moves_whole(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            old_dir = root / "ITGmania Library Visualizer"
+            old_dir.mkdir()
+            (old_dir / "settings.json").write_text("{}", encoding="utf-8")
+            (old_dir / "library_cache.json").write_text("{}", encoding="utf-8")
+            new_path = root / "ITGmania Librarian" / "settings.json"
+
+            self.assertEqual(
+                library_stores._migrate_config_dir(new_path), new_path)
+            self.assertFalse(old_dir.exists())
+            self.assertTrue((new_path.parent / "settings.json").is_file())
+            self.assertTrue(
+                (new_path.parent / "library_cache.json").is_file())
+
+    def test_both_dirs_exist_prefers_new_and_leaves_old(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            old_dir = root / "ITGmania Library Visualizer"
+            old_dir.mkdir()
+            (old_dir / "settings.json").write_text("{}", encoding="utf-8")
+            new_dir = root / "ITGmania Librarian"
+            new_dir.mkdir()
+            new_path = new_dir / "settings.json"
+
+            self.assertEqual(
+                library_stores._migrate_config_dir(new_path), new_path)
+            self.assertTrue(old_dir.is_dir())
+
+    def test_neither_dir_exists_is_a_no_op(self):
+        with tempfile.TemporaryDirectory() as root:
+            new_path = Path(root) / "ITGmania Librarian" / "settings.json"
+
+            self.assertEqual(
+                library_stores._migrate_config_dir(new_path), new_path)
+            self.assertFalse(new_path.parent.exists())
+
+    def test_failed_rename_falls_back_to_the_old_path(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            old_dir = root / "ITGmania Library Visualizer"
+            old_dir.mkdir()
+            (old_dir / "settings.json").write_text("{}", encoding="utf-8")
+            new_path = root / "ITGmania Librarian" / "settings.json"
+
+            with patch.object(Path, "rename", side_effect=OSError("denied")):
+                result = library_stores._migrate_config_dir(new_path)
+
+            self.assertEqual(result, old_dir / "settings.json")
+            self.assertTrue(old_dir.is_dir())
+            self.assertFalse(new_path.parent.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

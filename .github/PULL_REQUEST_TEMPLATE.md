@@ -1,5 +1,5 @@
 <!--
-PR body skeleton for ITGmania-library-viewer, per AGENTS.md's Workflow
+PR body skeleton for ITGmania-librarian, per AGENTS.md's Workflow
 section. Plain language first, then technical detail; never leave out
 relevant detail to keep it simple. Delete sections that have nothing to
 say rather than filling them with "n/a" — except the attribution line,

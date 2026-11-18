@@ -2,7 +2,7 @@
 
 Headless: the dialog is built bare or with Mock widgets, so these run
 without a display. The live dialog tests stay in
-tests/test_library_visualizer.py — the windows-ui job runs exactly two test
+tests/test_library_librarian.py — the windows-ui job runs exactly two test
 files, and a new file would need a workflow edit only the owner can make.
 """
 

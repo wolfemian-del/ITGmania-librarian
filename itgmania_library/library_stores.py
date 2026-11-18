@@ -12,6 +12,7 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+from itgmania_library.library_constants import APP_NAME, OLD_APP_NAME
 from itgmania_library.library_geometry import parse_course_geometry
 from itgmania_library.library_sources import _normalized_source_path
 
@@ -163,7 +164,31 @@ def _settings_file_path():
         config_root = Path.home() / "Library" / "Application Support"
     else:
         config_root = Path(os.getenv("XDG_CONFIG_HOME", Path.home() / ".config"))
-    return config_root / "ITGmania Library Visualizer" / "settings.json"
+    return config_root / APP_NAME / "settings.json"
+
+
+def _migrate_config_dir(settings_path):
+    """Move the old config dir to the new one once, if it is still there.
+
+    The app was renamed (proposal 0015): the settings folder moved from
+    OLD_APP_NAME to APP_NAME. On the first launch after the rename, rename
+    the whole old folder so settings.json and library_cache.json come along
+    untouched. Returns the settings path to use: the new one, or the old one
+    when the rename fails (the old folder stays, and the next launch
+    retries). When both folders exist the new one wins and the old one is
+    left alone.
+    """
+    new_dir = settings_path.parent
+    if new_dir.is_dir():
+        return settings_path
+    old_dir = new_dir.with_name(OLD_APP_NAME)
+    if not old_dir.is_dir():
+        return settings_path
+    try:
+        old_dir.rename(new_dir)
+    except OSError:
+        return old_dir / "settings.json"
+    return settings_path
 
 
 def _valid_column_width(value, column):

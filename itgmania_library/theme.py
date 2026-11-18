@@ -1,4 +1,4 @@
-"""Colors and fonts for the ITGmania Library Visualizer window.
+"""Colors and fonts for the ITGmania Librarian window.
 
 Every color and font the window uses is defined here, named by what it is for. Layout and geometry
 constants (window sizes, row height, paddings) are also defined here. To restyle the app, edit

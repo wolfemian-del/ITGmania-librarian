@@ -39,6 +39,7 @@ class ImportSurfaceTests(unittest.TestCase):
     def test_constants_names_resolve(self):
         # Re-pointed to library_constants.py at Step 2.
         self._assert_resolve((
+            "APP_NAME",
             "COLUMN_GROUPS",
             "DEFAULT_VISIBLE_COLUMNS",
             "DIFFICULTY_ORDER",
@@ -46,6 +47,7 @@ class ImportSurfaceTests(unittest.TestCase):
             "GRADE_OPTIONS",
             "HEADERS",
             "NUMERIC_COLUMNS",
+            "OLD_APP_NAME",
             "RADAR_FIELDS",
             "TAP_FIELDS",
             "TECH_FIELDS",
@@ -136,6 +138,7 @@ class ImportSurfaceTests(unittest.TestCase):
             "LIBRARY_CACHE_SCHEMA_VERSION",
             "SettingsStore",
             "SnapshotStore",
+            "_migrate_config_dir",
             "_settings_file_path",
             "_valid_column_width",
             "_valid_window_geometry",

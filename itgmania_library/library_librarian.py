@@ -35,7 +35,8 @@ from itgmania_library.library_media import (
 from itgmania_library.library_table import LibraryTable
 from itgmania_library.song_page import SongPage
 from itgmania_library.distribution_panel import DistributionPanel
-from itgmania_library.library_constants import COLUMN_GROUPS, DEFAULT_VISIBLE_COLUMNS, HEADERS
+from itgmania_library.library_constants import (
+    APP_NAME, COLUMN_GROUPS, DEFAULT_VISIBLE_COLUMNS, HEADERS)
 from itgmania_library.library_geometry import (
     declare_dpi_awareness,
     dpi_scale_factor,
@@ -47,6 +48,7 @@ from itgmania_library.library_stores import (
     LIBRARY_CACHE_SCHEMA_VERSION,
     SettingsStore,
     SnapshotStore,
+    _migrate_config_dir,
     _settings_file_path,
     _valid_window_geometry,
 )
@@ -60,7 +62,7 @@ class LibraryApp:
 
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title("ITGmania Library Visualizer")
+        self.root.title(APP_NAME)
         # The display scale factor (issue #51): 1.0 at 100% DPI, 1.5 at
         # 150%. Every pixel number below is stored in canonical 100%
         # units and scaled here, at the point it reaches the window.
@@ -69,7 +71,9 @@ class LibraryApp:
         self.root.minsize(scale_pixels(theme.WINDOW_MIN_SIZE[0], self._dpi_scale),
                           scale_pixels(theme.WINDOW_MIN_SIZE[1], self._dpi_scale))
         self.root.configure(bg=theme.BG_WINDOW)
-        self.settings_path = self._settings_file_path()
+        # The config dir moved with the rename (proposal 0015): migrate it
+        # once before anything reads settings or the snapshot.
+        self.settings_path = _migrate_config_dir(self._settings_file_path())
         # The snapshot store owns library_cache.json (proposal 0008); its
         # path is derived once here from the settings path, and it is built
         # against the current schema version.
@@ -234,7 +238,7 @@ class LibraryApp:
     def _build(self):
         top = tk.Frame(self.root, bg=theme.BG_WINDOW, padx=scale_pixels(18, self._dpi_scale), pady=scale_pixels(14, self._dpi_scale))
         top.pack(fill="x")
-        tk.Label(top, text="ITGmania Library Visualizer", fg=theme.TEXT_TITLE, bg=theme.BG_WINDOW,
+        tk.Label(top, text=APP_NAME, fg=theme.TEXT_TITLE, bg=theme.BG_WINDOW,
                  font=theme.FONT_APP_TITLE).pack(side="left")
         self.status = tk.StringVar(value="No saved library yet. Choose File → Data paths…, then Load / refresh.")
         tk.Label(top, textvariable=self.status, fg=theme.TEXT_MUTED, bg=theme.BG_WINDOW,
@@ -431,7 +435,7 @@ class LibraryApp:
         menubar.add_cascade(label="View", menu=view_menu)
 
         help_menu = tk.Menu(menubar, tearoff=False)
-        help_menu.add_command(label="About ITGmania Library Visualizer…", command=self.open_about)
+        help_menu.add_command(label=f"About {APP_NAME}…", command=self.open_about)
         menubar.add_cascade(label="Help", menu=help_menu)
         self.root.configure(menu=menubar)
         self.root.bind("<Control-f>", lambda _event: self._filter.focus_search())
@@ -714,12 +718,12 @@ class LibraryApp:
 
         window = tk.Toplevel(self.root)
         self.about_window = window
-        window.title("About ITGmania Library Visualizer")
+        window.title(f"About {APP_NAME}")
         window.resizable(False, False)
         window.configure(bg=theme.BG_WINDOW)
         window.transient(self.root)
 
-        tk.Label(window, text="ITGmania Library Visualizer", fg=theme.TEXT_TITLE, bg=theme.BG_WINDOW,
+        tk.Label(window, text=APP_NAME, fg=theme.TEXT_TITLE, bg=theme.BG_WINDOW,
                  font=theme.FONT_DIALOG_TITLE).pack(anchor="w", padx=scale_pixels(24, self._dpi_scale), pady=(scale_pixels(18, self._dpi_scale), scale_pixels(2, self._dpi_scale)))
         tk.Label(window, text=f"Version {__version__}", fg=theme.TEXT_PRIMARY, bg=theme.BG_WINDOW,
                  font=theme.FONT_BODY_BOLD).pack(anchor="w", padx=scale_pixels(24, self._dpi_scale))
@@ -742,7 +746,7 @@ class LibraryApp:
 
 def main():
     if tk is None:
-        sys.exit("Tkinter is required to run the ITGmania Library Visualizer GUI.")
+        sys.exit(f"Tkinter is required to run the {APP_NAME} GUI.")
     # Declare DPI awareness before the first window exists (issue #51):
     # without it Windows bitmap-stretches the app at 125%/150%.
     declare_dpi_awareness()

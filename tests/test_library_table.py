@@ -3,7 +3,7 @@
 Headless: the table is built on fake Tk objects (the Treeview and
 scrollbars are Mocks, patched in), so these run without a display. The
 live table tests (selection only — the Ctrl+A test) stay in
-tests/test_library_visualizer.py — the windows-ui job runs exactly two
+tests/test_library_librarian.py — the windows-ui job runs exactly two
 test files, and a new file would need a workflow edit only the owner can
 make; the drag and sort-click tests are headless in this file.
 """
@@ -19,7 +19,7 @@ from itgmania_library.library_geometry import scale_pixels
 from itgmania_library.library_stores import SettingsStore
 from itgmania_library import library_table as table_module
 from itgmania_library import row_tints
-from itgmania_library import library_visualizer as app
+from itgmania_library import library_librarian as app
 from itgmania_library.library_filter import LibraryFilter
 from itgmania_library.library_table import LibraryTable
 

@@ -12,7 +12,7 @@ PACKAGE = ROOT / "itgmania_library"
 # guards below keep covering all of it.
 WINDOW_SOURCES = tuple(
     (PACKAGE / name).read_text(encoding="utf-8")
-    for name in ("library_visualizer.py", "course_builder.py", "row_tints.py",
+    for name in ("library_librarian.py", "course_builder.py", "row_tints.py",
                  "advanced_search.py", "distribution_panel.py", "data_paths_dialog.py",
                  "library_loader.py", "library_filter.py", "library_table.py",
                  "song_page.py")

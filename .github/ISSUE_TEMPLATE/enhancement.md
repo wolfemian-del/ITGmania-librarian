@@ -1,6 +1,6 @@
 ---
 name: Task or enhancement
-about: Work to be done on the viewer, by the owner or by a model
+about: Work to be done on the app, by the owner or by a model
 labels: enhancement
 ---
 

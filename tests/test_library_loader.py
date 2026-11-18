@@ -2,7 +2,7 @@
 
 The load/sync engine moved out of LibraryApp into library_loader.py; the
 tests that call the engine's methods directly live here (headless). The live
-load-progress tests stay in tests/test_library_visualizer.py.
+load-progress tests stay in tests/test_library_librarian.py.
 """
 import json
 import os
@@ -20,7 +20,7 @@ from itgmania_library import library_sources as sources
 from itgmania_library import library_stores as stores
 from itgmania_library import library_loader as loader
 from itgmania_library import library_table as table_module
-from itgmania_library import library_visualizer as app
+from itgmania_library import library_librarian as app
 from itgmania_library.library_table import LibraryTable
 from itgmania_library import data_paths_dialog as dialog
 

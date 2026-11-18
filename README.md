@@ -1,4 +1,4 @@
-# ITGmania Library Visualizer
+# ITGmania Librarian
 
 A small Windows-friendly desktop app for browsing ITGmania cached charts alongside a player's `Stats.xml`. It runs on Python's standard library alone (including Tkinter), so no package installation is required. Two optional packages add features (see below): `matplotlib` adds the distribution charts, and `pygame-ce` adds the song page's Play preview.
 
@@ -64,7 +64,7 @@ The **Time** column shows cached song music length as `minutes:seconds`; a value
 
 The cache folder is commonly `%APPDATA%\ITGmania\Cache\Songs`. `Stats.xml` lives inside a player profile's save folder. The app does not edit either source. Change the paths in **File → Data paths…**; on a first run with no usable paths the app asks for them itself before showing an empty library.
 
-The app remembers the selected data paths, the Pack/Type/Difficulty filter selections, column order, visibility, and widths, and the course and Advanced Search windows' sizes and positions, in `%APPDATA%\ITGmania Library Visualizer\settings.json` on Windows. The parsed library snapshot is stored beside it as `library_cache.json`. On other platforms these files use the standard per-user configuration directory. If the settings file exists but cannot be read (corrupt, mis-encoded, or not a JSON object), the app starts with its defaults and says so on the status line.
+The app remembers the selected data paths, the Pack/Type/Difficulty filter selections, column order, visibility, and widths, and the course and Advanced Search windows' sizes and positions, in `%APPDATA%\ITGmania Librarian\settings.json` on Windows. The parsed library snapshot is stored beside it as `library_cache.json`. On other platforms these files use the standard per-user configuration directory. If the settings file exists but cannot be read (corrupt, mis-encoded, or not a JSON object), the app starts with its defaults and says so on the status line.
 
 ## Changing the look
 
@@ -88,8 +88,8 @@ ruff check .
 
 `itgmania_library/theme.py` holds the colors and fonts; `tests/test_theme.py` checks the window code uses it.
 
-The code is laid out in `docs/ARCHITECTURE.md`: a layer diagram, a table of all 21 modules with what each holds and its tests, and how the pieces fit together. `itgmania_library/library_visualizer.py` is the entry point; the other files are imported by it.
+The code is laid out in `docs/ARCHITECTURE.md`: a layer diagram, a table of all 21 modules with what each holds and its tests, and how the pieces fit together. `itgmania_library/library_librarian.py` is the entry point; the other files are imported by it.
 
 ## License
 
-Released under the MIT License; see `LICENSE`. **Help → About** shows the version and license. The version number is `__version__` in `itgmania_library/library_visualizer.py`, and a test checks that it matches the newest heading in `CHANGELOG.md`, so change both together when releasing.
+Released under the MIT License; see `LICENSE`. **Help → About** shows the version and license. The version number is `__version__` in `itgmania_library/library_librarian.py`, and a test checks that it matches the newest heading in `CHANGELOG.md`, so change both together when releasing.

@@ -7,7 +7,7 @@ guide stays in `README.md`.
 
 Run `launch.py` from the repository root (`python launch.py`). It is the
 only file you run: it imports `main` from
-`itgmania_library.library_visualizer` and calls it. The other 20 modules
+`itgmania_library.library_librarian` and calls it. The other 20 modules
 live in the `itgmania_library` package and are imported by it (directly or
 through each other), by their absolute package names
 (`from itgmania_library.library_sources import ...`). As an aside,
@@ -20,7 +20,7 @@ A module only imports modules in lower layers. The layering below was
 measured from the import graph (no cycles) at main `be300eda`, not drawn from intent.
 
 ```
-5  library_visualizer.py — the shell (LibraryApp)
+5  library_librarian.py — the shell (LibraryApp)
 4  library_table.py
 3  library_loader.py · library_stores.py · advanced_search.py
    distribution_panel.py · data_paths_dialog.py
@@ -53,11 +53,11 @@ Two naming facts to know before you trust the prefixes:
 ## Modules
 
 "Tests" is the file that covers the module; live
-(window) tests for the UI components stay in `tests/test_library_visualizer.py`.
+(window) tests for the UI components stay in `tests/test_library_librarian.py`.
 
 | Module | What it holds | Tests |
 | --- | --- | --- |
-| `itgmania_library/library_visualizer.py` | the shell: `LibraryApp`, the menu, and the `main()` entry point | `tests/test_library_visualizer.py` |
+| `itgmania_library/library_librarian.py` | the shell: `LibraryApp`, the menu, and the `main()` entry point | `tests/test_library_librarian.py` |
 | `itgmania_library/library_loader.py` | the load/sync engine: scan and sync workers, result queue, generation counters, snapshot counters | `tests/test_library_loader.py` |
 | `itgmania_library/library_search.py` | the search language: parser, matcher, and the numeric-bound helpers | `tests/test_library_search.py` |
 | `itgmania_library/course_builder.py` | the Build-a-course dialog and its queue | `tests/test_course_builder.py` |
@@ -65,7 +65,7 @@ Two naming facts to know before you trust the prefixes:
 | `itgmania_library/distribution_panel.py` | the distribution side panel and its charts | `tests/test_ui_distribution.py` |
 | `itgmania_library/library_sources.py` | scores, cache, and path helpers | `tests/test_library_sources.py` |
 | `itgmania_library/library_media.py` | song media: folder roots, media-file resolution, the song's charts and media record, and the preview player seam | `tests/test_library_media.py` |
-| `itgmania_library/song_page.py` | the song page: one window for a song's media and charts | `tests/test_library_visualizer.py` |
+| `itgmania_library/song_page.py` | the song page: one window for a song's media and charts | `tests/test_library_librarian.py` |
 | `itgmania_library/library_distribution.py` | the distribution charts: meter, difficulty, and BPM aggregation | `tests/test_distribution.py` |
 | `itgmania_library/advanced_search.py` | the Advanced Search dialog | `tests/test_advanced_search.py` |
 | `itgmania_library/library_stores.py` | persistence: the snapshot and settings stores | `tests/test_snapshot_store.py`, `tests/test_settings_store.py` |

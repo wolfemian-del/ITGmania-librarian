@@ -1,4 +1,15 @@
-"""The shared vocabulary — the column and grade tables every other module and the UI read from."""
+"""The shared vocabulary — the column and grade tables every other
+module and the UI read from, and the app's display name."""
+
+
+# The app's display name: the window title, the About dialog, and the
+# settings folder name all read it from here, so a rename touches one line.
+APP_NAME = "ITGmania Librarian"
+
+
+# The previous display name, kept so the settings-folder migration
+# (proposal 0015) can find the old folder. It is history, not a live name.
+OLD_APP_NAME = "ITGmania Library Visualizer"
 
 
 TECH_FIELDS = ("Crossovers", "HalfCrossovers", "FullCrossovers", "Footswitches",

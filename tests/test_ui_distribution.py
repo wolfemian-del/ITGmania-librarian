@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 from itgmania_library import distribution_panel as dp
 from itgmania_library import library_distribution as data
-from itgmania_library import library_visualizer as app
+from itgmania_library import library_librarian as app
 from itgmania_library import theme
 
 
@@ -661,7 +661,7 @@ class FullDistributionTests(unittest.TestCase):
 class MatplotlibMissingTests(unittest.TestCase):
     """The panel without matplotlib: no canvas, but the summary still updates.
 
-    Moved from tests/test_library_visualizer.py in the component split (proposal
+    Moved from tests/test_library_librarian.py in the component split (proposal
     0005, step 3); the availability flag now lives in the panel's own module.
     """
 
