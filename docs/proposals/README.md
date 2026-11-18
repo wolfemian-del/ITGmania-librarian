@@ -24,5 +24,4 @@ line in each file's header is the record; this index summarizes it.
 | [0011](0011-song-page-media-previews.md) | Song Page with Media Previews | Accepted 2026-11-16 | PR #185 (merged 2026-11-16) |
 | [0012](0012-package-move.md) | Move the app into the `itgmania_library` package | Accepted 2026-11-16 | PR #188 (merged 2026-11-16) |
 | [0013](0013-song-page-sizing.md) | Size the song page by its contents, and scroll the chart list | Accepted 2026-11-17 | [#217](https://github.com/wolfemian-del/ITGmania-library-viewer/pull/217) |
-| [0014](0014-startup-wiring.md) | Make the startup wiring plain | Draft 2026-11-17 | – (issue #208) |
 | [0015](0015-rename-to-librarian.md) | Rename the app to ITGmania Librarian | Draft 2026-11-18 | – (issue #209) |
