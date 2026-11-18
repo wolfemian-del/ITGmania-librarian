@@ -39,34 +39,44 @@ from itgmania_library.library_sources import (
 class LibraryLoader:
     """Load the library (scan or snapshot), sync scores, report progress/status.
 
-    snapshot_store:       the snapshot store, passed in (already standalone).
-    cache_var, stats_var: the path variables, read.
-    status:               the status StringVar, for progress/status reporting.
-    progress:             the progress-bar widget.
-    load_button:          the Load button widget, disabled during a load.
-    set_sync_menu_state:  callable, enabling/disabling File -> Sync scores.
-    on_library_changed:   callback (rows, preserve_selection), delivered when
-                          a load or a sync finishes, for the table/filter/
-                          Course Builder part only (Q2).
-    on_nothing_loaded:    callback, delivered when load_cached_data finds no
-                          snapshot, so the app does the initial refresh.
-    dialog:               the DataPathsDialog component, for open(), set_note(),
-                          and maybe_show_first_run().
-    save_settings:        callable.
-    root:                 for after() scheduling of the result polling.
-    report_discarded_settings: callback, for the discarded-settings note the
-                          shell reports (the settings store stays in the
-                          shell, so _report_discarded_settings stays app-side
-                          and the loader calls it through this callback).
-    had_saved_paths:      whether saved settings contained path keys, for the
-                          dialog's first-run check (the loader never sees the
-                          settings file).
+    Every input is keyword-only (proposal 0014), in five groups:
+
+    Data:
+      snapshot_store:       the snapshot store, passed in (already standalone).
+      cache_var, stats_var: the path variables, read.
+    The window the loader drives:
+      status:               the status StringVar, for progress/status reporting.
+      progress:             the progress-bar widget.
+      load_button:          the Load button widget, disabled during a load.
+      set_sync_menu_state:  callable, enabling/disabling File -> Sync scores.
+    What the loader tells the shell:
+      on_library_changed:   callback (rows, preserve_selection), delivered when
+                            a load or a sync finishes, for the table/filter/
+                            Course Builder part only (Q2).
+      on_nothing_loaded:    callback, delivered when load_cached_data finds no
+                            snapshot, so the app does the initial refresh.
+      report_discarded_settings: callback, for the discarded-settings note the
+                            shell reports (the settings store stays in the
+                            shell, so _report_discarded_settings stays app-side
+                            and the loader calls it through this callback).
+      save_settings:        callable.
+    The dialog it talks to:
+      dialog:               the DataPathsDialog component, for open(),
+                            set_note(), and maybe_show_first_run().
+      had_saved_paths:      whether saved settings contained path keys, for the
+                            dialog's first-run check (the loader never sees the
+                            settings file).
+    Scheduling:
+      root:                 for after() scheduling of the result polling.
+
+    The shell calls start() once, after construction (proposal 0014).
     """
 
-    def __init__(self, snapshot_store, cache_var, stats_var, status, progress,
-                 load_button, set_sync_menu_state, on_library_changed,
-                 on_nothing_loaded, dialog, save_settings, root,
-                 report_discarded_settings, had_saved_paths):
+    def __init__(self, *, snapshot_store, cache_var, stats_var,
+                 status, progress, load_button, set_sync_menu_state,
+                 on_library_changed, on_nothing_loaded,
+                 report_discarded_settings, save_settings,
+                 dialog, had_saved_paths, root):
         self.snapshot_store = snapshot_store
         self.cache_var = cache_var
         self.stats_var = stats_var
@@ -91,9 +101,36 @@ class LibraryLoader:
         self._snapshot_lock = threading.Lock()  # one scan at a time may check its generation and write the snapshot
         self._load_results = queue.Queue()  # finished scans wait here; only the main thread delivers them (_poll_load_results)
         self._load_started_at = None
+        # The snapshot summary _loaded records for the scores sync to write
+        # back (proposal 0014 declares them here; the reads keep their
+        # getattr defaults for bare test instances).
+        self._snapshot_files = 0
+        self._snapshot_skipped_files = 0
+        self._snapshot_files_without_charts = 0
+        self._snapshot_nested_song_tree = False
+        self._snapshot_skipped_blocks = 0
+
+    def start(self):
+        """Begin the loader's startup, once, after the shell has built it.
+
+        Watches the two path variables, starts the result polling, and
+        schedules the saved-snapshot load for after the window has painted.
+        The shell calls _report_discarded_settings() just before this.
+        """
+        for var in (self.cache_var, self.stats_var):
+            var.trace_add("write", lambda *_: self._source_paths_changed())
+        self.root.after(75, self._poll_load_results)
+        # The saved snapshot is loaded once the window has painted, not here:
+        # reading and rendering it can take a moment at library scale, and doing
+        # it before the event loop starts would leave the user watching the
+        # console (or an unpainted window) with no explanation.
+        if self.snapshot_store.snapshot_path.is_file():
+            self.status.set("Loading saved library…")
+            self.progress.start(12)
+        self.root.after(50, self._load_initial_snapshot)
 
     def _load_initial_snapshot(self):
-        """Load the saved snapshot (scheduled from __init__ so the window paints first)."""
+        """Load the saved snapshot (scheduled by start() so the window paints first)."""
         if self._load_generation:
             # A Load / refresh pressed inside the deferral window supersedes
             # the startup restore: the scan owns the progress bar, the Load
@@ -149,18 +186,22 @@ class LibraryLoader:
     def _source_paths_changed(self):
         if not self.loaded_source_paths:
             return
-        if self._current_paths_match_loaded():
+        if self.paths_match_loaded():
             stamp = format_refresh_time(self.last_refreshed_at)
-            self.status.set(f"Showing saved library snapshot · {len(self.rows):,} charts · last refreshed {stamp}.")
+            self.status.set(
+                f"Showing saved library snapshot · {len(self.rows):,} charts"
+                f" · last refreshed {stamp}.")
         else:
-            self.status.set("Displayed library uses different data paths. Click Load / refresh to show the selected sources.")
+            self.status.set(
+                "Displayed library uses different data paths."
+                " Click Load / refresh to show the selected sources.")
         # While the Data paths dialog is open, the same news shows inside it
         # (the conditional note), not only on the status line behind the modal.
         # At first run there is no snapshot loaded, so the early return above
         # leaves the dialog's first-run note alone.
         self.dialog.set_note(self.dialog.paths_changed())
 
-    def _current_paths_match_loaded(self):
+    def paths_match_loaded(self):
         """Whether the current paths match the loaded snapshot's sources.
 
         True when no snapshot is loaded: there is nothing to differ from.
@@ -378,8 +419,10 @@ class LibraryLoader:
         if not self.rows:
             self.status.set("No library loaded. Load / refresh first, then sync scores.")
             return
-        if not self._current_paths_match_loaded():
-            self.status.set("The selected data paths differ from the loaded library. Load / refresh first, then sync scores.")
+        if not self.paths_match_loaded():
+            self.status.set(
+                "The selected data paths differ from the loaded library."
+                " Load / refresh first, then sync scores.")
             return
         cache, stats = Path(self.cache_var.get()), Path(self.stats_var.get())
         if not stats.is_file():

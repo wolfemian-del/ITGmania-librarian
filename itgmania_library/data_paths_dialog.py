@@ -36,7 +36,7 @@ class DataPathsDialog:
                         the note line
     paths_match_loaded: a zero-argument callable returning whether the
                         dialog's paths match the loaded snapshot's sources
-                        (today's _current_paths_match_loaded)
+                        (the loader's paths_match_loaded)
     """
 
     # The dialog's note texts (UI redesign): the first-run note is the
