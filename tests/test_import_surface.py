@@ -72,6 +72,7 @@ class ImportSurfaceTests(unittest.TestCase):
             "_normalized_source_path",
             "any_scores_match",
             "cache_dir_candidates",
+            "edit_fallback_index",
             "first_existing_directory",
             "invalid_paths_note",
             "looks_like_song_tree",

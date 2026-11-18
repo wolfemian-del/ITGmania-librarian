@@ -597,7 +597,7 @@ class RefreshGenerationTests(unittest.TestCase):
             instance.snapshot_store = Mock()
             instance.root = Mock()
 
-            def newer_refresh_starts_while_parsing(path, scores):
+            def newer_refresh_starts_while_parsing(path, scores, edit_index=None):
                 instance._load_generation = 2  # the only file is parsed, so the scan loop will not notice
                 return [], 0
 
@@ -803,7 +803,7 @@ class RefreshGenerationTests(unittest.TestCase):
 
             row = {"Title": "a"}
 
-            def parse_side_effect(path, scores):
+            def parse_side_effect(path, scores, edit_index=None):
                 if path.name == "bad.cache":
                     raise ValueError("boom")
                 return [row], 0

@@ -9,6 +9,23 @@ from itgmania_library import library_sources as data
 from itgmania_library.library_constants import HEADERS
 
 
+class _CountingDict(dict):
+    """A dict that counts how many times its items are iterated.
+
+    The Edit fallback used to scan the whole scores dict per undescribed
+    Edit chart; the once-per-run index iterates it once. Counting items()
+    calls is how the tests below tell the two apart (issue #203).
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.items_calls = 0
+
+    def items(self):
+        self.items_calls += 1
+        return super().items()
+
+
 class ParsingTests(unittest.TestCase):
     def test_cache_chart_matches_stats_by_normalized_key(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -539,6 +556,100 @@ class ParsingTests(unittest.TestCase):
         self.assertEqual(rows[0]["Plays"], 9)
         self.assertEqual(rows[0]["Last played"], "2026-02-01")
 
+    def test_undescribed_edit_charts_share_one_fallback_scan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stats_file = Path(directory) / "Stats.xml"
+            stats_file.write_text(
+                "<Stats><SongScores>"
+                "<Song Dir='Songs/Pack/Song'>"
+                "<Steps StepsType='dance-single' Difficulty='Edit' Description='Alpha Edit'>"
+                "<HighScoreList><NumTimesPlayed>9</NumTimesPlayed>"
+                "<LastPlayed>2026-01-01</LastPlayed>"
+                "<HighScore><PercentDP>0.95</PercentDP><Score>950000</Score></HighScore>"
+                "</HighScoreList></Steps>"
+                "<Steps StepsType='dance-single' Difficulty='Edit' Description='Beta Edit'>"
+                "<HighScoreList><NumTimesPlayed>7</NumTimesPlayed>"
+                "<LastPlayed>2026-02-01</LastPlayed>"
+                "<HighScore><PercentDP>0.99</PercentDP><Score>990000</Score></HighScore>"
+                "</HighScoreList></Steps>"
+                "</Song></SongScores></Stats>",
+                encoding="utf-8",
+            )
+            scores = _CountingDict(data.stats_index(stats_file))
+
+            cache_file = Path(directory) / "edits.cache"
+            cache_file.write_text(
+                "#TITLE:Song;\n"
+                "#SONGFILENAME:Songs/Pack/Song/audio.ogg;\n"
+                "#NOTEDATA:;\n"
+                "#STEPSTYPE:dance-single;\n"
+                "#DIFFICULTY:Edit;\n"
+                "#NOTEDATA:;\n"
+                "#STEPSTYPE:dance-single;\n"
+                "#DIFFICULTY:Edit;\n"
+                "#NOTEDATA:;\n"
+                "#STEPSTYPE:dance-single;\n"
+                "#DIFFICULTY:Edit;\n",
+                encoding="utf-8",
+            )
+            rows, _ = data.parse_cache_file(cache_file, scores)
+
+        self.assertEqual(len(rows), 3)
+        for row in rows:
+            self.assertEqual(row["Score"], 990000)
+            self.assertEqual(row["Plays"], 9)
+            self.assertEqual(row["Last played"], "2026-02-01")
+        # One scan built the index for all three charts; the old code
+        # scanned the whole dict once per undescribed Edit chart.
+        self.assertEqual(scores.items_calls, 1)
+
+    def test_parse_with_a_given_edit_index_does_not_scan_the_scores(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stats_file = Path(directory) / "Stats.xml"
+            stats_file.write_text(
+                "<Stats><SongScores>"
+                "<Song Dir='Songs/Pack/Song'>"
+                "<Steps StepsType='dance-single' Difficulty='Edit' Description='Alpha Edit'>"
+                "<HighScoreList><NumTimesPlayed>9</NumTimesPlayed>"
+                "<LastPlayed>2026-01-01</LastPlayed>"
+                "<HighScore><PercentDP>0.95</PercentDP><Score>950000</Score></HighScore>"
+                "</HighScoreList></Steps>"
+                "<Steps StepsType='dance-single' Difficulty='Edit' Description='Beta Edit'>"
+                "<HighScoreList><NumTimesPlayed>7</NumTimesPlayed>"
+                "<LastPlayed>2026-02-01</LastPlayed>"
+                "<HighScore><PercentDP>0.99</PercentDP><Score>990000</Score></HighScore>"
+                "</HighScoreList></Steps>"
+                "</Song></SongScores></Stats>",
+                encoding="utf-8",
+            )
+            scores = _CountingDict(data.stats_index(stats_file))
+            index = data.edit_fallback_index(scores)
+            scores.items_calls = 0
+
+            cache_file = Path(directory) / "edits.cache"
+            cache_file.write_text(
+                "#TITLE:Song;\n"
+                "#SONGFILENAME:Songs/Pack/Song/audio.ogg;\n"
+                "#NOTEDATA:;\n"
+                "#STEPSTYPE:dance-single;\n"
+                "#DIFFICULTY:Edit;\n"
+                "#NOTEDATA:;\n"
+                "#STEPSTYPE:dance-single;\n"
+                "#DIFFICULTY:Edit;\n"
+                "#NOTEDATA:;\n"
+                "#STEPSTYPE:dance-single;\n"
+                "#DIFFICULTY:Edit;\n",
+                encoding="utf-8",
+            )
+            rows, _ = data.parse_cache_file(cache_file, scores, index)
+
+        self.assertEqual(len(rows), 3)
+        for row in rows:
+            self.assertEqual(row["Score"], 990000)
+        # The parse used the given index; it never scanned the dict.
+        # This is the path the loader's scan takes (issue #203).
+        self.assertEqual(scores.items_calls, 0)
+
     def test_stats_index_reads_score_and_ignores_case_in_matching_key(self):
         with tempfile.TemporaryDirectory() as directory:
             stats_file = Path(directory) / "Stats.xml"
@@ -873,6 +984,56 @@ class MergeScoresTests(unittest.TestCase):
         self.assertEqual(changed, 0)
         self.assertEqual(rows[0]["Score"], 950000)
         self.assertEqual(rows[0]["Plays"], 5)
+
+    def test_merge_scores_for_undescribed_edits_shares_one_fallback_scan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            stats_file = Path(directory) / "Stats.xml"
+            stats_file.write_text(
+                "<Stats><SongScores>"
+                "<Song Dir='Songs/Pack/Song'>"
+                "<Steps StepsType='dance-single' Difficulty='Edit' Description='Alpha Edit'>"
+                "<HighScoreList><NumTimesPlayed>9</NumTimesPlayed>"
+                "<LastPlayed>2026-01-01</LastPlayed>"
+                "<HighScore><PercentDP>0.95</PercentDP><Score>950000</Score></HighScore>"
+                "</HighScoreList></Steps>"
+                "<Steps StepsType='dance-single' Difficulty='Edit' Description='Beta Edit'>"
+                "<HighScoreList><NumTimesPlayed>7</NumTimesPlayed>"
+                "<LastPlayed>2026-02-01</LastPlayed>"
+                "<HighScore><PercentDP>0.99</PercentDP><Score>990000</Score></HighScore>"
+                "</HighScoreList></Steps>"
+                "</Song></SongScores></Stats>",
+                encoding="utf-8",
+            )
+            scores = _CountingDict(data.stats_index(stats_file))
+
+            cache_file = Path(directory) / "edits.cache"
+            cache_file.write_text(
+                "#TITLE:Song;\n"
+                "#SONGFILENAME:Songs/Pack/Song/audio.ogg;\n"
+                "#NOTEDATA:;\n"
+                "#STEPSTYPE:dance-single;\n"
+                "#DIFFICULTY:Edit;\n"
+                "#NOTEDATA:;\n"
+                "#STEPSTYPE:dance-single;\n"
+                "#DIFFICULTY:Edit;\n"
+                "#NOTEDATA:;\n"
+                "#STEPSTYPE:dance-single;\n"
+                "#DIFFICULTY:Edit;\n",
+                encoding="utf-8",
+            )
+            rows, _ = data.parse_cache_file(cache_file, {})
+
+        self.assertEqual(len(rows), 3)
+        changed = data.merge_scores(rows, scores)
+
+        self.assertEqual(changed, 3)
+        for row in rows:
+            self.assertEqual(row["Score"], 990000)
+            self.assertEqual(row["Plays"], 9)
+            self.assertEqual(row["Last played"], "2026-02-01")
+        # One scan built the index for all three rows; the old code
+        # scanned the whole dict once per undescribed Edit row.
+        self.assertEqual(scores.items_calls, 1)
 
     def test_merge_scores_blanks_fields_when_the_score_is_gone(self):
         with tempfile.TemporaryDirectory() as directory:
