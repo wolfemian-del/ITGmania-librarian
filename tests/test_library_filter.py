@@ -246,5 +246,39 @@ class FilterWiringGuardTests(unittest.TestCase):
         instance.refresh_table.assert_called_once_with()
 
 
+class SubscriberFailureTests(unittest.TestCase):
+    """Issue #199: a raising subscriber must not skip the rest."""
+
+    def test_a_raising_subscriber_does_not_skip_the_rest(self):
+        filt = make_filter(rows=ROWS)
+        failing = Mock(side_effect=RuntimeError("boom"))
+        second = Mock()
+        filt.subscribe(failing)
+        filt.subscribe(second)
+        with self.assertRaises(RuntimeError):
+            filt._notify()
+        failing.assert_called_once_with()
+        second.assert_called_once_with()
+
+    def test_two_raising_subscribers_both_run_and_the_first_failure_is_raised(self):
+        filt = make_filter(rows=ROWS)
+        first = Mock(side_effect=ValueError("first"))
+        second = Mock(side_effect=RuntimeError("second"))
+        filt.subscribe(first)
+        filt.subscribe(second)
+        with self.assertRaises(ValueError) as caught:
+            filt._notify()
+        self.assertEqual(str(caught.exception), "first")
+        first.assert_called_once_with()
+        second.assert_called_once_with()
+
+    def test_a_quiet_notify_raises_nothing(self):
+        filt = make_filter(rows=ROWS)
+        second = Mock()
+        filt.subscribe(second)
+        filt._notify()
+        second.assert_called_once_with()
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -115,12 +115,28 @@ class LibraryFilter:
             self.diff_var.set("All difficulties")
 
     def subscribe(self, callback):
-        """Register a callback invoked when something changed (the table refresh)."""
+        """Register a callback invoked when something changed (the table refresh).
+
+        A callback that raises does not stop the others: _notify runs every
+        subscriber, then re-raises the first failure (issue #199).
+        """
         self._subscribers.append(callback)
 
     def _notify(self):
+        # Issue #199: a raising subscriber used to skip the rest and
+        # propagate at once. Notify everyone first, then report the
+        # first failure by re-raising it — the failure stays loud (it
+        # still reaches the caller, the way it does today), but no
+        # subscriber is left untold.
+        first_failure = None
         for callback in self._subscribers:
-            callback()
+            try:
+                callback()
+            except Exception as failure:
+                if first_failure is None:
+                    first_failure = failure
+        if first_failure is not None:
+            raise first_failure
 
     def filter_rows(self, ignore_metric=None):
         """Return the rows that pass the pack, type, difficulty, scored and search filters.
