@@ -29,7 +29,7 @@ TK_MODULES = frozenset((
     "distribution_panel",
     "library_loader",
     "library_table",
-    "library_visualizer",
+    "library_librarian",
     "song_page",
 ))
 

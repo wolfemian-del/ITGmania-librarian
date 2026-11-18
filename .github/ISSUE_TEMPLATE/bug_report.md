@@ -1,6 +1,6 @@
 ---
 name: Bug report
-about: Something in the viewer misbehaves
+about: Something in the app misbehaves
 labels: bug
 ---
 

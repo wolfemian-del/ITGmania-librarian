@@ -63,12 +63,12 @@ them in a sortable, filterable table, and can build .CRS course files. Read READ
 - Do not answer from memory. Read https://github.com/wolfemian-del/itgmania-notes (INDEX.md first),
   then the ITGmania source if the notes do not cover it.
 - Version basis is ITGmania v1.3.0 stable. Beta behavior is unverified unless a note says so. If a
-  note shows beta differs in something the viewer depends on, tell the owner before changing the viewer.
+  note shows beta differs in something the app depends on, tell the owner before changing the app.
 - Tag technical claims: [CODE] (file and function), [INFERRED], [UNVERIFIED], [RAN] (you executed
   it in your sandbox: name the test or script and the Python version), [TESTED]/[OBSERVED] (the owner
   ran or saw it). Never present an inference as fact.
 - .CRS files: follow the notes' course format reference (cref). Do not write what the notes say the
-  game ignores or mishandles. If existing viewer code already writes something of that kind,
+  game ignores or mishandles. If existing app code already writes something of that kind,
   report it to the owner as a finding; do not change it until the owner confirms.
 
 ## Running and checking

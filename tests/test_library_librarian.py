@@ -14,7 +14,7 @@ from itgmania_library import distribution_panel as dp
 from itgmania_library import library_geometry as geometry
 from itgmania_library import library_media
 from itgmania_library import library_stores as stores
-from itgmania_library import library_visualizer as app
+from itgmania_library import library_librarian as app
 from itgmania_library import theme
 
 
@@ -1487,7 +1487,7 @@ class AboutDialogTests(unittest.TestCase):
     def test_about_shows_the_name_and_the_version_from_one_place(self):
         _instance, mock_tk, _window, _bindings = self.open_about_with_mocks()
         shown = [call.kwargs.get("text") for call in mock_tk.Label.call_args_list]
-        self.assertIn("ITGmania Library Visualizer", shown)
+        self.assertIn("ITGmania Librarian", shown)
         self.assertIn(f"Version {app.__version__}", shown)
 
     def test_about_closes_on_escape_and_return_and_stops_the_key_event(self):
@@ -1642,7 +1642,7 @@ class PerformanceAndExportTests(unittest.TestCase):
 
         with patch.object(app, "filedialog", mock_filedialog), \
              patch.object(app, "messagebox", mock_messagebox), \
-             patch("itgmania_library.library_visualizer.open", create=True,
+             patch("itgmania_library.library_librarian.open", create=True,
                    side_effect=PermissionError("Access denied")):
             instance.export_csv()
 

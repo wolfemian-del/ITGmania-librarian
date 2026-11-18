@@ -1,4 +1,4 @@
-# Ruff config for ITGmania-library-viewer.
+# Ruff config for ITGmania-librarian.
 # Enforces only the rules Ian agreed to in the 2026-11-13 Ruff evaluation:
 #   F401  unused import            (the unused MouseEvent import in tests/test_ui_distribution.py — issue #157, removed by PR #160; the rule guards against reintroducing one)
 #   RUF046 unnecessary int() cast  (format_time in library_format.py — issue #156, fixed by PR #159; the redundant int() around round() is gone)

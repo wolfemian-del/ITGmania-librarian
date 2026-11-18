@@ -1,6 +1,6 @@
 """Tests for the Advanced Search component (advanced_search.py).
 
-The dialog tests moved here from tests/test_library_visualizer.py with
+The dialog tests moved here from tests/test_library_librarian.py with
 the component in the proposal 0004 split; they drive it with mocked Tk
 widgets, the same shape they had against the app method.
 """

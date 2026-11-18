@@ -21,7 +21,7 @@ from unittest.mock import Mock, patch
 
 from itgmania_library import library_search as search
 from itgmania_library import library_sources as data
-from itgmania_library import library_visualizer as app
+from itgmania_library import library_librarian as app
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -124,7 +124,7 @@ class FixtureLibraryTests(unittest.TestCase):
     def test_routine_chart_uses_first_players_peak_nps(self):
         # #PEAKNPS is written per player for routine charts (9.5|8.75);
         # the row shows player 1. The song also carries a #SUBTITLE,
-        # which the viewer does not merge into the title.
+        # which the app does not merge into the title.
         row = self.row_for("Neon Skyline", "Hard")
         self.assertEqual(row["Type"], "dance-routine")
         self.assertEqual(row["Peak NPS"], 9.5)

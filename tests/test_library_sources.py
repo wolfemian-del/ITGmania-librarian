@@ -549,7 +549,7 @@ class ParsingTests(unittest.TestCase):
             )
             rows, _ = data.parse_cache_file(cache_file, data.stats_index(stats_file))
 
-        # With no description on the cache side the viewer cannot tell the two
+        # With no description on the cache side the app cannot tell the two
         # Edits apart, so it keeps the pre-isolation merged result: best score,
         # highest play count and latest last-played date across both entries.
         self.assertEqual(rows[0]["Score"], 990000)
