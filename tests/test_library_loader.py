@@ -477,7 +477,7 @@ class LoaderStartTests(unittest.TestCase):
 
 class InitialSnapshotTests(unittest.TestCase):
     """The deferred startup load (startup polish): _load_initial_snapshot is
-    the after() callback __init__ schedules so the window paints first."""
+    the after() callback start() schedules so the window paints first."""
 
     @staticmethod
     def make_instance():

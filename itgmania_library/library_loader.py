@@ -130,7 +130,7 @@ class LibraryLoader:
         self.root.after(50, self._load_initial_snapshot)
 
     def _load_initial_snapshot(self):
-        """Load the saved snapshot (scheduled from __init__ so the window paints first)."""
+        """Load the saved snapshot (scheduled by start() so the window paints first)."""
         if self._load_generation:
             # A Load / refresh pressed inside the deferral window supersedes
             # the startup restore: the scan owns the progress bar, the Load
