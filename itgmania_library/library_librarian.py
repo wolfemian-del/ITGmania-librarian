@@ -62,6 +62,21 @@ class LibraryApp:
 
     def __init__(self, root: tk.Tk):
         self.root = root
+        self._init_window()
+        self._init_stores()
+        self._init_variables()
+        self._declare_late_state()
+        self._init_dialog()
+        self._style()
+        self._build()
+        self._init_loader()
+
+    def _init_window(self):
+        """Set up the main window itself.
+
+        Needs: self.root. Provides: the title, the DPI scale factor
+        (self._dpi_scale), the geometry and minimum size, the background.
+        """
         self.root.title(APP_NAME)
         # The display scale factor (issue #51): 1.0 at 100% DPI, 1.5 at
         # 150%. Every pixel number below is stored in canonical 100%
@@ -71,6 +86,14 @@ class LibraryApp:
         self.root.minsize(scale_pixels(theme.WINDOW_MIN_SIZE[0], self._dpi_scale),
                           scale_pixels(theme.WINDOW_MIN_SIZE[1], self._dpi_scale))
         self.root.configure(bg=theme.BG_WINDOW)
+
+    def _init_stores(self):
+        """Create the two stores that own the files on disk.
+
+        Needs: nothing built yet. Provides: self.settings_path,
+        self._snapshot_store (library_cache.json), self._settings_store
+        (settings.json) and self.saved_settings, the settings read once.
+        """
         # The config dir moved with the rename (proposal 0015): migrate it
         # once before anything reads settings or the snapshot.
         self.settings_path = _migrate_config_dir(self._settings_file_path())
@@ -86,6 +109,13 @@ class LibraryApp:
         # status line exists.
         self._settings_store = SettingsStore(self.settings_path)
         self.saved_settings = self._settings_store.load()
+
+    def _init_variables(self):
+        """Create the Tk variables, seeded from the saved settings.
+
+        Needs: self.saved_settings. Provides: the path, filter, search,
+        column-visibility, group-visibility and distribution variables.
+        """
         default_cache = first_existing_directory(cache_dir_candidates())
         default_stats = Path.cwd() / "Stats.xml"
         self.cache_var = tk.StringVar(value=self.saved_settings.get(
@@ -121,6 +151,13 @@ class LibraryApp:
         self.distribution_metric = tk.StringVar(
             value=saved_metric if saved_metric in ("Meter", "Difficulty", "BPM") else "Meter"
         )
+
+    def _declare_late_state(self):
+        """Declare, as None, every attribute that a later step fills in.
+
+        Needs: nothing. Provides: the names _build, _init_loader and the
+        dialogs assign later, listed in one place with who fills each.
+        """
         # Attributes that are filled in after this point. Declaring them here lists everything the window
         # holds in one place; the comments name where each one is filled in.
         # Widgets and variables created by _build(); None until then:
@@ -128,9 +165,10 @@ class LibraryApp:
         self.search_entry = None
         self._filter = None  # the filter pipeline, built in _build once the search bar exists
         self._table = None  # the song table, built in _build after the filter and the panel
-        # Defensive only: the loader is built below, before the filter's
-        # traces are installed, so this can never be read while None.
-        self._loader = None  # the load/sync engine, built below in __init__
+        # The loader is built last, by _init_loader. Until then the dialog's
+        # delegates and the buttons read this attribute only when clicked,
+        # and Tk delivers no click before mainloop (proposal 0014).
+        self._loader = None  # the load/sync engine, built by _init_loader
         self.pack_filter = None
         self.type_filter = None
         self.diff_filter = None
@@ -140,6 +178,10 @@ class LibraryApp:
         self.progress = None
         self.count_label = None
         self.load_button = None
+        self._file_menu = None  # the File menu, built in _build_menubar
+        # Window geometry remembered for the two dialogs, set in _build:
+        self.course_geometry = None
+        self.advanced_search_geometry = None
         # Dialogs: a window attribute is None while that dialog is closed. The course builder is a
         # separate component (course_builder.py) that owns its window and queue; it is created in
         # _build, once the status variable exists. The Advanced Search component
@@ -157,23 +199,40 @@ class LibraryApp:
         self.song_page = None
         self._preview_player = None
         self._song_media = None
-        # The Data paths dialog (UI redesign, proposal 0009 Step 3): the
-        # component owns its window and note line. It is built first; its
-        # load_callback and paths_match_loaded are late-bound lambdas (the
-        # proposal 0005 precedent) so they resolve to the loader's methods
-        # once the loader exists (Step 4).
+
+    def _init_dialog(self):
+        """Build the Data paths dialog, before the loader that drives it.
+
+        Needs: the path variables, _save_settings, the widget factories and
+        the DPI scale. Provides: self._data_paths_dialog.
+        """
+        # The dialog and the loader need each other: the dialog calls the
+        # loader's load and path check, and the loader drives the dialog. One
+        # has to be built first, so the dialog gets two shell delegates that
+        # read self._loader when called (proposal 0009; 0014 Q6). The late-bound
+        # references in this window, all safe because Tk runs no callback
+        # before mainloop:
+        #   - these two delegates and the buttons/menu items bound to load_data,
+        #     sync_scores and export_csv read self._loader;
+        #   - the Course Builder's two row delegates read self._table, which
+        #     _build creates after the builder;
+        #   - the Distribution Panel's table-frame callable (proposal 0005 Q5)
+        #     reads self.table_frame, created after the panel.
         self._data_paths_dialog = DataPathsDialog(
             self.root, self.cache_var, self.stats_var,
-            load_callback=lambda: self._loader.load_data(),
+            load_callback=self.load_data,
             save_settings=self._save_settings,
             button_factory=self._button, entry_factory=self._entry,
             dpi_scale=self._dpi_scale,
-            paths_match_loaded=lambda: self._loader.paths_match_loaded())
-        self._style()
-        self._build()
-        # The loader (proposal 0009 Step 4): built once the status
-        # widgets exist. The dialog was built first, with late-bound
-        # lambdas, so it can take the loader's methods here.
+            paths_match_loaded=self._paths_match_loaded)
+
+    def _init_loader(self):
+        """Build the loader, report discarded settings, and start the loader.
+
+        Needs: the status, progress and Load button made in _build, the
+        dialog, and the stores. Provides: self._loader, started. The order is
+        part of the contract: report any discarded settings first, then start.
+        """
         saved = self.saved_settings
         self._loader = LibraryLoader(
             snapshot_store=self._snapshot_store,
@@ -472,11 +531,7 @@ class LibraryApp:
         reported; the status line is rewritten by the next load or refresh,
         so the notice is startup-scoped like the snapshot messages.
         """
-        # load() runs before _build creates the status variable, so a bare
-        # instance built for a _load_initial_snapshot test may not have a
-        # store; that is "no failure", not an error.
-        store = getattr(self, "_settings_store", None)
-        reason = store.last_read_error if store is not None else None
+        reason = self._settings_store.last_read_error
         if reason is None:
             return
         message = f"Settings file could not be read ({reason}); using defaults."
@@ -635,6 +690,10 @@ class LibraryApp:
         """Start a library load (thin delegation to the loader)."""
         self._loader.load_data()
 
+    def _paths_match_loaded(self):
+        """Whether the selected paths match the loaded library (the dialog's check)."""
+        return self._loader.paths_match_loaded()
+
     def sync_scores(self):
         """Start a scores-only sync (thin delegation to the loader)."""
         self._loader.sync_scores()
@@ -680,10 +739,10 @@ class LibraryApp:
     def _set_sync_menu_state(self, state):
         """Enable or disable the File -> Sync scores entry (issue #147).
 
-        A bare instance built for a load test may have no menubar; that is
-        "no menu to update", not an error.
+        Before _build_menubar has run there is no menu to update, which is
+        not an error.
         """
-        file_menu = getattr(self, "_file_menu", None)
+        file_menu = self._file_menu
         if file_menu is None:
             return
         file_menu.entryconfigure("Sync scores from Stats.xml", state=state)
