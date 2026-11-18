@@ -1308,6 +1308,88 @@ class LoaderDelegationTests(unittest.TestCase):
         instance.sync_scores()
         instance._loader.sync_scores.assert_called_once_with()
 
+    def test_paths_match_loaded_asks_the_loader(self):
+        """The dialog's path check goes through the shell's named delegate
+        (proposal 0014), not an anonymous lambda or a private loader name."""
+        instance = object.__new__(app.LibraryApp)
+        instance._loader = Mock()
+        instance._loader.paths_match_loaded.return_value = False
+
+        self.assertFalse(instance._paths_match_loaded())
+        instance._loader.paths_match_loaded.assert_called_once_with()
+
+
+class StartupWiringTests(unittest.TestCase):
+    """The named startup steps wire the right shell parts together
+    (proposal 0014). Headless: a bare shell with Mock parts, so a swapped or
+    misnamed argument fails here, not only in a live window."""
+
+    def test_init_dialog_binds_the_two_delegates(self):
+        instance = object.__new__(app.LibraryApp)
+        instance.root = Mock()
+        instance.cache_var, instance.stats_var = Mock(), Mock()
+        instance._dpi_scale = 1.0
+        with patch.object(app, "DataPathsDialog") as dialog_class:
+            instance._init_dialog()
+        kwargs = dialog_class.call_args.kwargs
+        self.assertEqual(kwargs["load_callback"], instance.load_data)
+        self.assertEqual(kwargs["paths_match_loaded"], instance._paths_match_loaded)
+        self.assertEqual(kwargs["save_settings"], instance._save_settings)
+        self.assertIs(instance._data_paths_dialog, dialog_class.return_value)
+
+    @staticmethod
+    def make_shell(saved_settings=None):
+        instance = object.__new__(app.LibraryApp)
+        instance.root = Mock()
+        instance._snapshot_store = Mock()
+        instance._snapshot_store.snapshot_path.is_file.return_value = False
+        instance.cache_var, instance.stats_var = Mock(), Mock()
+        instance.status, instance.progress = Mock(), Mock()
+        instance.load_button = Mock()
+        instance._data_paths_dialog = Mock()
+        instance.saved_settings = saved_settings or {}
+        return instance
+
+    def test_init_loader_hands_each_input_the_intended_shell_part(self):
+        instance = self.make_shell()
+        instance._report_discarded_settings = Mock()
+
+        instance._init_loader()
+
+        loaded = instance._loader
+        self.assertIs(loaded.snapshot_store, instance._snapshot_store)
+        self.assertIs(loaded.cache_var, instance.cache_var)
+        self.assertIs(loaded.stats_var, instance.stats_var)
+        self.assertIs(loaded.status, instance.status)
+        self.assertIs(loaded.progress, instance.progress)
+        self.assertIs(loaded.load_button, instance.load_button)
+        self.assertEqual(loaded.set_sync_menu_state, instance._set_sync_menu_state)
+        self.assertEqual(loaded.on_library_changed, instance._on_library_changed)
+        self.assertEqual(loaded.on_nothing_loaded, instance._on_nothing_loaded)
+        self.assertIs(loaded.report_discarded_settings,
+                      instance._report_discarded_settings)
+        self.assertEqual(loaded.save_settings, instance._save_settings)
+        self.assertIs(loaded.dialog, instance._data_paths_dialog)
+        self.assertIs(loaded.root, instance.root)
+
+    def test_had_saved_paths_follows_the_saved_path_keys(self):
+        for saved, expected in (({}, False), ({"cache_dir": "x"}, True),
+                                ({"stats_file": "y"}, True)):
+            instance = self.make_shell(saved)
+            instance._report_discarded_settings = Mock()
+            instance._init_loader()
+            self.assertIs(instance._loader.had_saved_paths, expected, saved)
+
+    def test_init_loader_reports_discarded_settings_before_starting(self):
+        instance = self.make_shell()
+        events = []
+        instance._report_discarded_settings = Mock(
+            side_effect=lambda: events.append("report"))
+        with patch.object(app.LibraryLoader, "start",
+                          lambda self: events.append("start")):
+            instance._init_loader()
+        self.assertEqual(events, ["report", "start"])
+
 
 class SyncMenuStateTests(unittest.TestCase):
     """The app-side _set_sync_menu_state (it stays in the shell: it touches
