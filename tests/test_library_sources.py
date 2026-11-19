@@ -1380,6 +1380,91 @@ class MergeScoresTests(unittest.TestCase):
         self.assertEqual(changed, 1)
         self.assertEqual(rows[0]["Score"], 700000)
 
+    def test_merge_scores_with_a_non_string_chart_falls_back_to_the_merged_edit_score(self):
+        # Issue #204: a hand-edited snapshot can carry a non-string Chart.
+        # The merge must treat it as absent and fall back to the merged
+        # Edit score, instead of failing the whole sync on one bad row —
+        # the same normalization the Score description already gets.
+        with tempfile.TemporaryDirectory() as directory:
+            stats_file = Path(directory) / "Stats.xml"
+            stats_file.write_text(
+                "<Stats><SongScores><Song Dir='Songs/Pack/Song'>"
+                "<Steps StepsType='dance-single' Difficulty='Edit' Description='Real Desc'>"
+                "<HighScoreList><NumTimesPlayed>5</NumTimesPlayed>"
+                "<LastPlayed>2026-02-01</LastPlayed>"
+                "<HighScore><PercentDP>0.95</PercentDP><Score>950000</Score></HighScore>"
+                "</HighScoreList></Steps>"
+                "<Steps StepsType='dance-single' Difficulty='Edit'>"
+                "<HighScoreList><NumTimesPlayed>1</NumTimesPlayed>"
+                "<LastPlayed>2026-01-01</LastPlayed>"
+                "<HighScore><PercentDP>0.50</PercentDP><Score>500000</Score></HighScore>"
+                "</HighScoreList></Steps>"
+                "</Song></SongScores></Stats>",
+                encoding="utf-8",
+            )
+            cache_file = Path(directory) / "both.cache"
+            cache_file.write_text(
+                "#TITLE:Song;\n"
+                "#SONGFILENAME:Songs/Pack/Song/audio.ogg;\n"
+                "#NOTEDATA:;\n"
+                "#STEPSTYPE:dance-single;\n"
+                "#DIFFICULTY:Edit;\n"
+                "#DESCRIPTION:Real Desc;\n"
+                "#CHARTNAME:Other Name;\n",
+                encoding="utf-8",
+            )
+            scores = data.stats_index(stats_file)
+            rows, _ = data.parse_cache_file(cache_file, scores)
+            # Simulate a hand-edited snapshot row: no carried description
+            # and a non-string Chart.
+            del rows[0]["Score description"]
+            rows[0]["Chart"] = 5
+            self.assertEqual(rows[0]["Score"], 950000)
+            changed = data.merge_scores(rows, scores)
+
+        # The bad Chart is treated as absent, so the merge keys on no
+        # description and falls back to the merged Edit score (the best
+        # across the song's Edit entries) — the row keeps its score.
+        self.assertEqual(changed, 0)
+        self.assertEqual(rows[0]["Score"], 950000)
+
+    def test_merge_scores_with_a_non_string_chart_still_syncs_a_non_edit_row(self):
+        # Issue #204: the Chart normalization is not Edit-only — a
+        # non-string Chart must not fail the sync for an ordinary chart
+        # either; the row keeps its base score.
+        with tempfile.TemporaryDirectory() as directory:
+            stats_file = Path(directory) / "Stats.xml"
+            stats_file.write_text(
+                "<Stats><SongScores><Song Dir='Songs/Pack/Song'>"
+                "<Steps StepsType='dance-single' Difficulty='Hard'>"
+                "<HighScoreList><NumTimesPlayed>7</NumTimesPlayed>"
+                "<LastPlayed>2026-02-01</LastPlayed>"
+                "<HighScore><PercentDP>0.95</PercentDP><Score>900000</Score></HighScore>"
+                "</HighScoreList></Steps>"
+                "</Song></SongScores></Stats>",
+                encoding="utf-8",
+            )
+            cache_file = Path(directory) / "song.cache"
+            cache_file.write_text(
+                "#TITLE:Song;\n"
+                "#SONGFILENAME:Songs/Pack/Song/audio.ogg;\n"
+                "#NOTEDATA:;\n"
+                "#STEPSTYPE:dance-single;\n"
+                "#DIFFICULTY:Hard;\n"
+                "#METER:10;\n",
+                encoding="utf-8",
+            )
+            scores = data.stats_index(stats_file)
+            rows, _ = data.parse_cache_file(cache_file, scores)
+            # Simulate a hand-edited snapshot row: a non-string Chart.
+            rows[0]["Chart"] = 5
+            self.assertEqual(rows[0]["Score"], 900000)
+            changed = data.merge_scores(rows, scores)
+
+        # The sync completes and the row keeps its base score.
+        self.assertEqual(changed, 0)
+        self.assertEqual(rows[0]["Score"], 900000)
+
     def test_any_scores_match_true_when_a_row_finds_a_score(self):
         # The Stats.xml holds a real score for a song in the library.
         with tempfile.TemporaryDirectory() as directory:
