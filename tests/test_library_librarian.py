@@ -1,4 +1,5 @@
 import contextlib
+import csv
 import json
 import os
 import re
@@ -1780,6 +1781,10 @@ class PerformanceAndExportTests(unittest.TestCase):
             content = out_file.read_text(encoding="utf-8-sig")
             self.assertIn("My Song", content)
             self.assertIn("Exported 1 charts", instance.status.set.call_args[0][0])
+            with out_file.open(newline="", encoding="utf-8-sig") as handle:
+                exported = list(csv.DictReader(handle))
+            self.assertEqual(len(exported), 1)
+            self.assertEqual(exported[0]["Subtitle"], "")
 
 
 

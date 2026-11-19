@@ -334,20 +334,27 @@ class SnapshotStoreTests(unittest.TestCase):
         # Issue #202: a list or dict row value means a hand-edited or
         # damaged file; it loads today and shows wrong or blank values
         # downstream (a dict Meter reads as 0), so the snapshot is invalid.
-        with tempfile.TemporaryDirectory() as directory:
-            store, path = self.make_store(directory)
-            cache_dir = Path(directory) / "Cache"
-            stats_file = Path(directory) / "Stats.xml"
-            store.write(cache_dir, stats_file, [self.sample_row()], 1, 0, 0, False)
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            payload["rows"][0]["Meter"] = {"x": 1}
-            payload["rows"][0]["Title"] = ["not", "a", "title"]
-            path.write_text(json.dumps(payload), encoding="utf-8")
+        # Each hostile value gets its own fresh row, so one case cannot
+        # mask the other.
+        hostile = [
+            ("Meter", {"x": 1}),
+            ("Title", ["not", "a", "title"]),
+        ]
+        for key, value in hostile:
+            with self.subTest(key=key, value=value), \
+                    tempfile.TemporaryDirectory() as directory:
+                store, path = self.make_store(directory)
+                cache_dir = Path(directory) / "Cache"
+                stats_file = Path(directory) / "Stats.xml"
+                store.write(cache_dir, stats_file, [self.sample_row()], 1, 0, 0, False)
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                payload["rows"][0][key] = value
+                path.write_text(json.dumps(payload), encoding="utf-8")
 
-            result = store.read(cache_dir, stats_file)
+                result = store.read(cache_dir, stats_file)
 
-        self.assertFalse(result.loaded)
-        self.assertEqual(result.reason, "invalid")
+                self.assertFalse(result.loaded)
+                self.assertEqual(result.reason, "invalid")
 
     def test_read_row_with_scalar_mistype_still_loads(self):
         # The value check rejects containers only: a scalar mistype (a
