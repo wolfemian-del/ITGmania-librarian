@@ -26,6 +26,25 @@ def _nonnegative_int(value):
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else 0
 
 
+def _is_valid_row(row, headers):
+    """Whether a snapshot row has every column and only JSON scalar values.
+
+    The writer only ever writes strings, numbers, booleans, and nulls, so a
+    list or dict value means a hand-edited or damaged file (issue #202);
+    such a row loads today and shows wrong or blank values downstream
+    (a dict Meter reads as 0). A scalar mistype (a numeric Title) renders
+    as itself and is tolerated.
+    """
+    return (
+        isinstance(row, dict)
+        and all(key in row for key in (*headers, "Course path"))
+        and all(
+            isinstance(value, (str, int, float, bool)) or value is None
+            for value in row.values()
+        )
+    )
+
+
 def write_file_atomically(text, path):
     """Write text to a file atomically.
 
@@ -125,8 +144,7 @@ class SnapshotStore:
             return SnapshotResult(loaded=False, reason="unreadable", detail=str(exc))
 
         valid_rows = isinstance(payload, dict) and isinstance(payload.get("rows"), list) \
-            and all(isinstance(row, dict) and all(key in row for key in (*self.headers, "Course path"))
-                    for row in payload["rows"])
+            and all(_is_valid_row(row, self.headers) for row in payload["rows"])
         if (not valid_rows or payload.get("schema_version") != self.schema_version
                 or not isinstance(payload.get("cache_dir"), str)
                 or not isinstance(payload.get("stats_file"), str)):

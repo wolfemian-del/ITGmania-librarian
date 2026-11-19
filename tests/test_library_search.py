@@ -179,6 +179,23 @@ class SearchQueryTests(unittest.TestCase):
         self.assertTrue(data.match_chart_query(row, "believin'"))
         self.assertTrue(data.match_chart_query(row, 'title:"Don\'t Stop Believin\'"'))
 
+    def test_match_chart_query_tolerates_missing_subtitle_key(self):
+        # Issue #202: a row without a Subtitle key (an old or hand-built
+        # row) must not crash the search; it simply has no subtitle text.
+        row = {"Title": "Butterfly Garden", "Artist": "Smiley", "Pack": "ITG"}
+        self.assertTrue(data.match_chart_query(row, "butterfly"))
+        self.assertTrue(data.match_chart_query(row, "title:butterfly"))
+        self.assertFalse(data.match_chart_query(row, "remix"))
+
+    def test_match_chart_query_finds_escaped_semicolon_in_subtitle(self):
+        # Issue #202: a Subtitle holding a literal ; (escaped as \; in the
+        # tag) is searchable by that subtitle text. There is no subtitle:
+        # directive — the subtitle is searched as free text.
+        row = {"Title": "Sunset", "Subtitle": "Sunset ; Mix", "Artist": "",
+               "Pack": "", "Chart": "", "Type": "", "Difficulty": ""}
+        self.assertTrue(data.match_chart_query(row, '"Sunset ; Mix"'))
+        self.assertTrue(data.match_chart_query(row, "sunset"))
+
     def test_match_chart_query_meter_exact_and_range(self):
         row = {"Meter": 11, "Title": "Summer", "Artist": "Smiley", "Pack": "ITG"}
         self.assertTrue(data.match_chart_query(row, "meter:11"))
