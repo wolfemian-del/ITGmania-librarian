@@ -14,6 +14,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock, patch
 
 from itgmania_library import library_sources as sources
@@ -1956,8 +1957,11 @@ class LoadDeliversRowsTests(unittest.TestCase):
                           for group in app.COLUMN_GROUPS}
         seed = {"column_order": list(app.HEADERS), "column_widths": {},
                 "sort_keys": []}
-        with patch.object(table_module.ttk, "Treeview", return_value=tree), \
-                patch.object(table_module.ttk, "Scrollbar", return_value=Mock()):
+        # The table calls only ttk.Treeview and ttk.Scrollbar, so a stand-in with just
+        # those needs no Tkinter; see make_table in tests/test_library_table.py.
+        fake_ttk = SimpleNamespace(Treeview=Mock(return_value=tree),
+                                   Scrollbar=Mock(return_value=Mock()))
+        with patch.object(table_module, "ttk", fake_ttk):
             table = LibraryTable(
                 parent, instance._filter, 1.0, column_visibility,
                 group_visibility, seed, Mock(), Mock(),
