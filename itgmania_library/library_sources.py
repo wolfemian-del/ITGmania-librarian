@@ -173,10 +173,11 @@ def _score_for_row(scores: dict, row: dict, edit_index: dict) -> dict:
     description the parse carried in the row ("Score description"),
     falling back to the row's Chart field for a row that lacks it.
     A hand-edited snapshot can carry a non-string "Score description"
-    (the snapshot read only checks key presence). Treat it as absent
-    so the lookup falls back to the Chart field instead of failing
-    the whole sync on one bad row. `edit_index` is the once-per-run
-    index edit_fallback_index built from `scores` (issue #203).
+    or Chart (the snapshot read rejects container values but tolerates
+    scalar mistypes). Treat a non-string value as absent, so the
+    lookup falls back instead of failing the whole sync on one bad
+    row (issue #204). `edit_index` is the once-per-run index
+    edit_fallback_index built from `scores` (issue #203).
     """
     base_key = (
         row["Course path"].casefold(),
@@ -186,7 +187,10 @@ def _score_for_row(scores: dict, row: dict, edit_index: dict) -> dict:
     score_description = row.get("Score description")
     if not isinstance(score_description, str):
         score_description = ""
-    description = score_description or row["Chart"]
+    chart = row["Chart"]
+    if not isinstance(chart, str):
+        chart = ""
+    description = score_description or chart
     return _score_for_chart(scores, base_key, row["Difficulty"], description, edit_index)
 
 

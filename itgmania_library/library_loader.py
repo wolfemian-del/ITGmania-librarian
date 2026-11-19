@@ -502,8 +502,10 @@ class LibraryLoader:
         try:
             changed = merge_scores(rows, scores, edit_index)
         except Exception as exc:
-            # A row with a non-text Course path / Type / Difficulty / Chart
-            # would otherwise end the thread silently; deliver the failure.
+            # A row with a non-text Course path / Type / Difficulty
+            # would otherwise end the thread silently; deliver the
+            # failure. (Chart and Score description are normalized in
+            # _score_for_row, so they cannot raise here.)
             self._load_results.put(("scores_sync_failed",
                                     f"Could not sync scores from Stats.xml.\n\n{exc}",
                                     generation))
