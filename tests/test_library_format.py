@@ -65,6 +65,23 @@ class TagMapTests(unittest.TestCase):
         self.assertEqual(tags["TAG_WITH_ESCAPED_COLON"], "Key:Value")
         self.assertEqual(tags["NORMAL"], "NormalValue")
 
+    def test_tag_map_parses_escaped_delimiter_in_subtitle(self):
+        # Issue #202: the only \; tests were for Title; a Subtitle with an
+        # escaped semicolon decodes the same way.
+        tags = data.tag_map("#SUBTITLE:Sunset \\; Mix;\n")
+        self.assertEqual(tags["SUBTITLE"], "Sunset ; Mix")
+
+    def test_tag_map_drops_tag_with_stray_backslash(self):
+        # Issue #202: a value ending in a stray backslash has no unescaped
+        # ; to end at, so the tag is dropped (documented, not fixed: the
+        # row survives on the file-stem fallback in library_sources).
+        self.assertEqual(data.tag_map("#TITLE:Foo\\;"), {})
+
+    def test_tag_map_keeps_interior_newlines_in_values(self):
+        # Issue #202: values may span lines (see the tag_map comment), so
+        # an interior newline is kept, not stripped.
+        self.assertEqual(data.tag_map("#TITLE:Foo\nBar;"), {"TITLE": "Foo\nBar"})
+
     def test_tag_map_decodes_a_value_of_only_backslashes(self):
         # An escaped backslash pair decodes to one backslash; the value
         # contains a backslash, so the unescape pass runs on it.

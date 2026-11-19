@@ -1759,6 +1759,28 @@ class PerformanceAndExportTests(unittest.TestCase):
             self.assertIn("(Sunset Mix)", content)
             self.assertIn("Exported 1 charts", instance.status.set.call_args[0][0])
 
+    def test_export_csv_writes_row_missing_subtitle_key(self):
+        # Issue #202: a row without a Subtitle key exports with an empty
+        # subtitle cell instead of failing.
+        with tempfile.TemporaryDirectory() as directory:
+            out_file = Path(directory) / "export.csv"
+            instance = object.__new__(app.LibraryApp)
+            instance._loader = Mock(rows=[{"Title": "My Song", "Pack": "My Pack"}])
+            instance.status = Mock()
+
+            mock_filedialog = Mock(asksaveasfilename=Mock(return_value=str(out_file)))
+            mock_messagebox = Mock()
+
+            with patch.object(app, "filedialog", mock_filedialog), \
+                 patch.object(app, "messagebox", mock_messagebox):
+                instance.export_csv()
+
+            mock_messagebox.showerror.assert_not_called()
+            self.assertTrue(out_file.is_file())
+            content = out_file.read_text(encoding="utf-8-sig")
+            self.assertIn("My Song", content)
+            self.assertIn("Exported 1 charts", instance.status.set.call_args[0][0])
+
 
 
 

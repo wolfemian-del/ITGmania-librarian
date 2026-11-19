@@ -149,6 +149,9 @@ def tag_map(text: str) -> dict[str, str]:
     # ITGmania MSD tags start with #KEY: and end at an unescaped ;.
     # Values may span lines (e.g. multi-segment #BPMS joined with ',\r\n' or ',\n').
     # A backslash escapes the next character (e.g. \; is a literal semicolon, \\ is a literal backslash).
+    # A value ending in a stray backslash has no unescaped ; to end at, so the
+    # tag is dropped (issue #202); callers fall back — a missing TITLE falls
+    # back to the file stem.
     # Line breaks are consumed as whole CRLF/LF/CR units as long as they are not
     # followed by '#' (which begins a new tag line). Matching each unit in only
     # one way keeps the alternatives disjoint and parsing linear-time.
