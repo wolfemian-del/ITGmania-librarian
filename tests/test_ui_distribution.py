@@ -14,6 +14,11 @@ from itgmania_library import theme
 class DistributionUITests(unittest.TestCase):
     def test_mock_ui_distribution_lifecycle(self):
         """Test distribution lifecycle using mock Tk widgets to verify logic end-to-end."""
+        # The chart canvas below is a Mock, so matplotlib is never used; settle the
+        # flag so _load_matplotlib() does not attempt a real import.
+        patcher = patch.object(dp, "MATPLOTLIB_AVAILABLE", True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         root = Mock()
         instance = object.__new__(app.LibraryApp)
         instance.root = root
@@ -695,6 +700,9 @@ class LazyMatplotlibTests(unittest.TestCase):
     """The panel's matplotlib import is deferred to first use (startup polish):
     the module starts unresolved, and the resolver settles the flag once."""
 
+    @unittest.skipIf(dp.tk is None, "Tkinter is not installed")
+    @unittest.skipUnless(importlib.util.find_spec("matplotlib"),
+                         "matplotlib is not installed")
     def test_the_resolver_imports_once_and_reports_availability(self):
         original_flag, original_figure = dp.MATPLOTLIB_AVAILABLE, dp.Figure
         try:
