@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — Revision 1, for re-review |
+| **Status** | Draft — Revision 2: owner resolutions recorded 2026-11-19, awaiting a confirmation review |
 | **Author** | Claude (Sonnet 5.5) |
 | **Date** | 2026-11-19 |
 | **Base** | main `aed5218` (unchanged since the first draft) |
@@ -12,7 +12,11 @@
 
 In plain language: none of the app's secondary windows chooses where to appear. Five of them leave the position to Windows, and on the owner's machine Windows puts every one of them at the top-left corner of the screen, whatever the main window is doing. This proposal makes every one of them open centered over the main window, the first time and any later time the owner has not deliberately moved it. Once the owner moves or resizes Build a course, Advanced Search or the song page, the app remembers that place, and the song page — the one window that forgets on quit today — remembers across restarts like the other two. The rule that decides whether a remembered position is still on screen exists today as two word-for-word copies (issue #103), and the song page would have been a third, so the rule moves into one tested place first.
 
-Three choices are the owner's to make by feel, and each is written as a plain question in §3: whether a dialog you never touched keeps following the main window (D3), what the song page remembers when you move it (D4), and whether windows must stay clear of the taskbar (D6). The review also found that centering done naively would make the taskbar problem worse than it is today, which is why D6 exists.
+Three choices were the owner's to make by feel (all three decided as recommended on 2026-11-19, see Revision 2), and each is written as a plain question in §3: whether a dialog you never touched keeps following the main window (D3), what the song page remembers when you move it (D4), and whether windows must stay clear of the taskbar (D6). The review also found that centering done naively would make the taskbar problem worse than it is today, which is why D6 exists.
+
+## Revision 2 (2026-11-19, the owner's resolutions)
+
+The owner accepted every recommendation in this proposal: **D3** yes (the dialogs save only a deliberate move or resize); **D4** option B (a move remembers the position only, a resize remembers the size too, one key with the forms `WxH+X+Y` and `+X+Y`); **D5** as written (saved size kept and centered when a position is lost; key `song_page_geometry`); **D6** option W1 (windows are fitted to the work area); **Q1–Q8** as recommended (five windows; the helper; the rename with no alias; four PRs). Reading rule for the rest of the text: wherever it says "if D4 is B" or "if W1", the condition is met, and the A and W2 alternatives are recorded only as the rejected options. The text is otherwise unchanged from Revision 1; no design content was altered. Status stays Draft until another model's confirmation review of Revisions 1 and 2 and the owner's Accepted mark, per AGENTS.md.
 
 ## Revision 1 (2026-11-19, from the six-lane review of PR #241)
 
@@ -231,7 +235,7 @@ Full suite: `python -m unittest discover -s tests` must pass at the end of every
 15. Two monitors, if available: a dialog moved to the second monitor, then the monitor unplugged and the app relaunched, opens centered at its saved size; a main window on the second monitor, also maximized, centers its dialogs on that monitor and not across both.
 16. Frame constants (16 and 39 at 100%) at 125% and 150%: the clamped window's edges sit at the work area's, with no gap larger than a few pixels.
 
-## 7. Open Questions for Reviewers
+## 7. Open Questions — Resolved (the owner, 2026-11-19: every recommendation accepted)
 
 Tally from the first review round in brackets.
 

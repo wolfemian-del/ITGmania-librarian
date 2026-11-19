@@ -26,4 +26,4 @@ line in each file's header is the record; this index summarizes it.
 | [0013](0013-song-page-sizing.md) | Size the song page by its contents, and scroll the chart list | Accepted 2026-11-17 | [#217](https://github.com/wolfemian-del/ITGmania-library-viewer/pull/217) |
 | [0014](0014-startup-wiring.md) | Make the startup wiring plain | Accepted 2026-11-18 | PRs #234, #235 (issue #208) |
 | [0015](0015-rename-to-librarian.md) | Rename the app to ITGmania Librarian | Accepted 2026-11-18 | – (issue #209) |
-| [0016](0016-window-placement.md) | One placement rule for the dialogs: centered over the main window, remembered once moved | Draft — Revision 1, for re-review | – (issue #103) |
+| [0016](0016-window-placement.md) | One placement rule for the dialogs: centered over the main window, remembered once moved | Draft — Revision 2, awaiting confirmation review | – (issue #103) |
