@@ -134,6 +134,44 @@ class SearchQueryTests(unittest.TestCase):
         res = data.parse_search_query('artist:"\'Guns N\' Roses\'"')
         self.assertEqual(res["directives"], [("artist", "'Guns N' Roses'")])
 
+    def test_quoted_directive_values_group_but_match_by_substring(self):
+        # Issue #201: quotes group a multi-word value into one directive;
+        # they do not mean exact match — matching stays case-folded
+        # substring, so a quoted prefix still matches a longer title.
+        quoted = data.parse_search_query('title:"Butterfly Garden"')
+        self.assertEqual(quoted["directives"], [("title", "Butterfly Garden")])
+        self.assertEqual(quoted["free_terms"], [])
+
+        bare = data.parse_search_query("title:Butterfly Garden")
+        self.assertEqual(bare["directives"], [("title", "Butterfly")])
+        self.assertEqual(bare["free_terms"], ["garden"])
+
+        row = {"Title": "Butterfly Garden", "Subtitle": "", "Artist": "",
+               "Pack": "", "Chart": "", "Type": "", "Difficulty": ""}
+        self.assertTrue(data.match_chart_query(row, 'title:"Butterfly"'))
+        self.assertTrue(data.match_chart_query(row, 'title:"Butterfly Garden"'))
+        self.assertFalse(data.match_chart_query(row, 'title:"Garden Butterfly"'))
+
+        # The grouping is observable, not just parsing: with the words
+        # split across Title and Pack, the bare form matches (the free
+        # term may sit anywhere) while the quoted form does not.
+        split_row = {"Title": "Butterfly", "Subtitle": "", "Artist": "",
+                     "Pack": "Garden", "Chart": "", "Type": "", "Difficulty": ""}
+        self.assertTrue(data.match_chart_query(split_row, "title:Butterfly Garden"))
+        self.assertFalse(data.match_chart_query(split_row, 'title:"Butterfly Garden"'))
+
+    def test_unclosed_quote_directive_still_matches_while_typing(self):
+        # Issue #201: the search runs on every keystroke, so a quoted
+        # value is unclosed mid-typing. The fallback split plus the
+        # quote strip keeps the half-typed value matching instead of
+        # matching nothing.
+        parsed = data.parse_search_query('title:"Butterfly Garden')
+        self.assertEqual(parsed["directives"], [("title", "Butterfly")])
+        self.assertEqual(parsed["free_terms"], ["garden"])
+        row = {"Title": "Butterfly Garden", "Subtitle": "", "Artist": "",
+               "Pack": "", "Chart": "", "Type": "", "Difficulty": ""}
+        self.assertTrue(data.match_chart_query(row, 'title:"Butterfly Garden'))
+
     def test_match_chart_query_with_apostrophes(self):
         row = {"Title": "Don't Stop Believin'", "Artist": "Journey", "Pack": "Rock"}
         self.assertTrue(data.match_chart_query(row, "don't stop believin'"))

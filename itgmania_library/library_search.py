@@ -261,6 +261,10 @@ def parse_search_query(query: str) -> dict:
             field = prefix.strip().casefold()
             if field in SEARCH_FIELD_ALIASES:
                 canonical = SEARCH_FIELD_ALIASES[field]
+                # shlex already stripped the quotes for well-formed input,
+                # so this only bites on the unclosed-quote fallback above
+                # (issue #201): a half-typed quoted value keeps matching
+                # while the user is still typing it. Do not remove it.
                 val = val.strip().strip('"')
                 directives.append((canonical, val))
                 continue
