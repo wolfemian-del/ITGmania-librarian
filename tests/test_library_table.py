@@ -12,6 +12,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from itgmania_library.library_constants import TAP_FIELDS
@@ -107,8 +108,12 @@ def make_table(column_order=None, column_widths=None, sort_keys=None,
         "column_widths": dict(column_widths) if column_widths is not None else {},
         "sort_keys": [list(item) for item in sort_keys] if sort_keys is not None else [],
     }
-    with patch.object(table_module.ttk, "Treeview", return_value=tree), \
-            patch.object(table_module.ttk, "Scrollbar", return_value=Mock()):
+    # The table calls only ttk.Treeview and ttk.Scrollbar, so a stand-in with just
+    # those needs no Tkinter. Anything else a future table change asks of ttk
+    # raises AttributeError here, as real ttk would without a display.
+    fake_ttk = SimpleNamespace(Treeview=Mock(return_value=tree),
+                               Scrollbar=Mock(return_value=Mock()))
+    with patch.object(table_module, "ttk", fake_ttk):
         table = LibraryTable(
             parent, filt, dpi_scale, column_visibility, group_visibility,
             seed, count_label if count_label is not None else Mock(),
