@@ -89,7 +89,9 @@ class ImportSurfaceTests(unittest.TestCase):
             "declare_dpi_awareness",
             "dpi_scale_factor",
             "format_geometry",
-            "parse_course_geometry",
+            "opening_geometry",
+            "parse_window_geometry",
+            "parse_window_size",
             "scale_geometry",
             "scale_pixels",
         ), module=library_geometry)

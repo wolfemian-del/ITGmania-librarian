@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from itgmania_library.library_constants import APP_NAME, OLD_APP_NAME
-from itgmania_library.library_geometry import parse_course_geometry
+from itgmania_library.library_geometry import parse_window_geometry
 from itgmania_library.library_sources import _normalized_source_path
 
 
@@ -228,7 +228,7 @@ def _valid_window_geometry(value, min_size):
     (issue #25) and the Advanced Search window (issue #98), which pass
     their own minimum sizes.
     """
-    parsed = parse_course_geometry(value)
+    parsed = parse_window_geometry(value)
     if parsed is None:
         return None
     width, height, x, y = parsed
