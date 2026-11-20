@@ -109,7 +109,10 @@ def scale_geometry(value: str, factor: float) -> str:
     match = re.fullmatch(r"([1-9]\d*)x([1-9]\d*)", value)
     if match is None:
         return value
-    return f"{scale_pixels(int(match.group(1)), factor)}x{scale_pixels(int(match.group(2)), factor)}"
+    return (
+        f"{scale_pixels(int(match.group(1)), factor)}"
+        f"x{scale_pixels(int(match.group(2)), factor)}"
+    )
 
 
 def opening_geometry(saved, size, desktop, scale) -> str:
