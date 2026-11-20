@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — Revision 3: folds in the five-lane confirmation review; awaiting the owner's Accepted mark |
+| **Status** | Accepted — Revision 3: folds in the five-lane confirmation review; (11/19/2026) |
 | **Author** | Claude (Sonnet 5.5) |
 | **Date** | 2026-11-19 |
 | **Base** | main `aed5218` (unchanged since the first draft) |
