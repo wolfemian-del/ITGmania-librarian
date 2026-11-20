@@ -91,7 +91,8 @@ class AdvancedSearchGeometryTests(unittest.TestCase):
     Mirrors the course window's tests (issue #25) against the same rules.
     """
 
-    def open_component(self, saved_geometry=None, report_geometry=None, vroot=(0, 0, 1920, 1080), dpi_scale=1.0):
+    def open_component(self, saved_geometry=None, report_geometry=None,
+                       vroot=(0, 0, 1920, 1080), dpi_scale=1.0):
         parent = main_window_fake(vroot=vroot)
         search_var = Mock()
         search_var.get.return_value = ""
@@ -128,11 +129,13 @@ class AdvancedSearchGeometryTests(unittest.TestCase):
         mock_window.geometry.assert_called_once_with("1050x960+45+60")
 
     def test_open_scales_the_theme_default_without_a_saved_geometry(self):
-        _component, mock_window, _bindings, _protocols, _buttons = self.open_component(dpi_scale=1.5)
+        (_component, mock_window, _bindings, _protocols,
+         _buttons) = self.open_component(dpi_scale=1.5)
         mock_window.geometry.assert_called_once_with("840x930+430+10")
 
     def test_open_scales_the_minimum_size(self):
-        _component, mock_window, _bindings, _protocols, _buttons = self.open_component(dpi_scale=1.5)
+        (_component, mock_window, _bindings, _protocols,
+         _buttons) = self.open_component(dpi_scale=1.5)
         mock_window.minsize.assert_called_once_with(720, 780)
 
     def test_open_uses_the_scaled_threshold_for_a_narrow_sliver(self):

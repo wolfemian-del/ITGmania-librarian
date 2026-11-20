@@ -736,7 +736,8 @@ class CourseUndoRemoveTests(unittest.TestCase):
 class CourseGeometryTests(unittest.TestCase):
     """Window geometry memory (issue #25, proposal 0003): restore on open, report on close."""
 
-    def open_builder(self, saved_geometry=None, report_geometry=None, vroot=(0, 0, 1920, 1080), dpi_scale=1.0):
+    def open_builder(self, saved_geometry=None, report_geometry=None,
+                     vroot=(0, 0, 1920, 1080), dpi_scale=1.0):
         parent = main_window_fake(vroot=vroot)
         builder = CourseBuilder(
             parent=parent,
@@ -753,7 +754,8 @@ class CourseGeometryTests(unittest.TestCase):
         mock_window.bind.side_effect = lambda seq, func: bindings.__setitem__(seq, func)
         mock_tk = Mock()
         mock_tk.Toplevel.return_value = mock_window
-        with patch.object(course_builder, "tk", mock_tk), patch.object(course_builder, "ttk", Mock()):
+        with patch.object(course_builder, "tk", mock_tk), \
+                patch.object(course_builder, "ttk", Mock()):
             builder.open_dialog()
         return builder, mock_window, bindings
 
@@ -776,7 +778,8 @@ class CourseGeometryTests(unittest.TestCase):
     def test_open_uses_the_scaled_threshold_for_a_narrow_sliver(self):
         # 120 physical pixels would show at the unscaled 100 px threshold
         # but not at the scaled 150 px one, so the position is dropped.
-        _builder, mock_window, _bindings = self.open_builder(saved_geometry="900x620+-820+40", dpi_scale=1.5)
+        _builder, mock_window, _bindings = self.open_builder(
+            saved_geometry="900x620+-820+40", dpi_scale=1.5)
         mock_window.geometry.assert_called_once_with("1350x930+175+10")
 
     def test_save_window_geometry_reports_canonical_units(self):

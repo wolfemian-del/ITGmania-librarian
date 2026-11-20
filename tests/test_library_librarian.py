@@ -2707,9 +2707,10 @@ class LiveSongPageDirectTests(unittest.TestCase):
             root.update()
             self.assertGreater(page._charts_canvas.yview()[0], before)
 
-    def test_a_size_only_geometry_is_placed_on_screen(self):
-        # The first open uses a size-only geometry (no +x+y); the window
-        # manager places it, and the only placement path is that one.
+    def test_a_first_open_is_centered_and_placed_on_screen(self):
+        # The first open has no saved place, so the placement centers the
+        # window over the main window (Proposal 0016) and clamps it onto
+        # the screen; the window manager does not choose the position.
         root = self.make_root()
         page = self._page(root)
         page.show(self._song(), self._media())
@@ -2740,7 +2741,14 @@ class LiveSongPageDirectTests(unittest.TestCase):
         page.close()
         page.show(self._song(charts=self._many_charts(30)), self._media())
         root.update()
-        self.assertEqual(page.window.winfo_height(), resized)
+        # A saved height taller than the usable screen is capped at the work
+        # area less the window frame (Proposal 0016, rule 1), so on a small
+        # screen, such as the Windows runner's 768 px one, the reopen is
+        # shorter than the resized window the window manager allowed.
+        work = (geometry.work_area_of(root.winfo_id())
+                or (0, 0, root.winfo_screenwidth(), root.winfo_screenheight()))
+        cap = (work[3] - work[1]) - geometry.scale_pixels(geometry.WINDOW_FRAME[1], 1.0)
+        self.assertEqual(page.window.winfo_height(), min(resized, cap))
         self.assertTrue(page._charts_scrollbar.winfo_ismapped())
         self.assertEqual(len(page._charts_frame.winfo_children()), 30)
 
