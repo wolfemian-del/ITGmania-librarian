@@ -16,8 +16,9 @@ except ImportError:
     filedialog = None
 
 from itgmania_library import theme
-from itgmania_library.library_geometry import scale_geometry, scale_pixels
+from itgmania_library.library_geometry import scale_pixels
 from itgmania_library.library_sources import invalid_paths_note
+from itgmania_library.window_placement import WindowPlacement
 
 
 class DataPathsDialog:
@@ -84,7 +85,8 @@ class DataPathsDialog:
         window = tk.Toplevel(self.parent)
         self._data_paths_window = window
         window.title("Where is your library?")
-        window.geometry(scale_geometry("560x260", self.dpi_scale))
+        window.geometry(
+            WindowPlacement(self.parent, self.dpi_scale).geometry_for_open("560x260"))
         window.resizable(False, False)
         window.configure(bg=theme.BG_WINDOW)
         window.transient(self.parent)

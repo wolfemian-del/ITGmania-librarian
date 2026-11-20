@@ -17,6 +17,7 @@ from itgmania_library import library_media
 from itgmania_library import library_stores as stores
 from itgmania_library import library_librarian as app
 from itgmania_library import theme
+from tests.window_fakes import main_window_fake, no_work_area
 
 
 def _mock_table(column_width=100):
@@ -1554,13 +1555,19 @@ class DialogKeyBindingTests(unittest.TestCase):
 
 
 class AboutDialogTests(unittest.TestCase):
+    def setUp(self):
+        patcher = no_work_area()
+        self.addCleanup(patcher.stop)
+
     @staticmethod
     def open_about_with_mocks(about_window=None):
         instance = object.__new__(app.LibraryApp)
-        instance.root = Mock()
+        instance.root = main_window_fake()
         instance.about_window = about_window
         instance._button = Mock(return_value=Mock())
         mock_window = Mock()
+        mock_window.winfo_reqwidth.return_value = 400
+        mock_window.winfo_reqheight.return_value = 200
         bindings = {}
         mock_window.bind.side_effect = lambda seq, func: bindings.__setitem__(seq, func)
         mock_tk = Mock()
@@ -1585,6 +1592,24 @@ class AboutDialogTests(unittest.TestCase):
     def test_about_takes_keyboard_focus_so_escape_reaches_it(self):
         _instance, _tk, window, _bindings = self.open_about_with_mocks()
         window.focus_force.assert_called_once()
+
+    def test_about_is_built_withdrawn_then_centered_and_shown_before_it_takes_focus(self):
+        # Proposal 0016: sized by its content, so withdrawn while built,
+        # then the requested size is made real, the window is centered over
+        # the main window and shown, and only then asked for the keyboard.
+        _instance, _tk, window, _bindings = self.open_about_with_mocks()
+        names = [call[0] for call in window.method_calls]
+        self.assertEqual(names[0], "withdraw")
+        self.assertLess(names.index("update_idletasks"), names.index("geometry"))
+        self.assertLess(names.index("geometry"), names.index("deiconify"))
+        self.assertLess(names.index("deiconify"), names.index("focus_force"))
+
+    def test_about_opens_centered_over_the_main_window(self):
+        with patch.object(app, "WindowPlacement") as placement_class:
+            placement_class.return_value.geometry_for_content.return_value = "400x200+450+375"
+            instance, _tk, window, _bindings = self.open_about_with_mocks()
+        placement_class.assert_called_once_with(instance.root, instance._dpi_scale)
+        window.geometry.assert_called_once_with("400x200+450+375")
 
     def test_about_opened_twice_raises_the_open_window_instead_of_a_second_one(self):
         existing = Mock()

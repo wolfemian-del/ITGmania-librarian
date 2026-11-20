@@ -9,6 +9,19 @@ from itgmania_library import library_course
 from itgmania_library import row_tints
 from itgmania_library import theme
 from itgmania_library.course_builder import CourseBuilder
+from tests.window_fakes import main_window_fake, no_work_area
+
+
+_work_area_patch = None
+
+
+def setUpModule():
+    global _work_area_patch
+    _work_area_patch = no_work_area()
+
+
+def tearDownModule():
+    _work_area_patch.stop()
 
 
 def make_builder(entries=(), library_rows=()):
@@ -219,7 +232,7 @@ class CourseBuilderValidationTests(unittest.TestCase):
 class CourseBuilderDialogTests(unittest.TestCase):
     def test_open_dialog_binds_escape(self):
         builder = CourseBuilder(
-            parent=Mock(),
+            parent=main_window_fake(),
             status=Mock(),
             button_factory=Mock(return_value=Mock()),
             selected_rows=lambda: [],
@@ -270,7 +283,7 @@ class CourseBuilderDialogTests(unittest.TestCase):
              "Meter": "12", "Time": 150, "Course path": "PackA/Song B"},
         ]
         builder = CourseBuilder(
-            parent=Mock(),
+            parent=main_window_fake(),
             status=Mock(),
             button_factory=Mock(return_value=Mock()),
             selected_rows=lambda: rows,
@@ -291,7 +304,7 @@ class CourseBuilderDialogTests(unittest.TestCase):
 
     def test_open_dialog_configures_tints_and_delete_keys(self):
         builder = CourseBuilder(
-            parent=Mock(),
+            parent=main_window_fake(),
             status=Mock(),
             button_factory=Mock(return_value=Mock()),
             selected_rows=lambda: [],
@@ -328,7 +341,7 @@ class CourseBuilderDialogTests(unittest.TestCase):
 
     def test_open_dialog_wires_the_x_button_to_the_same_close_prompt(self):
         builder = CourseBuilder(
-            parent=Mock(),
+            parent=main_window_fake(),
             status=Mock(),
             button_factory=Mock(return_value=Mock()),
             selected_rows=lambda: [],
@@ -366,7 +379,7 @@ class CourseBuilderDialogTests(unittest.TestCase):
 
     def test_opening_the_course_builder_when_already_open_raises_it_and_gives_it_focus(self):
         builder = CourseBuilder(
-            parent=Mock(),
+            parent=main_window_fake(),
             status=Mock(),
             button_factory=Mock(return_value=Mock()),
             selected_rows=lambda: [],
@@ -391,7 +404,7 @@ class CourseBuilderDialogTests(unittest.TestCase):
 
     def test_reopening_the_dialog_forgets_which_rows_were_selected_last_time(self):
         builder = CourseBuilder(
-            parent=Mock(),
+            parent=main_window_fake(),
             status=Mock(),
             button_factory=Mock(return_value=Mock()),
             selected_rows=lambda: [],
@@ -690,7 +703,7 @@ class CourseUndoRemoveTests(unittest.TestCase):
     def test_open_dialog_binds_ctrl_z_and_offers_an_undo_button(self):
         button_factory = Mock(return_value=Mock())
         builder = CourseBuilder(
-            parent=Mock(),
+            parent=main_window_fake(),
             status=Mock(),
             button_factory=button_factory,
             selected_rows=lambda: [],
@@ -724,11 +737,7 @@ class CourseGeometryTests(unittest.TestCase):
     """Window geometry memory (issue #25, proposal 0003): restore on open, report on close."""
 
     def open_builder(self, saved_geometry=None, report_geometry=None, vroot=(0, 0, 1920, 1080), dpi_scale=1.0):
-        parent = Mock()
-        parent.winfo_vrootx.return_value = vroot[0]
-        parent.winfo_vrooty.return_value = vroot[1]
-        parent.winfo_vrootwidth.return_value = vroot[2]
-        parent.winfo_vrootheight.return_value = vroot[3]
+        parent = main_window_fake(vroot=vroot)
         builder = CourseBuilder(
             parent=parent,
             status=Mock(),
@@ -758,7 +767,7 @@ class CourseGeometryTests(unittest.TestCase):
 
     def test_open_scales_the_theme_default_without_a_saved_geometry(self):
         _builder, mock_window, _bindings = self.open_builder(dpi_scale=1.5)
-        mock_window.geometry.assert_called_once_with("1500x930")
+        mock_window.geometry.assert_called_once_with("1500x930+100+10")
 
     def test_open_scales_the_minimum_size(self):
         _builder, mock_window, _bindings = self.open_builder(dpi_scale=1.5)
@@ -768,7 +777,7 @@ class CourseGeometryTests(unittest.TestCase):
         # 120 physical pixels would show at the unscaled 100 px threshold
         # but not at the scaled 150 px one, so the position is dropped.
         _builder, mock_window, _bindings = self.open_builder(saved_geometry="900x620+-820+40", dpi_scale=1.5)
-        mock_window.geometry.assert_called_once_with("1350x930")
+        mock_window.geometry.assert_called_once_with("1350x930+175+10")
 
     def test_save_window_geometry_reports_canonical_units(self):
         builder = make_builder()
@@ -782,19 +791,19 @@ class CourseGeometryTests(unittest.TestCase):
 
     def test_open_uses_the_theme_default_without_a_saved_geometry(self):
         _builder, mock_window, _bindings = self.open_builder()
-        mock_window.geometry.assert_called_once_with(theme.COURSE_BUILDER_GEOMETRY)
+        mock_window.geometry.assert_called_once_with("1000x620+350+165")
 
-    def test_open_falls_back_to_size_only_when_the_saved_position_is_off_screen(self):
+    def test_open_falls_back_to_the_saved_size_centered_when_the_saved_position_is_off_screen(self):
         # The remembered monitor is gone: the position falls outside the virtual desktop.
         _builder, mock_window, _bindings = self.open_builder(saved_geometry="900x620+5000+40")
-        mock_window.geometry.assert_called_once_with("900x620")
+        mock_window.geometry.assert_called_once_with("900x620+400+165")
 
-    def test_open_falls_back_to_size_only_when_only_a_sliver_would_show(self):
+    def test_open_falls_back_to_the_saved_size_centered_when_only_a_sliver_would_show(self):
         # Top-left technically on the desktop, but almost the whole window beyond the edge.
         _builder, mock_window, _bindings = self.open_builder(saved_geometry="900x620+1919+40")
-        mock_window.geometry.assert_called_once_with("900x620")
+        mock_window.geometry.assert_called_once_with("900x620+400+165")
         _builder, mock_window, _bindings = self.open_builder(saved_geometry="900x620+40+1070")
-        mock_window.geometry.assert_called_once_with("900x620")
+        mock_window.geometry.assert_called_once_with("900x620+400+165")
 
     def test_open_restores_a_window_hanging_slightly_off_an_edge(self):
         # Mostly visible, just overhanging: it comes back exactly as it was left.
@@ -805,7 +814,7 @@ class CourseGeometryTests(unittest.TestCase):
         # Plenty of the body would show, but with the title bar above every
         # monitor there is nothing to grab, so the position is not restored.
         _builder, mock_window, _bindings = self.open_builder(saved_geometry="900x620+100+-500")
-        mock_window.geometry.assert_called_once_with("900x620")
+        mock_window.geometry.assert_called_once_with("900x620+400+165")
         # A top edge within a few pixels of the desktop's top still counts as grabbable.
         _builder, mock_window, _bindings = self.open_builder(saved_geometry="900x620+100+-16")
         mock_window.geometry.assert_called_once_with("900x620+100+-16")

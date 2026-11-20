@@ -43,6 +43,7 @@ from itgmania_library.library_geometry import (
     scale_geometry,
     scale_pixels,
 )
+from itgmania_library.window_placement import WindowPlacement
 from itgmania_library.library_sources import cache_dir_candidates, first_existing_directory
 from itgmania_library.library_stores import (
     LIBRARY_CACHE_SCHEMA_VERSION,
@@ -774,6 +775,9 @@ class LibraryApp:
 
         window = tk.Toplevel(self.root)
         self.about_window = window
+        # Withdrawn while it is built, so it appears once, centered, instead
+        # of at the corner first and then jumping (Proposal 0016).
+        window.withdraw()
         window.title(f"About {APP_NAME}")
         window.resizable(False, False)
         window.configure(bg=theme.BG_WINDOW)
@@ -796,8 +800,15 @@ class LibraryApp:
 
         window.bind("<Escape>", _close)
         window.bind("<Return>", _close)
+        # The window is sized by its content: make the requested size real,
+        # then center it over the main window.
+        window.update_idletasks()
+        window.geometry(WindowPlacement(self.root, self._dpi_scale).geometry_for_content(
+            window.winfo_reqwidth(), window.winfo_reqheight()))
+        window.deiconify()
         # A new window does not always take keyboard focus (seen on Windows); without it Escape and Return
-        # would go to the main window instead of closing this one.
+        # would go to the main window instead of closing this one. After the map: the window manager
+        # ignores the request on a withdrawn window.
         window.focus_force()
 
 def main():
