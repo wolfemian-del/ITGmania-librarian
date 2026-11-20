@@ -2288,6 +2288,41 @@ class _StubPreviewPlayer:
         self.stop_calls += 1
 
 
+class SongPageSizingTests(unittest.TestCase):
+    """Content sizing and centering without a display (Proposal 0016)."""
+
+    @staticmethod
+    def size_with(req_height, dpi_scale=1.0):
+        page = object.__new__(app.SongPage)
+        page.dpi_scale = dpi_scale
+        page.window = Mock()
+        page.window.winfo_reqheight.return_value = req_height
+        placement = Mock()
+        placement.geometry_for_content.return_value = "placed"
+        page._size_to_content(placement)
+        return page, placement
+
+    def test_the_window_gets_the_geometry_the_placement_computes_for_its_content(self):
+        page, placement = self.size_with(580)
+        page.window.update_idletasks.assert_called_once()
+        placement.geometry_for_content.assert_called_once_with(760, 580)
+        page.window.geometry.assert_called_once_with("placed")
+
+    def test_a_short_request_is_raised_to_the_minimum_height(self):
+        _page, placement = self.size_with(100)
+        placement.geometry_for_content.assert_called_once_with(760, 420)
+
+    def test_width_and_minimum_scale_with_the_display(self):
+        _page, placement = self.size_with(100, dpi_scale=1.5)
+        placement.geometry_for_content.assert_called_once_with(1140, 630)
+
+    def test_a_tall_request_is_passed_on_for_the_placement_to_cap(self):
+        # The cap is the work area less the frame, applied by the placement
+        # (and tested there), not here.
+        _page, placement = self.size_with(1400)
+        placement.geometry_for_content.assert_called_once_with(760, 1400)
+
+
 class LiveSongPageDirectTests(unittest.TestCase):
     """The song page on its own (Proposal 0011, stage 3): the media it
     shows, the placeholders, and the button states."""
