@@ -9,7 +9,8 @@ from itgmania_library import library_course
 from itgmania_library import row_tints
 from itgmania_library import theme
 from itgmania_library.course_builder import CourseBuilder
-from tests.window_fakes import main_window_fake, no_work_area
+from itgmania_library.window_placement import WindowPlacement
+from tests.window_fakes import main_window_fake, no_work_area, settle_opening
 
 
 _work_area_patch = None
@@ -30,8 +31,7 @@ def make_builder(entries=(), library_rows=()):
     builder.window = Mock()
     builder.entries = list(entries)
     builder._last_removal = None
-    builder._saved_geometry = None
-    builder._report_geometry = None
+    builder._placement = WindowPlacement(Mock(), 1.0)
     builder.title_var = None
     builder._tint = row_tints.SelectedRowTint(None)  # as __init__ leaves it (issue #92)
     builder._status = Mock()
@@ -783,14 +783,14 @@ class CourseGeometryTests(unittest.TestCase):
         mock_window.geometry.assert_called_once_with("1350x930+175+10")
 
     def test_save_window_geometry_reports_canonical_units(self):
-        builder = make_builder()
-        builder._dpi_scale = 1.5
-        builder.window.state.return_value = "normal"
-        builder.window.geometry.return_value = "1350x930+45+60"
-        builder._report_geometry = Mock()
+        report = Mock()
+        builder, mock_window, _bindings = self.open_builder(report_geometry=report,
+                                                            dpi_scale=1.5)
+        settle_opening(mock_window, "1500x930+100+10")
+        mock_window.geometry.return_value = "1350x930+45+60"
         builder.save_window_geometry()
-        builder._report_geometry.assert_called_once_with("900x620+30+40")
-        self.assertEqual(builder._saved_geometry, "900x620+30+40")
+        report.assert_called_once_with("900x620+30+40")
+        self.assertEqual(builder._placement.saved_geometry, "900x620+30+40")
 
     def test_open_uses_the_theme_default_without_a_saved_geometry(self):
         _builder, mock_window, _bindings = self.open_builder()
@@ -831,7 +831,7 @@ class CourseGeometryTests(unittest.TestCase):
     def test_close_reports_the_geometry_before_destroying_the_window(self):
         report = Mock()
         builder, mock_window, bindings = self.open_builder(report_geometry=report)
-        mock_window.state.return_value = "normal"
+        settle_opening(mock_window, "1000x620+350+165")
         mock_window.geometry.return_value = "1000x620+10+10"
         manager = Mock()
         manager.attach_mock(report, "report")
@@ -842,7 +842,49 @@ class CourseGeometryTests(unittest.TestCase):
         self.assertIn("report", names)
         self.assertLess(names.index("report"), names.index("window.destroy"))
         report.assert_called_once_with("1000x620+10+10")
-        self.assertEqual(builder._saved_geometry, "1000x620+10+10")
+        self.assertEqual(builder._placement.saved_geometry, "1000x620+10+10")
+
+    def test_a_close_where_it_opened_remembers_nothing_and_still_destroys(self):
+        # Proposal 0016 D3: a dialog never moved re-centers next time, so
+        # the centered place it opened at must not be saved as the owner's.
+        report = Mock()
+        builder, mock_window, bindings = self.open_builder(report_geometry=report)
+        settle_opening(mock_window, "1000x620+350+165")
+        with patch.object(course_builder, "messagebox", Mock()):
+            bindings["<Escape>"]()
+        report.assert_not_called()
+        self.assertIsNone(builder._placement.saved_geometry)
+        mock_window.destroy.assert_called_once()
+
+    def test_a_close_before_the_opening_was_captured_remembers_nothing(self):
+        report = Mock()
+        _builder, mock_window, bindings = self.open_builder(report_geometry=report)
+        mock_window.state.return_value = "normal"
+        mock_window.geometry.return_value = "1000x620+10+10"  # the idle capture never ran
+        with patch.object(course_builder, "messagebox", Mock()):
+            bindings["<Escape>"]()
+        report.assert_not_called()
+        mock_window.destroy.assert_called_once()
+
+    def test_a_dialog_dragged_back_to_where_it_opened_remembers_nothing(self):
+        report = Mock()
+        _builder, mock_window, bindings = self.open_builder(report_geometry=report)
+        settle_opening(mock_window, "1000x620+350+165")
+        mock_window.geometry.return_value = "1000x620+60+60"  # dragged away ...
+        mock_window.geometry.return_value = "1000x620+350+165"  # ... and back, before closing
+        with patch.object(course_builder, "messagebox", Mock()):
+            bindings["<Escape>"]()
+        report.assert_not_called()
+
+    def test_a_moved_dialog_is_restored_by_the_next_open_in_the_session(self):
+        # The placement owns the saved value, so the in-session memory does
+        # not depend on anyone listening to report_geometry.
+        builder, mock_window, bindings = self.open_builder()
+        settle_opening(mock_window, "1000x620+350+165")
+        mock_window.geometry.return_value = "900x620+30+40"
+        with patch.object(course_builder, "messagebox", Mock()):
+            bindings["<Escape>"]()
+        self.assertEqual(builder._placement.geometry_for_open("1000x620"), "900x620+30+40")
 
     def test_cancelled_discard_saves_no_geometry(self):
         report = Mock()
@@ -856,23 +898,28 @@ class CourseGeometryTests(unittest.TestCase):
         mock_window.destroy.assert_not_called()
 
     def test_save_window_geometry_reports_and_updates_the_saved_value(self):
+        report = Mock()
         builder = make_builder()
-        builder.window.state.return_value = "normal"
+        builder._placement = WindowPlacement(Mock(), 1.0, None, report)
+        builder._placement.record_opening(builder.window)
+        settle_opening(builder.window, "1000x620+350+165")
         builder.window.geometry.return_value = "900x620+5+5"
-        builder._report_geometry = Mock()
         builder.save_window_geometry()
-        builder._report_geometry.assert_called_once_with("900x620+5+5")
-        self.assertEqual(builder._saved_geometry, "900x620+5+5")
+        report.assert_called_once_with("900x620+5+5")
+        self.assertEqual(builder._placement.saved_geometry, "900x620+5+5")
 
     def test_save_window_geometry_noops_without_a_normal_open_window(self):
         report = Mock()
         builder = make_builder()
-        builder._report_geometry = report
+        builder._placement = WindowPlacement(Mock(), 1.0, None, report)
+        builder._placement.record_opening(builder.window)
+        settle_opening(builder.window, "1000x620+350+165")
+        builder.window.geometry.return_value = "900x620+5+5"
         # Minimized: the reported geometry would be the parked position, not the user's place.
         builder.window.state.return_value = "iconic"
         builder.save_window_geometry()
         report.assert_not_called()
-        self.assertIsNone(builder._saved_geometry)
+        self.assertIsNone(builder._placement.saved_geometry)
         # No dialog at all.
         builder.window = None
         builder.save_window_geometry()

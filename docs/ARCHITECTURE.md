@@ -78,7 +78,7 @@ Two naming facts to know before you trust the prefixes:
 | `itgmania_library/library_format.py` | formatting and sort-key helpers | `tests/test_library_format.py` |
 | `itgmania_library/library_dialog_query.py` | the Advanced Search dialog's query conversion | `tests/test_library_dialog_query.py` |
 | `itgmania_library/library_geometry.py` | window geometry and DPI helpers: the opening-geometry rule, the work-area lookup | `tests/test_library_geometry.py` |
-| `itgmania_library/window_placement.py` | `WindowPlacement`: where a secondary window opens, centered over the main window (Proposal 0016) | `tests/test_window_placement.py` |
+| `itgmania_library/window_placement.py` | `WindowPlacement`: where a secondary window opens, centered over the main window, and whether a move or resize is worth remembering (Proposal 0016) | `tests/test_window_placement.py` |
 | `itgmania_library/theme.py` | every color, font, and fixed size the window uses | `tests/test_theme.py` |
 | `itgmania_library/row_tints.py` | the difficulty row tints, shared by the table and the course builder | `tests/test_row_tints.py` |
 | `itgmania_library/library_constants.py` | the shared column and grade tables | `tests/test_import_surface.py` |

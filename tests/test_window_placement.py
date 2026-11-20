@@ -6,10 +6,10 @@ Tk-free stand-in for the main window.
 """
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from itgmania_library.window_placement import WindowPlacement
-from tests.window_fakes import main_window_fake
+from tests.window_fakes import main_window_fake, settle_opening
 
 WORK = (0, 0, 1920, 1032)
 
@@ -85,3 +85,117 @@ class WindowPlacementTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WindowPlacementSaveTests(unittest.TestCase):
+    """The save half (Proposal 0016 D3, PR 3): only a deliberate change is remembered."""
+
+    OPENED = "1000x620+350+165"
+
+    def opened(self, saved=None, scale=1.0, report=None):
+        """A placement and a Mock window that has finished opening at OPENED."""
+        placement = WindowPlacement(main_window_fake(), scale, saved, report)
+        window = Mock()
+        placement.record_opening(window)
+        settle_opening(window, self.OPENED)
+        return placement, window
+
+    def test_a_window_closed_where_it_opened_remembers_nothing(self):
+        report = Mock()
+        placement, window = self.opened(report=report)
+        placement.save(window)
+        report.assert_not_called()
+        self.assertIsNone(placement.saved_geometry)
+
+    def test_a_move_is_remembered_and_reported(self):
+        report = Mock()
+        placement, window = self.opened(report=report)
+        window.geometry.return_value = "1000x620+10+10"
+        placement.save(window)
+        report.assert_called_once_with("1000x620+10+10")
+        self.assertEqual(placement.saved_geometry, "1000x620+10+10")
+
+    def test_a_resize_is_remembered(self):
+        report = Mock()
+        placement, window = self.opened(report=report)
+        window.geometry.return_value = "1200x700+350+165"
+        placement.save(window)
+        report.assert_called_once_with("1200x700+350+165")
+
+    def test_the_saved_value_updates_without_anyone_listening(self):
+        placement, window = self.opened()  # no report_geometry
+        window.geometry.return_value = "900x620+5+5"
+        placement.save(window)
+        self.assertEqual(placement.saved_geometry, "900x620+5+5")
+
+    def test_a_window_dragged_away_and_back_remembers_nothing(self):
+        report = Mock()
+        placement, window = self.opened(report=report)
+        window.geometry.return_value = "1000x620+10+10"  # dragged away ...
+        window.geometry.return_value = self.OPENED  # ... and back, before closing
+        placement.save(window)
+        report.assert_not_called()
+
+    def test_the_stored_value_is_in_canonical_units(self):
+        report = Mock()
+        placement, window = self.opened(scale=1.5, report=report)
+        window.geometry.return_value = "1350x930+45+60"
+        placement.save(window)
+        report.assert_called_once_with("900x620+30+40")
+
+    def test_a_minimized_or_maximized_window_saves_nothing(self):
+        for state in ("iconic", "zoomed", "withdrawn"):
+            with self.subTest(state=state):
+                report = Mock()
+                placement, window = self.opened(report=report)
+                window.geometry.return_value = "160x28+-32000+-32000"
+                window.state.return_value = state
+                placement.save(window)
+                report.assert_not_called()
+
+    def test_a_window_that_is_gone_or_missing_saves_nothing(self):
+        report = Mock()
+        placement, window = self.opened(report=report)
+        window.geometry.return_value = "1000x620+10+10"
+        window.winfo_exists.return_value = 0
+        placement.save(window)
+        placement.save(None)
+        report.assert_not_called()
+
+    def test_a_close_before_the_opening_was_captured_saves_nothing(self):
+        report = Mock()
+        placement = WindowPlacement(main_window_fake(), 1.0, None, report)
+        window = Mock()
+        placement.record_opening(window)  # the idle capture has not run
+        window.state.return_value = "normal"
+        window.geometry.return_value = "1000x620+10+10"
+        placement.save(window)
+        report.assert_not_called()
+
+    def test_a_new_open_clears_the_previous_baseline_at_once(self):
+        # Closing the second window before its capture runs must not compare
+        # against the first open's baseline.
+        report = Mock()
+        placement, window = self.opened(report=report)
+        second = Mock()
+        placement.record_opening(second)
+        second.state.return_value = "normal"
+        second.geometry.return_value = "1000x620+10+10"
+        placement.save(second)
+        report.assert_not_called()
+
+    def test_the_capture_runs_once_a_later_run_cannot_overwrite_it(self):
+        report = Mock()
+        placement, window = self.opened(report=report)
+        window.geometry.return_value = "1000x620+10+10"  # moved, then a stray second capture
+        window.after_idle.call_args.args[0]()
+        placement.save(window)
+        report.assert_called_once_with("1000x620+10+10")
+
+    def test_the_capture_does_nothing_for_a_window_destroyed_in_the_meantime(self):
+        placement = WindowPlacement(main_window_fake(), 1.0)
+        window = Mock()
+        placement.record_opening(window)
+        window.winfo_exists.return_value = 0
+        window.after_idle.call_args.args[0]()
+        window.geometry.assert_not_called()

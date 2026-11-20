@@ -154,8 +154,8 @@ class CourseGeometryAppTests(unittest.TestCase):
         try:
             application = app.LibraryApp(root)
             self.assertEqual(application.course_geometry, "900x620+30+40")
-            self.assertEqual(application.course_builder._saved_geometry, "900x620+30+40")
-            self.assertEqual(application.course_builder._report_geometry,
+            self.assertEqual(application.course_builder._placement.saved_geometry, "900x620+30+40")
+            self.assertEqual(application.course_builder._placement._report_geometry,
                              application._course_geometry_changed)
         finally:
             root.destroy()
@@ -1547,8 +1547,8 @@ class DialogKeyBindingTests(unittest.TestCase):
                     self.assertIsNotNone(application.advanced_search)
                     self.assertIs(application.advanced_search._search_var, application.search_var)
                     mock_valid.assert_called_once_with(None)
-                    self.assertEqual(application.advanced_search._saved_geometry, "700x640+5+5")
-                    self.assertEqual(application.advanced_search._report_geometry,
+                    self.assertEqual(application.advanced_search._placement.saved_geometry, "700x640+5+5")
+                    self.assertEqual(application.advanced_search._placement._report_geometry,
                                      application._advanced_search_geometry_changed)
                 finally:
                     root.destroy()
@@ -2611,7 +2611,7 @@ class LiveSongPageDirectTests(unittest.TestCase):
         # A plain close records nothing (Proposal 0013, the refinement):
         # the window was never moved or resized, so there is no geometry
         # to remember for the next open.
-        self.assertIsNone(page._saved_geometry)
+        self.assertIsNone(page._placement.saved_geometry)
         page.show(self._song(), self._media())
         root.update()
         self.assertIsNotNone(page.window)
@@ -2792,7 +2792,7 @@ class LiveSongPageDirectTests(unittest.TestCase):
         root.update()
         short = page.window.winfo_height()
         page.close()
-        self.assertIsNone(page._saved_geometry)
+        self.assertIsNone(page._placement.saved_geometry)
         page.show(self._song(charts=self._many_charts(16)), self._media())
         root.update()
         self.assertGreater(page.window.winfo_height(), short)
@@ -2809,7 +2809,7 @@ class LiveSongPageDirectTests(unittest.TestCase):
         page.window.geometry(f"760x{short}+100+100")
         root.update()
         page.close()
-        self.assertIsNotNone(page._saved_geometry)
+        self.assertIsNotNone(page._placement.saved_geometry)
         page.show(self._song(charts=self._many_charts(16)), self._media())
         root.update()
         self.assertEqual(page.window.winfo_x(), 100)
