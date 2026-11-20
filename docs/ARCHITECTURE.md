@@ -7,7 +7,7 @@ guide stays in `README.md`.
 
 Run `launch.py` from the repository root (`python launch.py`). It is the
 only file you run: it imports `main` from
-`itgmania_library.library_librarian` and calls it. The other 20 modules
+`itgmania_library.library_librarian` and calls it. The other 21 modules
 live in the `itgmania_library` package and are imported by it (directly or
 through each other), by their absolute package names
 (`from itgmania_library.library_sources import ...`). As an aside,
@@ -28,6 +28,7 @@ measured from the import graph (no cycles) at main `be300eda`, not drawn from in
    library_dialog_query.py · library_distribution.py
    library_media.py · song_page.py
 1  library_format.py · library_search.py · row_tints.py
+   window_placement.py
 0  library_constants.py · library_geometry.py · library_course.py · theme.py
 ```
 
@@ -45,10 +46,12 @@ Two naming facts to know before you trust the prefixes:
   `library_loader`, `library_filter` and `library_table` are UI components
   that carry the same prefix: the loader and the table import Tkinter, while
   the filter does not import it (it works on the widgets it is handed, so a
-  Tk-free stand-in can drive it in tests).
+  Tk-free stand-in can drive it in tests). `window_placement` follows the
+  filter's pattern one layer down: it is not a window, imports no Tkinter,
+  and works on the parent window it is handed.
 - The UI components without the prefix are `advanced_search`,
   `course_builder`, `data_paths_dialog`, `distribution_panel` and
-  `song_page`, plus `row_tints` and `theme`.
+  `song_page`, plus `row_tints`, `theme` and `window_placement`.
 
 ## Modules
 
@@ -74,7 +77,8 @@ Two naming facts to know before you trust the prefixes:
 | `itgmania_library/library_course.py` | .crs text-format helpers: formatting, parsing, trailing-modifier detection, field validation | `tests/test_library_course.py` |
 | `itgmania_library/library_format.py` | formatting and sort-key helpers | `tests/test_library_format.py` |
 | `itgmania_library/library_dialog_query.py` | the Advanced Search dialog's query conversion | `tests/test_library_dialog_query.py` |
-| `itgmania_library/library_geometry.py` | window geometry and DPI helpers | `tests/test_library_geometry.py` |
+| `itgmania_library/library_geometry.py` | window geometry and DPI helpers: the opening-geometry rule, the work-area lookup | `tests/test_library_geometry.py` |
+| `itgmania_library/window_placement.py` | `WindowPlacement`: where a secondary window opens, centered over the main window (Proposal 0016) | `tests/test_window_placement.py` |
 | `itgmania_library/theme.py` | every color, font, and fixed size the window uses | `tests/test_theme.py` |
 | `itgmania_library/row_tints.py` | the difficulty row tints, shared by the table and the course builder | `tests/test_row_tints.py` |
 | `itgmania_library/library_constants.py` | the shared column and grade tables | `tests/test_import_surface.py` |

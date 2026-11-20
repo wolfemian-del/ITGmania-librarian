@@ -25,7 +25,8 @@ except ImportError:
 
 from itgmania_library import theme
 from itgmania_library.library_format import format_duration
-from itgmania_library.library_geometry import scale_geometry, scale_pixels
+from itgmania_library.library_geometry import parse_window_size, scale_geometry, scale_pixels
+from itgmania_library.window_placement import WindowPlacement
 
 # The page's fixed content widths, in canonical 100% units: the banner
 # spans the window, the three small images share a row.
@@ -133,9 +134,20 @@ class SongPage:
     def _build_window(self):
         window = tk.Toplevel(self.parent)
         self.window = window
+        # Withdrawn while it is built, so it appears once, at its final size
+        # and place, instead of at the corner first and then jumping
+        # (Proposal 0016). Shown again at the end of this method.
+        window.withdraw()
         window.title(self._song.get("title") or "Song")
-        opening_geometry = self._geometry_for_open()
-        window.geometry(opening_geometry)
+        # A throwaway placement seeded from this session's saved geometry;
+        # the page keeps its own save logic until the helper takes it over.
+        placement = WindowPlacement(self.parent, self.dpi_scale, self._saved_geometry)
+        if placement.has_saved_size:
+            window.geometry(placement.geometry_for_open(theme.SONG_PAGE_GEOMETRY))
+        else:
+            # The size is known only once the content is built; lay it out
+            # at the default size until then.
+            window.geometry(scale_geometry(theme.SONG_PAGE_GEOMETRY, self.dpi_scale))
         window.minsize(scale_pixels(theme.SONG_PAGE_MIN_SIZE[0], self.dpi_scale),
                        scale_pixels(theme.SONG_PAGE_MIN_SIZE[1], self.dpi_scale))
         window.configure(bg=theme.BG_WINDOW)
@@ -221,18 +233,18 @@ class SongPage:
 
         window.protocol("WM_DELETE_WINDOW", self.close)
         window.bind("<Escape>", lambda _event: self.close() or "break")
-        # A new window does not always take keyboard focus (seen on
-        # Windows); without it Escape would go to the main window instead
-        # of closing this one.
-        window.focus_force()
         self._fill()
         # An untouched open sizes the window to the song it shows; once
         # the owner moves or resizes it, the saved geometry is used
-        # instead (Proposal 0013, the refinement). The width stays the
-        # opening geometry's — reading it back from the window would
-        # give the requested width once the idle tasks have run.
-        if self._saved_geometry is None:
-            self._size_to_content(opening_geometry.split("x", 1)[0])
+        # instead (Proposal 0013, the refinement).
+        if not placement.has_saved_size:
+            self._size_to_content(placement)
+        window.deiconify()
+        # A new window does not always take keyboard focus (seen on
+        # Windows); without it Escape would go to the main window instead
+        # of closing this one. After the window is shown: the window
+        # manager ignores a focus request on a withdrawn window.
+        window.focus_force()
         # Remember the geometry the window opened with once the event
         # loop has placed and sized it: close() compares against it to
         # tell a plain close from a move or resize. A <Map> binding
@@ -350,26 +362,27 @@ class SongPage:
                                              "units")
         return "break"
 
-    def _size_to_content(self, width):
-        """Size a newly built window to the song it shows.
+    def _size_to_content(self, placement):
+        """Size and place a newly built window for the song it shows.
 
         The height is the window's requested height after the fill — the
-        chrome plus one line per chart — capped at the screen height, so
-        a song with more charts than fit opens at screen height with a
-        scrollbar instead of pushing the buttons off, and never below
-        the window's minimum height (a shorter request would only be
-        clamped by the window manager, leaving the recorded geometry
-        disagreeing with the window). The width is the opening
-        geometry's, and the window manager places the window (the
-        geometry is size-only, with no position).
+        chrome plus one line per chart — never below the window's minimum
+        height (a shorter request would only be clamped by the window
+        manager, leaving the recorded geometry disagreeing with the
+        window). The placement caps it at the monitor's work area less the
+        window frame, so a song with more charts than fit opens as tall as
+        the usable screen with a scrollbar instead of pushing the buttons
+        off or under the taskbar, and centers the window over the main
+        window (Proposal 0016). The width is the theme default's, scaled.
         """
         window = self.window
         window.update_idletasks()
         min_height = scale_pixels(theme.SONG_PAGE_MIN_SIZE[1],
                                   self.dpi_scale)
-        height = max(min(window.winfo_reqheight(),
-                         window.winfo_screenheight()), min_height)
-        window.geometry(f"{width}x{height}")
+        height = max(window.winfo_reqheight(), min_height)
+        width = scale_pixels(parse_window_size(theme.SONG_PAGE_GEOMETRY)[0],
+                             self.dpi_scale)
+        window.geometry(placement.geometry_for_content(width, height))
 
     @staticmethod
     def _music_text(media):
@@ -573,7 +586,3 @@ class SongPage:
                                  1.0 / self.dpi_scale)
         if current != self._opening_geometry:
             self._saved_geometry = current
-
-    def _geometry_for_open(self):
-        return scale_geometry(self._saved_geometry or theme.SONG_PAGE_GEOMETRY,
-                              self.dpi_scale)

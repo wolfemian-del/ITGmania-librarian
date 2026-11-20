@@ -28,6 +28,7 @@ from itgmania_library import library_distribution
 from itgmania_library import library_search
 from itgmania_library import library_sources
 from itgmania_library import library_stores
+from itgmania_library import window_placement
 
 
 class ImportSurfaceTests(unittest.TestCase):
@@ -91,10 +92,17 @@ class ImportSurfaceTests(unittest.TestCase):
             "format_geometry",
             "opening_geometry",
             "parse_window_geometry",
+            "parse_window_position",
             "parse_window_size",
             "scale_geometry",
             "scale_pixels",
+            "work_area_of",
+            "WINDOW_FRAME",
         ), module=library_geometry)
+
+    def test_window_placement_names_resolve(self):
+        # Proposal 0016: the helper the five secondary windows hold.
+        self._assert_resolve(("WindowPlacement",), module=window_placement)
 
     def test_course_names_resolve(self):
         # Re-pointed to library_course.py at Step 4.

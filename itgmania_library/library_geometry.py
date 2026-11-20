@@ -115,42 +115,159 @@ def scale_geometry(value: str, factor: float) -> str:
     )
 
 
-def opening_geometry(saved, size, desktop, scale) -> str:
-    """The geometry string a remembering window opens with (issues #25, #98, #103).
+# The window frame's extra width and height in canonical 100% units: Tk
+# geometry() sizes are client sizes, while positions are the outer frame's
+# top-left, so a window's outer box is this much larger than its size.
+# Measured on Windows 11 at 100% (8 px each side, 31 px title bar; Proposal 0016).
+WINDOW_FRAME = (16, 39)
 
-    saved:   the geometry remembered last time, in canonical 100% units, or None.
-    size:    the default (width, height) in physical pixels.
-    desktop: (left, top, right, bottom) of the virtual desktop, which spans
-             every monitor, in physical pixels.
-    scale:   the display scale factor.
 
-    The remembered geometry is restored when a meaningful part of the window
-    would be visible on the desktop: at least a grabbable strip of it, so a
-    window left hanging a little off an edge comes back as it was, while one
-    left on a since-unplugged monitor, or pushed almost entirely off an edge,
-    does not open lost. The top edge gets its own rule on top of that: a
+def parse_window_position(value) -> tuple[int, int] | None:
+    """Parse a position-only geometry string such as "+100+50" into (x, y), or None.
+
+    Both negative-offset spellings parse ("-8" and "+-8"), as in
+    parse_window_geometry. A string with a size is not a position: it
+    belongs to parse_window_geometry or parse_window_size.
+    """
+    if not isinstance(value, str):
+        return None
+    match = re.fullmatch(r"([+-]-?\d+)([+-]-?\d+)", value)
+    if match is None:
+        return None
+    try:
+        # "+-8" is the negative-offset spelling; int() alone rejects it.
+        return (int(match.group(1).replace("+-", "-")),
+                int(match.group(2).replace("+-", "-")))
+    except ValueError:
+        return None
+
+
+def _visible_enough(desktop, x, y, width, height, scale) -> bool:
+    """Whether a window box shows enough of itself on the virtual desktop.
+
+    At least a grabbable strip of it (100 by 32 pixels at 100%), so a window
+    left hanging a little off an edge comes back as it was, while one left
+    on a since-unplugged monitor, or pushed almost entirely off an edge,
+    does not open lost. The top edge has its own rule on top of that: a
     window can show plenty of its body while its title bar sits above every
     monitor (a stacked monitor unplugged since, say), leaving nothing to
-    grab, so the top edge must sit within a few pixels of the desktop's top.
-    The saved string is in canonical 100% units, so the geometry and the
-    thresholds are scaled to this display before the comparison.
-
-    In the fallback cases only the size is returned ("WxH", from the saved
-    value when it parsed, else from size) and the window manager places the
-    window, so a lost position can never be re-saved on close.
+    grab, so the top edge must sit within 16 pixels of the desktop's top.
     """
-    parsed = parse_window_geometry(saved)
-    if parsed is None:
-        return f"{size[0]}x{size[1]}"
-    width, height, x, y = (scale_pixels(value, scale) for value in parsed)
     left, top, right, bottom = desktop
     visible_width = min(x + width, right) - max(x, left)
     visible_height = min(y + height, bottom) - max(y, top)
-    if (visible_width >= scale_pixels(100, scale)
+    return (visible_width >= scale_pixels(100, scale)
             and visible_height >= scale_pixels(32, scale)
-            and y >= top - scale_pixels(16, scale)):
-        return format_geometry(width, height, x, y)
-    return f"{width}x{height}"
+            and y >= top - scale_pixels(16, scale))
+
+
+def opening_geometry(saved, size, desktop, scale, *, anchor=None, work=None,
+                     frame=WINDOW_FRAME) -> str:
+    """The geometry string a window opens with (issues #25, #98, #103; Proposal 0016).
+
+    saved:   the geometry remembered last time, in canonical 100% units: a
+             full "WxH+X+Y", a position-only "+X+Y", or None.
+    size:    the (width, height) the window opens with when nothing usable is
+             remembered, in physical pixels. For a position-only value it is
+             the size the window needs for its content.
+    desktop: (left, top, right, bottom) of the virtual desktop, which spans
+             every monitor, in physical pixels.
+    scale:   the display scale factor.
+    anchor:  (x, y, width, height) of the window to center over, or None.
+    work:    (left, top, right, bottom) of the work area, the part of the
+             monitor Windows leaves free of the taskbar; default: desktop.
+    frame:   the window frame's extra (width, height) in canonical units.
+
+    Four rules, in this order. Integer division here is Python's floor
+    division, which rounds negative values toward negative infinity.
+
+    1. The size is capped to the work area less the frame, never below 1.
+    2. A full saved geometry whose capped box is visible enough (see
+       _visible_enough) is returned as it is: a place the owner dragged to
+       is not second-guessed, so it is never clamped.
+    3. A position-only saved geometry whose capped box, at the saved
+       position, is visible enough is kept, shifted if need be so the whole
+       outer box (size plus frame) lies inside the work area.
+    4. Otherwise the window is centered over the anchor, or in the work
+       area without one, and clamped so its outer box lies inside the work
+       area. A full saved geometry that is no longer visible keeps its
+       (capped) size and loses only its position.
+    """
+    work = work or desktop
+    frame_width = scale_pixels(frame[0], scale)
+    frame_height = scale_pixels(frame[1], scale)
+    work_left, work_top, work_right, work_bottom = work
+    max_width = max(1, (work_right - work_left) - frame_width)
+    max_height = max(1, (work_bottom - work_top) - frame_height)
+
+    def clamped(x, y, width, height):
+        return (max(work_left, min(x, work_right - (width + frame_width))),
+                max(work_top, min(y, work_bottom - (height + frame_height))))
+
+    full = parse_window_geometry(saved)
+    if full is not None:
+        width, height, x, y = (scale_pixels(value, scale) for value in full)
+        width, height = min(width, max_width), min(height, max_height)
+        if _visible_enough(desktop, x, y, width, height, scale):
+            return format_geometry(width, height, x, y)
+    else:
+        width, height = min(size[0], max_width), min(size[1], max_height)
+        position = parse_window_position(saved)
+        if position is not None:
+            x, y = (scale_pixels(value, scale) for value in position)
+            if _visible_enough(desktop, x, y, width, height, scale):
+                return format_geometry(width, height, *clamped(x, y, width, height))
+    if anchor is not None:
+        anchor_x, anchor_y, anchor_width, anchor_height = anchor
+        x = anchor_x + (anchor_width - width) // 2
+        y = anchor_y + (anchor_height - height) // 2
+    else:
+        x = work_left + ((work_right - work_left) - (width + frame_width)) // 2
+        y = work_top + ((work_bottom - work_top) - (height + frame_height)) // 2
+    return format_geometry(width, height, *clamped(x, y, width, height))
+
+
+def work_area_of(hwnd=None):
+    """The work area of a monitor as (left, top, right, bottom), or None.
+
+    The work area is the part of a monitor Windows leaves free of reserved
+    areas such as the taskbar. With a window handle it is the work area of
+    the monitor holding that window (the nearest monitor, should the window
+    be off every one); without one, the primary monitor's. Returns None
+    off Windows and when any call fails, and the caller falls back to the
+    virtual desktop. Windows only; not testable in the sandbox beyond that
+    fallback (Proposal 0016 D6).
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        from ctypes import wintypes
+
+        class MonitorInfo(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT),
+                        ("rcWork", wintypes.RECT), ("dwFlags", wintypes.DWORD)]
+
+        # A private DLL handle, so setting argument types here cannot change
+        # how any other code calls the same functions.
+        user32 = ctypes.WinDLL("user32")
+        if hwnd:
+            user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+            user32.MonitorFromWindow.restype = wintypes.HANDLE
+            user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MonitorInfo)]
+            monitor = user32.MonitorFromWindow(hwnd, 2)  # MONITOR_DEFAULTTONEAREST
+            info = MonitorInfo()
+            info.cbSize = ctypes.sizeof(MonitorInfo)
+            if not monitor or not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+                return None
+            rect = info.rcWork
+        else:
+            rect = wintypes.RECT()
+            # SPI_GETWORKAREA: the primary monitor's work area.
+            if not user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
+                return None
+        return (rect.left, rect.top, rect.right, rect.bottom)
+    except (AttributeError, OSError, ValueError, TypeError, ctypes.ArgumentError):
+        return None
 
 
 def declare_dpi_awareness() -> None:
@@ -174,12 +291,15 @@ def declare_dpi_awareness() -> None:
 
 
 __all__ = [
+    "WINDOW_FRAME",
     "declare_dpi_awareness",
     "dpi_scale_factor",
     "format_geometry",
     "opening_geometry",
     "parse_window_geometry",
+    "parse_window_position",
     "parse_window_size",
     "scale_geometry",
     "scale_pixels",
+    "work_area_of",
 ]

@@ -17,6 +17,7 @@ from itgmania_library import library_media
 from itgmania_library import library_stores as stores
 from itgmania_library import library_librarian as app
 from itgmania_library import theme
+from tests.window_fakes import main_window_fake, no_work_area
 
 
 def _mock_table(column_width=100):
@@ -1554,13 +1555,19 @@ class DialogKeyBindingTests(unittest.TestCase):
 
 
 class AboutDialogTests(unittest.TestCase):
+    def setUp(self):
+        patcher = no_work_area()
+        self.addCleanup(patcher.stop)
+
     @staticmethod
     def open_about_with_mocks(about_window=None):
         instance = object.__new__(app.LibraryApp)
-        instance.root = Mock()
+        instance.root = main_window_fake()
         instance.about_window = about_window
         instance._button = Mock(return_value=Mock())
         mock_window = Mock()
+        mock_window.winfo_reqwidth.return_value = 400
+        mock_window.winfo_reqheight.return_value = 200
         bindings = {}
         mock_window.bind.side_effect = lambda seq, func: bindings.__setitem__(seq, func)
         mock_tk = Mock()
@@ -1585,6 +1592,24 @@ class AboutDialogTests(unittest.TestCase):
     def test_about_takes_keyboard_focus_so_escape_reaches_it(self):
         _instance, _tk, window, _bindings = self.open_about_with_mocks()
         window.focus_force.assert_called_once()
+
+    def test_about_is_built_withdrawn_then_centered_and_shown_before_it_takes_focus(self):
+        # Proposal 0016: sized by its content, so withdrawn while built,
+        # then the requested size is made real, the window is centered over
+        # the main window and shown, and only then asked for the keyboard.
+        _instance, _tk, window, _bindings = self.open_about_with_mocks()
+        names = [call[0] for call in window.method_calls]
+        self.assertEqual(names[0], "withdraw")
+        self.assertLess(names.index("update_idletasks"), names.index("geometry"))
+        self.assertLess(names.index("geometry"), names.index("deiconify"))
+        self.assertLess(names.index("deiconify"), names.index("focus_force"))
+
+    def test_about_opens_centered_over_the_main_window(self):
+        with patch.object(app, "WindowPlacement") as placement_class:
+            placement_class.return_value.geometry_for_content.return_value = "400x200+450+375"
+            instance, _tk, window, _bindings = self.open_about_with_mocks()
+        placement_class.assert_called_once_with(instance.root, instance._dpi_scale)
+        window.geometry.assert_called_once_with("400x200+450+375")
 
     def test_about_opened_twice_raises_the_open_window_instead_of_a_second_one(self):
         existing = Mock()
@@ -2263,6 +2288,41 @@ class _StubPreviewPlayer:
         self.stop_calls += 1
 
 
+class SongPageSizingTests(unittest.TestCase):
+    """Content sizing and centering without a display (Proposal 0016)."""
+
+    @staticmethod
+    def size_with(req_height, dpi_scale=1.0):
+        page = object.__new__(app.SongPage)
+        page.dpi_scale = dpi_scale
+        page.window = Mock()
+        page.window.winfo_reqheight.return_value = req_height
+        placement = Mock()
+        placement.geometry_for_content.return_value = "placed"
+        page._size_to_content(placement)
+        return page, placement
+
+    def test_the_window_gets_the_geometry_the_placement_computes_for_its_content(self):
+        page, placement = self.size_with(580)
+        page.window.update_idletasks.assert_called_once()
+        placement.geometry_for_content.assert_called_once_with(760, 580)
+        page.window.geometry.assert_called_once_with("placed")
+
+    def test_a_short_request_is_raised_to_the_minimum_height(self):
+        _page, placement = self.size_with(100)
+        placement.geometry_for_content.assert_called_once_with(760, 420)
+
+    def test_width_and_minimum_scale_with_the_display(self):
+        _page, placement = self.size_with(100, dpi_scale=1.5)
+        placement.geometry_for_content.assert_called_once_with(1140, 630)
+
+    def test_a_tall_request_is_passed_on_for_the_placement_to_cap(self):
+        # The cap is the work area less the frame, applied by the placement
+        # (and tested there), not here.
+        _page, placement = self.size_with(1400)
+        placement.geometry_for_content.assert_called_once_with(760, 1400)
+
+
 class LiveSongPageDirectTests(unittest.TestCase):
     """The song page on its own (Proposal 0011, stage 3): the media it
     shows, the placeholders, and the button states."""
@@ -2647,9 +2707,10 @@ class LiveSongPageDirectTests(unittest.TestCase):
             root.update()
             self.assertGreater(page._charts_canvas.yview()[0], before)
 
-    def test_a_size_only_geometry_is_placed_on_screen(self):
-        # The first open uses a size-only geometry (no +x+y); the window
-        # manager places it, and the only placement path is that one.
+    def test_a_first_open_is_centered_and_placed_on_screen(self):
+        # The first open has no saved place, so the placement centers the
+        # window over the main window (Proposal 0016) and clamps it onto
+        # the screen; the window manager does not choose the position.
         root = self.make_root()
         page = self._page(root)
         page.show(self._song(), self._media())
@@ -2680,7 +2741,14 @@ class LiveSongPageDirectTests(unittest.TestCase):
         page.close()
         page.show(self._song(charts=self._many_charts(30)), self._media())
         root.update()
-        self.assertEqual(page.window.winfo_height(), resized)
+        # A saved height taller than the usable screen is capped at the work
+        # area less the window frame (Proposal 0016, rule 1), so on a small
+        # screen, such as the Windows runner's 768 px one, the reopen is
+        # shorter than the resized window the window manager allowed.
+        work = (geometry.work_area_of(root.winfo_id())
+                or (0, 0, root.winfo_screenwidth(), root.winfo_screenheight()))
+        cap = (work[3] - work[1]) - geometry.scale_pixels(geometry.WINDOW_FRAME[1], 1.0)
+        self.assertEqual(page.window.winfo_height(), min(resized, cap))
         self.assertTrue(page._charts_scrollbar.winfo_ismapped())
         self.assertEqual(len(page._charts_frame.winfo_children()), 30)
 

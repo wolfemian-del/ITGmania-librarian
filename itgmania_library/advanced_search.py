@@ -16,11 +16,10 @@ from itgmania_library import theme
 from itgmania_library.library_constants import GRADE_OPTIONS
 from itgmania_library.library_dialog_query import build_dialog_query, split_dialog_query
 from itgmania_library.library_geometry import (
-    opening_geometry,
-    parse_window_size,
     scale_geometry,
     scale_pixels,
 )
+from itgmania_library.window_placement import WindowPlacement
 
 
 class AdvancedSearch:
@@ -60,22 +59,14 @@ class AdvancedSearch:
     def _geometry_for_open(self):
         """The geometry string to open the dialog with (issue #98).
 
-        The remembered geometry, or the theme default when there is none;
-        the on-screen rule is the shared opening_geometry in
-        library_geometry (issue #103).
+        The remembered geometry when it is still on screen, otherwise the
+        theme default centered over the main window; the rule itself is the
+        shared opening_geometry in library_geometry, reached through
+        WindowPlacement (issue #103, Proposal 0016).
         """
-        width, height = parse_window_size(theme.ADVANCED_SEARCH_GEOMETRY)
-        size = (scale_pixels(width, self._dpi_scale),
-                scale_pixels(height, self._dpi_scale))
-        if not self._saved_geometry:
-            # Nothing remembered: the desktop is not consulted.
-            return f"{size[0]}x{size[1]}"
-        left = self.parent.winfo_vrootx()
-        top = self.parent.winfo_vrooty()
-        desktop = (left, top, left + self.parent.winfo_vrootwidth(),
-                   top + self.parent.winfo_vrootheight())
-        return opening_geometry(self._saved_geometry, size, desktop,
-                                self._dpi_scale)
+        return WindowPlacement(self.parent, self._dpi_scale,
+                               self._saved_geometry).geometry_for_open(
+            theme.ADVANCED_SEARCH_GEOMETRY)
 
     def save_window_geometry(self):
         """Report the dialog's current geometry so the next open restores it (issue #98).

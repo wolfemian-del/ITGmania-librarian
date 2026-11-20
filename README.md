@@ -88,7 +88,7 @@ ruff check .
 
 `itgmania_library/theme.py` holds the colors and fonts; `tests/test_theme.py` checks the window code uses it.
 
-The code is laid out in `docs/ARCHITECTURE.md`: a layer diagram, a table of all 21 modules with what each holds and its tests, and how the pieces fit together. `itgmania_library/library_librarian.py` is the entry point; the other files are imported by it.
+The code is laid out in `docs/ARCHITECTURE.md`: a layer diagram, a table of all 22 modules with what each holds and its tests, and how the pieces fit together. `itgmania_library/library_librarian.py` is the entry point; the other files are imported by it.
 
 ## License
 
