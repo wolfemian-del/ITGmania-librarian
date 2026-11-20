@@ -16,8 +16,8 @@ from itgmania_library import theme
 from itgmania_library.library_constants import GRADE_OPTIONS
 from itgmania_library.library_dialog_query import build_dialog_query, split_dialog_query
 from itgmania_library.library_geometry import (
-    format_geometry,
-    parse_course_geometry,
+    opening_geometry,
+    parse_window_size,
     scale_geometry,
     scale_pixels,
 )
@@ -60,40 +60,22 @@ class AdvancedSearch:
     def _geometry_for_open(self):
         """The geometry string to open the dialog with (issue #98).
 
-        The remembered geometry when a meaningful part of the window would
-        be visible on the virtual desktop (which spans every monitor): at
-        least a grabbable strip of it, so a window left hanging a little off
-        an edge comes back as it was, while one left on a since-unplugged
-        monitor, or pushed almost entirely off an edge, does not open lost.
-        The top edge gets its own rule on top of that: a window can show
-        plenty of its body while its title bar sits above every monitor
-        (a stacked monitor unplugged since, say), leaving nothing to grab,
-        so the top edge must sit within a few pixels of the desktop's top.
-        In the fallback cases only the size is used and the window manager
-        places the window, so a lost position can never be re-saved on
-        close. Without a remembered geometry, the theme default. The same
-        rules as the course window's (issue #25).
+        The remembered geometry, or the theme default when there is none;
+        the on-screen rule is the shared opening_geometry in
+        library_geometry (issue #103).
         """
+        width, height = parse_window_size(theme.ADVANCED_SEARCH_GEOMETRY)
+        size = (scale_pixels(width, self._dpi_scale),
+                scale_pixels(height, self._dpi_scale))
         if not self._saved_geometry:
-            return scale_geometry(theme.ADVANCED_SEARCH_GEOMETRY, self._dpi_scale)
-        parsed = parse_course_geometry(self._saved_geometry)
-        if parsed is None:
-            return scale_geometry(theme.ADVANCED_SEARCH_GEOMETRY, self._dpi_scale)
-        # The saved string is in canonical 100% units; the window opens in
-        # physical pixels, so scale it — and the visibility thresholds — by
-        # this display's factor before comparing against the virtual desktop.
-        width, height, x, y = (scale_pixels(value, self._dpi_scale) for value in parsed)
+            # Nothing remembered: the desktop is not consulted.
+            return f"{size[0]}x{size[1]}"
         left = self.parent.winfo_vrootx()
         top = self.parent.winfo_vrooty()
-        right = left + self.parent.winfo_vrootwidth()
-        bottom = top + self.parent.winfo_vrootheight()
-        visible_width = min(x + width, right) - max(x, left)
-        visible_height = min(y + height, bottom) - max(y, top)
-        if (visible_width >= scale_pixels(100, self._dpi_scale)
-                and visible_height >= scale_pixels(32, self._dpi_scale)
-                and y >= top - scale_pixels(16, self._dpi_scale)):
-            return format_geometry(width, height, x, y)
-        return f"{width}x{height}"
+        desktop = (left, top, left + self.parent.winfo_vrootwidth(),
+                   top + self.parent.winfo_vrootheight())
+        return opening_geometry(self._saved_geometry, size, desktop,
+                                self._dpi_scale)
 
     def save_window_geometry(self):
         """Report the dialog's current geometry so the next open restores it (issue #98).

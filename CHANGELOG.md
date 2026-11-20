@@ -12,6 +12,7 @@
 - A filter subscriber that raises an error no longer stops the remaining subscribers from being told about the change; the first failure is still reported after all of them have run. Today there is only one subscriber, so nothing changes visibly — this keeps a second one from being silently skipped.
 - A batch of filter changes started inside another batch no longer refreshes the table when the inner block ends; the refresh waits for the outermost block, so nested batches refresh once. Nothing nests batches today, so nothing changes visibly.
 - Loading the library (and syncing scores) no longer re-scans the whole Stats file for every Edit chart without a description; the Edit entries are indexed once per load instead, so a library with many undescribed Edits loads faster. The scores themselves are unchanged.
+- The rule that decides whether Build a course and Advanced Search reopen where you left them now lives in one place instead of two identical copies (issue #103), with direct tests of each threshold. Nothing changes visibly: the windows reopen exactly as before. (Proposal 0016, step 1 of 4.)
 
 ## 1.3.0 - 2026-11-15
 
