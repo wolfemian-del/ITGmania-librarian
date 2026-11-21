@@ -1,6 +1,34 @@
-"""The search language.
+"""The search language: parsing a query, matching a chart, rewriting it.
 
-Parsing a query, matching a chart against it, and rewriting its directives.
+A query is free-text terms plus field directives, written as
+``field:value`` — title, artist, pack, chart, difficulty, type,
+meter, bpm, time, grade, score, percent, plays, peak_nps and the
+radar counts among them, with short aliases such as ``m`` for meter
+and ``tempo`` for bpm. Values can carry an operator or a range
+(``meter:>=10``, ``bpm:120-140``), durations accept seconds or
+``mm:ss`` / ``hh:mm:ss``, and double quotes group a phrase.
+split_search_query tokenises a query, parse_search_query turns it
+into free-text terms and structured criteria, and match_chart_query
+says whether one chart row satisfies them. The numeric-bound
+helpers (parse_numeric_bound, parse_duration_seconds) normalise the
+operators and ranges; BPM bounds compare against a chart's whole
+tempo span, not a single number.
+
+The rewriting helpers keep the search box, the Advanced Search
+dialog and the distribution charts in step: replace_search_directive
+replaces or removes one directive while preserving the rest,
+filter_texts_match says whether two filter texts select the same
+charts however they were typed, get_active_chart_filters lists the
+chart metrics currently filtering the table, and
+find_unreadable_directives lists the directives whose values cannot
+be read, for the hint under the search box.
+
+Tk-free pure functions over row dicts and query strings: this module
+never reads a file and never touches a widget. Its callers are the
+filter (filter_rows), the dialog-query converter, the distribution
+aggregator and the distribution panel.
+
+Tests: tests/test_library_search.py.
 """
 
 from __future__ import annotations

@@ -6,6 +6,8 @@ queue, the polling, the progress and status reporting, and the load results
 It never touches the table or the filter variables directly; everything the
 UI needs arrives through the callbacks in its constructor (on_library_changed,
 on_nothing_loaded), and the DataPathsDialog component it is given.
+
+Tests: tests/test_library_loader.py.
 """
 
 from __future__ import annotations

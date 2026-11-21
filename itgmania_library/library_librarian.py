@@ -1,4 +1,29 @@
-"""A small desktop browser for ITGmania's song cache and Stats.xml."""
+"""The shell: the main window, the menu, and the app's entry point.
+
+LibraryApp builds the window and wires the app together. It creates
+the two stores (the snapshot store and the settings store) and the Tk
+variables seeded from the saved settings, then constructs every
+component — the loader, the filter, the table, the song page, the
+distribution panel, the course builder, the Advanced Search dialog
+and the Data paths dialog — and subscribes the table refresh to the
+filter's change notification. The menu, the settings save, the CSV
+export and the About dialog live here, and so does the song-page
+opening: the shell resolves the song's media, holds the one preview
+player, and hands the page its play, stop and open-folder callbacks.
+
+The shell is thin on purpose: load and sync are thin load_data /
+sync_scores delegation to the loader, and any behaviour that needs
+the window lives in a component while anything that does not need it
+lives in a Tk-free data module. The startup order is part of the
+contract: the window, then the stores, then the variables, then the
+components, then the loader starts and the saved snapshot loads once
+the window has painted. main() declares DPI awareness, builds the
+root window and the app, and runs the event loop; launch.py imports
+main().
+
+Tests: tests/test_library_librarian.py (including the live window
+tests and the song-page tests).
+"""
 
 from __future__ import annotations
 

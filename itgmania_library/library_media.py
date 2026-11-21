@@ -12,6 +12,8 @@ its mounts at open time, first hit wins per file (StepMania.cpp:715-725,
 :826-837; RageFileManager.cpp:701-703). This module mirrors that order
 for filesystem roots only: media inside Packages zips is out of scope
 for v1, so a song whose media lives only in a zip shows placeholders.
+
+Tests: tests/test_library_media.py.
 """
 
 import dataclasses

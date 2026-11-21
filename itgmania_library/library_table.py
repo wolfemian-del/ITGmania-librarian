@@ -5,6 +5,8 @@ widths and sort keys, the row insertion, and the selection. It does not
 touch the stores, the paths, or the status line (except through the count
 label, which it owns): it reads the rows to display from the filter, and
 the Distribution Panel receives them through the show_rows push.
+
+Tests: tests/test_library_table.py.
 """
 
 from __future__ import annotations
