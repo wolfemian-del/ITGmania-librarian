@@ -37,16 +37,18 @@ Read top to bottom as "built from". The shell builds the UI components, the
 components read the data modules, and the data modules depend only on each
 other and on the standard library.
 
-The table is a measured snapshot, and the measurement is what keeps it
-honest: re-measure it from the import graph whenever a module is added,
-renamed, or gains an import, and re-date the line above to the commit it was
-measured at. The suite does not re-check this table. What
-`tests/test_layer_enforcement.py` does check is the two things that would
-break the layering silently: that the import graph has no cycles, and that
-exactly the eight window modules import Tkinter. A module importing a higher
-or same-layer module without creating a cycle would pass those tests, so a
-new import that crosses layers is caught by the re-measurement, not by the
-suite.
+The table is enforced, not just measured: `LAYERS` in
+`tests/test_layer_enforcement.py` holds the same numbers, and the suite
+fails if a module has no layer, if a layer names a module that no longer
+exists, or if any module imports a sibling that is not in a strictly lower
+layer (same-layer imports included, in every import form). The same file
+fails on an import cycle and on any change to the eight window modules that
+import Tkinter. When it blocks an import, pass the dependency in or move the
+shared piece down. Edit the diagram and `LAYERS` together whenever a module
+is added, renamed or moves layer, and re-date the line above. The test does
+not compare the diagram text with `LAYERS`, and it does not require a module
+to sit at the lowest layer it could, so keeping the two in step stays a
+manual check.
 
 Two naming facts to know before you trust the prefixes:
 
