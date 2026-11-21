@@ -25,11 +25,13 @@ never fails this test.
 """
 
 import ast
+import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 PACKAGE = ROOT / "itgmania_library"
+PACKAGE_NAME = "itgmania_library"
 
 # The modules that may import Tkinter: the window code, and the loader
 # (which shows the loading window). Every other module is Tk-free.
@@ -74,16 +76,26 @@ LAYERS = {
 ENTRY_FILES = frozenset(("__init__", "__main__"))
 
 
-def _package_imports():
+def _package_modules(package=PACKAGE):
+    """The module names that exist as files in the package, from the
+    directory itself rather than from the import graph (which also holds
+    a leaf for every imported name, existing or not)."""
+    return {path.stem for path in package.glob("*.py")}
+
+
+def _package_imports(package=PACKAGE):
     """The intra-package import graph and the set of modules importing
     tkinter, read from the package sources with ast. A graph entry maps a
-    module to the sibling modules it imports. A name imported from
+    module to the sibling modules it imports. Every import form that can
+    name a sibling is read: `from itgmania_library import x`,
+    `from itgmania_library.x import y`, `import itgmania_library.x` and the
+    relative `from . import x` / `from .x import y`. A name imported from
     outside the package (a typo) becomes a leaf with no imports of its
     own, so the cycle check never crashes on it — the module itself
     fails loudly elsewhere, since it cannot be imported."""
     graph = {}
     tk_modules = set()
-    for path in sorted(PACKAGE.glob("*.py")):
+    for path in sorted(package.glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         imports = set()
         for node in ast.walk(tree):
@@ -91,13 +103,24 @@ def _package_imports():
                 for alias in node.names:
                     if alias.name == "tkinter" or alias.name.startswith("tkinter."):
                         tk_modules.add(path.stem)
+                    elif alias.name.startswith(PACKAGE_NAME + "."):
+                        imports.add(alias.name.split(".")[1])
             elif isinstance(node, ast.ImportFrom):
                 module = node.module or ""
-                if module == "tkinter" or module.startswith("tkinter."):
+                if node.level == 1:
+                    # `from . import x` names siblings; `from .x import y`
+                    # names the sibling x. Deeper levels leave the package.
+                    if module:
+                        imports.add(module.split(".")[0])
+                    else:
+                        imports.update(alias.name for alias in node.names)
+                elif node.level:
+                    continue
+                elif module == "tkinter" or module.startswith("tkinter."):
                     tk_modules.add(path.stem)
-                elif module == "itgmania_library":
+                elif module == PACKAGE_NAME:
                     imports.update(alias.name for alias in node.names)
-                elif module.startswith("itgmania_library."):
+                elif module.startswith(PACKAGE_NAME + "."):
                     imports.add(module.split(".")[1])
         graph[path.stem] = imports
     for imports in list(graph.values()):
@@ -143,8 +166,7 @@ class LayerEnforcementTests(unittest.TestCase):
         self.assertEqual(tk_modules, TK_MODULES)
 
     def test_every_module_has_a_layer_and_every_layer_has_a_module(self):
-        graph, _ = _package_imports()
-        modules = set(graph) - ENTRY_FILES
+        modules = _package_modules() - ENTRY_FILES
         self.assertEqual(
             modules - set(LAYERS), set(),
             "module(s) with no layer: add them to LAYERS and to the diagram"
@@ -159,9 +181,55 @@ class LayerEnforcementTests(unittest.TestCase):
             f"{module} (layer {LAYERS[module]}) imports {name}"
             f" (layer {LAYERS[name]})"
             for module in LAYERS
-            for name in graph[module]
+            for name in graph.get(module, ())
             if name in LAYERS and LAYERS[name] >= LAYERS[module])
         self.assertEqual(
             offending, [],
             "imports must go to a strictly lower layer; pass the dependency"
             " in, or move the shared piece down")
+
+
+class ImportWalkTests(unittest.TestCase):
+    """The walk must see every import form that can name a sibling, or the
+    direction test cannot catch a violation written in that form."""
+
+    def _graph(self, source):
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory)
+            (package / "probe.py").write_text(source, encoding="utf-8")
+            (package / "other.py").write_text("", encoding="utf-8")
+            graph, _ = _package_imports(package)
+            return graph["probe"]
+
+    def test_from_package_import_name(self):
+        self.assertEqual(
+            self._graph("from itgmania_library import other\n"), {"other"})
+
+    def test_from_package_module_import_name(self):
+        self.assertEqual(
+            self._graph("from itgmania_library.other import thing\n"), {"other"})
+
+    def test_plain_import_of_a_submodule(self):
+        self.assertEqual(
+            self._graph("import itgmania_library.other\n"), {"other"})
+
+    def test_relative_import_of_a_sibling(self):
+        self.assertEqual(self._graph("from . import other\n"), {"other"})
+
+    def test_relative_import_from_a_sibling(self):
+        self.assertEqual(
+            self._graph("from .other import thing\n"), {"other"})
+
+    def test_a_function_level_import_is_seen(self):
+        self.assertEqual(
+            self._graph("def f():\n    import itgmania_library.other\n"),
+            {"other"})
+
+    def test_modules_come_from_files_not_from_imports(self):
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory)
+            (package / "probe.py").write_text(
+                "from itgmania_library import ghost\n", encoding="utf-8")
+            graph, _ = _package_imports(package)
+            self.assertIn("ghost", graph)
+            self.assertEqual(_package_modules(package), {"probe"})
