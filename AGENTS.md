@@ -39,6 +39,12 @@ them in a sortable, filterable table, and can build .CRS course files. Read READ
 - Never commit to main without the owner's explicit say-so. Use a one-use branch per task and open
   a pull request; another LLM reviews it, and only the owner merges.
 - Ask the owner before committing to this repo, once per branch, unless the owner has said not to.
+- Confirmation scope: ask the owner first before committing, pushing, opening a pull request, or
+  changing a design decision, a component boundary, or behaviour outside the task's scope; report
+  review findings first and fix them only on confirmation. Do not ask before fixing an obvious error,
+  rolling an in-scope fix (including a behaviour change) into the work, or filing an issue: those are
+  covered by the standing permission, and every change is reported afterwards. Merging is never an
+  agent action. When the scope question is unclear, ask rather than assume.
 - Some changes get a design proposal first: a numbered document in docs/proposals/, reviewed like a
   pull request and marked Accepted by the owner before implementation. Write one when a change
   creates or alters a component boundary or constructor contract, persists a new settings key or
@@ -64,9 +70,18 @@ them in a sortable, filterable table, and can build .CRS course files. Read READ
   then the ITGmania source if the notes do not cover it.
 - Version basis is ITGmania v1.3.0 stable. Beta behavior is unverified unless a note says so. If a
   note shows beta differs in something the app depends on, tell the owner before changing the app.
+- If the notes cannot be reached, proceed from the ITGmania source alone; if that is itself
+  inaccessible, proceed tagged [UNVERIFIED].
 - Tag technical claims: [CODE] (file and function), [INFERRED], [UNVERIFIED], [RAN] (you executed
   it in your sandbox: name the test or script and the Python version), [TESTED]/[OBSERVED] (the owner
   ran or saw it). Never present an inference as fact.
+- Examples: [CODE] the BPM sort key is `bpm_sort_key` in `itgmania_library/library_format.py`, which
+  sorts by maximum tempo then minimum; [RAN] the full suite passed, 934 tests with 74 skips, run as
+  `python -m unittest discover -s tests` under Python 3.12.3; [INFERRED] a chart with no tempo range
+  probably has a warp-only `#BPMS`, which is a guess from the code's behaviour, not a measured fact;
+  [UNVERIFIED] a claim about how a beta ITGmania build behaves, until a note or a run confirms it;
+  [TESTED] Ian ran the app on Windows and saw the song page open centred, which is something the owner
+  ran or saw rather than something measured in a sandbox.
 - .CRS files: follow the notes' course format reference (cref). Do not write what the notes say the
   game ignores or mishandles. If existing app code already writes something of that kind,
   report it to the owner as a finding; do not change it until the owner confirms.
