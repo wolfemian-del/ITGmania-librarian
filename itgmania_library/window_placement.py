@@ -17,6 +17,7 @@ from itgmania_library.library_geometry import (
     opening_geometry,
     parse_window_geometry,
     parse_window_size,
+    scale_geometry,
     scale_pixels,
     work_area_of,
 )
@@ -25,16 +26,28 @@ from itgmania_library.library_geometry import (
 class WindowPlacement:
     """The opening geometry for one secondary window.
 
-    parent:         the window to center over (today always the main window)
-    dpi_scale:      the display scale factor
-    saved_geometry: the geometry remembered last time in canonical 100%
-                    units, in either form ("WxH+X+Y" or "+X+Y"), or None
+    parent:          the window to center over (today always the main window)
+    dpi_scale:       the display scale factor
+    saved_geometry:  the geometry remembered last time in canonical 100%
+                     units, in either form ("WxH+X+Y" or "+X+Y"), or None;
+                     from construction on, the helper owns the current value
+    report_geometry: called with the canonical geometry string whenever a
+                     new place is to be remembered, or None for a window
+                     with no memory
+
+    A window opens, then calls record_opening(window); when it closes it
+    calls save(window), which remembers a place only if the owner has moved
+    or resized the window since it opened.
     """
 
-    def __init__(self, parent, dpi_scale, saved_geometry=None):
+    def __init__(self, parent, dpi_scale, saved_geometry=None, report_geometry=None):
         self.parent = parent
         self.dpi_scale = dpi_scale
         self._saved_geometry = saved_geometry
+        self._report_geometry = report_geometry
+        # The geometry the current window opened with, in canonical units
+        # (the "opening baseline"); None until record_opening has captured it.
+        self._opening = None
 
     @property
     def saved_geometry(self):
@@ -64,6 +77,62 @@ class WindowPlacement:
         desktop, work, anchor = self._surroundings()
         return opening_geometry(self._saved_geometry, (width, height), desktop,
                                 self.dpi_scale, anchor=anchor, work=work)
+
+    def record_opening(self, window):
+        """Note the geometry the window opened with, once it has been placed.
+
+        Call exactly once per open, after the window's final geometry has
+        been set and, for a window built while withdrawn, after deiconify().
+        It must come after any update_idletasks() that content sizing
+        makes, because that call runs pending idle callbacks: scheduled
+        before, the capture would record the pre-sizing geometry and every
+        plain close would look like a resize.
+
+        An earlier baseline is cleared at once, so a close before the
+        capture runs can never save against the previous open's baseline.
+        The capture itself runs when Tk is idle, once the window has been
+        placed and sized, and does nothing if the window is gone or a
+        baseline is already set. That guards against duplicate scheduled
+        callbacks, not against repeated calls to this method: a second call
+        clears the baseline again before scheduling another capture. The
+        baseline is cleared only by the next call, not by closing.
+        """
+        self._opening = None
+        window.after_idle(lambda: self._capture_opening(window))
+
+    def _capture_opening(self, window):
+        if self._opening is None and window.winfo_exists():
+            self._opening = self._canonical(window)
+
+    def save(self, window):
+        """Remember the window's place if the owner moved or resized it.
+
+        Called when the window closes and when the app exits with it open.
+        Does nothing when the window is gone, while it is minimized or
+        maximized (those states report a parked or full-screen geometry the
+        owner did not choose), when no baseline was captured, or when the
+        geometry equals the baseline: a window that was never touched, or
+        was dragged back to exactly where it opened, records nothing.
+        Otherwise the new value becomes the saved geometry first, so
+        closing and reopening within one session restores it whether or
+        not anything is listening, and is then reported.
+        """
+        if window is None or not window.winfo_exists():
+            return
+        if window.state() != "normal":
+            return
+        if self._opening is None:
+            return
+        current = self._canonical(window)
+        if current == self._opening:
+            return
+        self._saved_geometry = current
+        if self._report_geometry is not None:
+            self._report_geometry(current)
+
+    def _canonical(self, window):
+        # The window reports physical pixels; store canonical 100% units.
+        return scale_geometry(window.geometry(), 1.0 / self.dpi_scale)
 
     def _surroundings(self):
         """The desktop box, the work area and the anchor, read from the parent."""

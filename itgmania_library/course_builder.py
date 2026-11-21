@@ -28,7 +28,6 @@ from itgmania_library.library_course import (
 )
 from itgmania_library.library_format import format_duration, number
 from itgmania_library.library_geometry import (
-    scale_geometry,
     scale_pixels,
 )
 from itgmania_library.window_placement import WindowPlacement
@@ -55,12 +54,12 @@ class CourseBuilder:
         self._button = button_factory
         self._selected_rows = selected_rows
         self._library_rows = library_rows
-        # Window geometry memory (issue #25, proposal 0003): the geometry to restore
-        # on open, and the callback that receives the final geometry on close. Both
-        # are optional; without them the window opens at the theme default and
-        # reports nothing.
-        self._saved_geometry = saved_geometry
-        self._report_geometry = report_geometry
+        # Window geometry memory (issue #25, proposal 0003, proposal 0016): the
+        # geometry to restore on open, and the callback that receives a new one
+        # when the owner has moved or resized the window. Both are optional;
+        # without them the window opens centered at the theme default and
+        # reports nothing. The placement owns the saved value.
+        self._placement = WindowPlacement(parent, dpi_scale, saved_geometry, report_geometry)
         # The display scale factor (issue #51): 1.0 at 100% DPI, 1.5 at
         # 150%. Geometry and pixel sizes are stored in canonical 100%
         # units and scaled to physical pixels on open.
@@ -79,13 +78,9 @@ class CourseBuilder:
         """The geometry string to open the dialog with (issue #25).
 
         The remembered geometry when it is still on screen, otherwise the
-        theme default centered over the main window; the rule itself is the
-        shared opening_geometry in library_geometry, reached through
-        WindowPlacement (issue #103, Proposal 0016).
+        theme default centered over the main window (Proposal 0016).
         """
-        return WindowPlacement(self.parent, self._dpi_scale,
-                               self._saved_geometry).geometry_for_open(
-            theme.COURSE_BUILDER_GEOMETRY)
+        return self._placement.geometry_for_open(theme.COURSE_BUILDER_GEOMETRY)
 
     def open_dialog(self):
         if self.window is not None and self.window.winfo_exists():
@@ -176,6 +171,7 @@ class CourseBuilder:
         # A new window does not always take keyboard focus by itself (seen on Windows);
         # without this, Escape would go to the main window instead of closing this one.
         window.focus_force()
+        self._placement.record_opening(window)
 
         self.add_selected()
 
@@ -224,21 +220,15 @@ class CourseBuilder:
             parent=self.window)
 
     def save_window_geometry(self):
-        """Report the dialog's current geometry so the next open restores it (issue #25).
+        """Remember the dialog's place if the owner moved or resized it (issue #25).
 
         Called when the dialog closes and when the app exits with the dialog
-        open. Does nothing when the dialog is closed, and nothing while the
-        window is minimized or maximized: those states report a parked or
-        full-screen geometry the user did not choose as the window's place.
+        open. A dialog closed where it opened records nothing, so it
+        re-centers over the main window next time (Proposal 0016); the rule
+        is WindowPlacement.save's. Does nothing when the dialog is closed,
+        and nothing while the window is minimized or maximized.
         """
-        if self.window is None or not self.window.winfo_exists():
-            return
-        if self.window.state() != "normal":
-            return
-        # The window reports physical pixels; store canonical 100% units.
-        self._saved_geometry = scale_geometry(self.window.geometry(), 1.0 / self._dpi_scale)
-        if self._report_geometry is not None:
-            self._report_geometry(self._saved_geometry)
+        self._placement.save(self.window)
 
     def add_selected(self):
         added = 0

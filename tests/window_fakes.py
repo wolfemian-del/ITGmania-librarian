@@ -33,3 +33,17 @@ def no_work_area():
     patcher = patch("itgmania_library.window_placement.work_area_of", return_value=None)
     patcher.start()
     return patcher
+
+
+def settle_opening(window, geometry):
+    """Make a Mock window finish opening at geometry.
+
+    WindowPlacement.record_opening schedules its capture for when Tk is idle,
+    which a Mock window never reaches; this runs the scheduled capture with
+    the window reporting geometry (physical pixels), as the event loop would
+    once the window has been placed. Later geometry changes then count as a
+    move or resize.
+    """
+    window.state.return_value = "normal"
+    window.geometry.return_value = geometry
+    window.after_idle.call_args.args[0]()

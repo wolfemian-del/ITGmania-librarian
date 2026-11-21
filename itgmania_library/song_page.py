@@ -77,16 +77,13 @@ class SongPage:
         self.on_open_folder = on_open_folder
         self.dpi_scale = dpi_scale
         self.button_factory = button_factory
-        # The window and its content while it is open; the geometry the
-        # window was last closed at, in canonical units, so the next open
-        # in this session puts it back where it was (not persisted — the
-        # page has no settings key in v1). _opening_geometry is the
-        # geometry the window opened with, recorded once it has been
-        # placed and sized: close() compares against it to tell a plain
-        # close from a move or resize.
+        # The window and its content while it is open.
         self.window = None
-        self._saved_geometry = None
-        self._opening_geometry = None
+        # Where the window opens and what it remembers (Proposal 0016): the
+        # placement owns the geometry saved last time, in this session only
+        # (the page has no settings key yet), and the geometry the window
+        # opened with, so close() can tell a plain close from a move or resize.
+        self._placement = WindowPlacement(parent, dpi_scale)
         self._song = None
         self._media = None
         self._images = {}
@@ -139,9 +136,7 @@ class SongPage:
         # (Proposal 0016). Shown again at the end of this method.
         window.withdraw()
         window.title(self._song.get("title") or "Song")
-        # A throwaway placement seeded from this session's saved geometry;
-        # the page keeps its own save logic until the helper takes it over.
-        placement = WindowPlacement(self.parent, self.dpi_scale, self._saved_geometry)
+        placement = self._placement
         if placement.has_saved_size:
             window.geometry(placement.geometry_for_open(theme.SONG_PAGE_GEOMETRY))
         else:
@@ -245,14 +240,11 @@ class SongPage:
         # of closing this one. After the window is shown: the window
         # manager ignores a focus request on a withdrawn window.
         window.focus_force()
-        # Remember the geometry the window opened with once the event
-        # loop has placed and sized it: close() compares against it to
-        # tell a plain close from a move or resize. A <Map> binding
-        # would record too early — the window is still 1x1 when it
-        # first maps, before the sizing above has been applied — while
-        # an idle callback runs after the pending placement and sizing
-        # have been processed.
-        window.after_idle(self._record_opening_geometry)
+        # Note the geometry the window opened with, once the event loop has
+        # placed and sized it: close() compares against it to tell a plain
+        # close from a move or resize. Last, after the content sizing above:
+        # its update_idletasks() would run the capture too early.
+        self._placement.record_opening(window)
 
     def _fill(self):
         """Refill the open window with the current song and media."""
@@ -527,7 +519,7 @@ class SongPage:
         next open sizes to its song again (not persisted — the page has
         no settings key)."""
         self._stop_preview()
-        self.save_window_geometry()
+        self._placement.save(self.window)
         if self.window is not None:
             self.window.destroy()
         self.window = None
@@ -548,41 +540,3 @@ class SongPage:
         self._stop_button = None
         self._folder_button = None
         self._stop_after_id = None
-        self._opening_geometry = None
-
-    def _record_opening_geometry(self):
-        """Remember the geometry the window opened with, once.
-
-        Runs as an idle callback after the window has been placed and
-        sized, so the position the window manager gave it is known. A
-        later call (after a minimize and restore, for example) must not
-        overwrite it: the comparison is against the geometry the window
-        opened with. Does nothing if the page was closed before the
-        callback ran.
-        """
-        if self._opening_geometry is None and self.window is not None:
-            self._opening_geometry = scale_geometry(
-                self.window.geometry(), 1.0 / self.dpi_scale)
-
-    def save_window_geometry(self):
-        """Remember the window's geometry in canonical units, or nothing.
-
-        Called when the page closes. Does nothing when the page is
-        closed, and nothing while the window is minimized or maximized:
-        those states report a parked or full-screen geometry the user
-        did not choose as the window's place. A plain close — the window
-        never moved or resized — also records nothing, so the next open
-        sizes to its song again (Proposal 0013, the refinement); a move
-        or resize is what sticks for the session.
-        """
-        if self.window is None or not self.window.winfo_exists():
-            return
-        if self.window.state() != "normal":
-            return
-        if self._opening_geometry is None:
-            return
-        # The window reports physical pixels; store canonical 100% units.
-        current = scale_geometry(self.window.geometry(),
-                                 1.0 / self.dpi_scale)
-        if current != self._opening_geometry:
-            self._saved_geometry = current

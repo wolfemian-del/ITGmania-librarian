@@ -10,7 +10,8 @@ from unittest.mock import Mock, patch
 
 from itgmania_library import advanced_search
 from itgmania_library.advanced_search import AdvancedSearch
-from tests.window_fakes import main_window_fake, no_work_area
+from itgmania_library.window_placement import WindowPlacement
+from tests.window_fakes import main_window_fake, no_work_area, settle_opening
 
 
 _work_area_patch = None
@@ -146,12 +147,14 @@ class AdvancedSearchGeometryTests(unittest.TestCase):
         mock_window.geometry.assert_called_once_with("1050x960+325+0")
 
     def test_save_window_geometry_reports_canonical_units(self):
-        component, mock_window, _bindings, _protocols, _buttons, report = self.open_for_close()
-        component._dpi_scale = 1.5
+        report = Mock()
+        component, mock_window, _bindings, _protocols, _buttons = self.open_component(
+            report_geometry=report, dpi_scale=1.5)
+        settle_opening(mock_window, "840x930+430+10")
         mock_window.geometry.return_value = "1050x960+45+60"
         component.save_window_geometry()
         report.assert_called_once_with("700x640+30+40")
-        self.assertEqual(component._saved_geometry, "700x640+30+40")
+        self.assertEqual(component._placement.saved_geometry, "700x640+30+40")
 
     def test_open_uses_the_theme_default_without_a_saved_geometry(self):
         _component, mock_window, _bindings, _protocols, _buttons = self.open_component()
@@ -176,7 +179,8 @@ class AdvancedSearchGeometryTests(unittest.TestCase):
         report = Mock()
         component, mock_window, bindings, protocols, button_factory = self.open_component(
             report_geometry=report)
-        mock_window.state.return_value = "normal"
+        # Opened at the centered place, then moved by the owner to +30+40.
+        settle_opening(mock_window, "560x620+570+165")
         mock_window.geometry.return_value = "700x640+30+40"
         return component, mock_window, bindings, protocols, button_factory, report
 
@@ -206,6 +210,29 @@ class AdvancedSearchGeometryTests(unittest.TestCase):
         report.assert_called_once_with("700x640+30+40")
         mock_window.destroy.assert_called_once()
 
+    def test_a_close_where_it_opened_reports_nothing_and_still_destroys(self):
+        # Proposal 0016 D3: a dialog never moved re-centers next time.
+        _component, mock_window, bindings, _protocols, _buttons, report = self.open_for_close()
+        mock_window.geometry.return_value = "560x620+570+165"
+        bindings["<Escape>"]()
+        report.assert_not_called()
+        mock_window.destroy.assert_called_once()
+
+    def test_a_close_before_the_opening_was_captured_reports_nothing(self):
+        report = Mock()
+        _component, mock_window, bindings, _protocols, _buttons = self.open_component(
+            report_geometry=report)
+        mock_window.state.return_value = "normal"
+        mock_window.geometry.return_value = "700x640+30+40"  # the idle capture never ran
+        bindings["<Escape>"]()
+        report.assert_not_called()
+        mock_window.destroy.assert_called_once()
+
+    def test_a_moved_dialog_is_restored_by_the_next_open_in_the_session(self):
+        component, mock_window, bindings, _protocols, _buttons, _report = self.open_for_close()
+        bindings["<Escape>"]()
+        self.assertEqual(component._placement.geometry_for_open("560x620"), "700x640+30+40")
+
     def test_close_still_destroys_but_does_not_report_while_minimized(self):
         _component, mock_window, bindings, _protocols, _buttons, report = self.open_for_close()
         mock_window.state.return_value = "iconic"
@@ -216,7 +243,7 @@ class AdvancedSearchGeometryTests(unittest.TestCase):
     def test_save_window_geometry_without_a_window_is_a_no_op(self):
         report = Mock()
         component = make_component()
-        component._report_geometry = report
+        component._placement = WindowPlacement(Mock(), 1.0, None, report)
         component.save_window_geometry()  # window is None: must not raise
         report.assert_not_called()
 

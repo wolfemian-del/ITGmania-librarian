@@ -16,7 +16,6 @@ from itgmania_library import theme
 from itgmania_library.library_constants import GRADE_OPTIONS
 from itgmania_library.library_dialog_query import build_dialog_query, split_dialog_query
 from itgmania_library.library_geometry import (
-    scale_geometry,
     scale_pixels,
 )
 from itgmania_library.window_placement import WindowPlacement
@@ -33,8 +32,9 @@ class AdvancedSearch:
                     the fields when the dialog opens, written on Apply
     saved_geometry: the remembered window geometry from settings, already
                     validated by the app (canonical form), or None
-    report_geometry: callable told the window's geometry when it closes,
-                    so the app can remember it for the next open; or None
+    report_geometry: callable told the window's geometry when it closes after
+                    the owner moved or resized it, so the app can remember it
+                    for the next open; or None
     """
 
     # The display scale factor (1.0 at 100% DPI): bare instances in tests
@@ -48,8 +48,7 @@ class AdvancedSearch:
         self._button = button_factory
         self._combo = combo_factory
         self._search_var = search_var
-        self._saved_geometry = saved_geometry
-        self._report_geometry = report_geometry
+        self._placement = WindowPlacement(parent, dpi_scale, saved_geometry, report_geometry)
         # The display scale factor (issue #51): 1.0 at 100% DPI, 1.5 at
         # 150%. Geometry and pixel sizes are stored in canonical 100%
         # units and scaled to physical pixels on open.
@@ -60,30 +59,20 @@ class AdvancedSearch:
         """The geometry string to open the dialog with (issue #98).
 
         The remembered geometry when it is still on screen, otherwise the
-        theme default centered over the main window; the rule itself is the
-        shared opening_geometry in library_geometry, reached through
-        WindowPlacement (issue #103, Proposal 0016).
+        theme default centered over the main window (Proposal 0016).
         """
-        return WindowPlacement(self.parent, self._dpi_scale,
-                               self._saved_geometry).geometry_for_open(
-            theme.ADVANCED_SEARCH_GEOMETRY)
+        return self._placement.geometry_for_open(theme.ADVANCED_SEARCH_GEOMETRY)
 
     def save_window_geometry(self):
-        """Report the dialog's current geometry so the next open restores it (issue #98).
+        """Remember the dialog's place if the owner moved or resized it (issue #98).
 
         Called when the dialog closes and when the app exits with the dialog
-        open. Does nothing when the dialog is closed, and nothing while the
-        window is minimized or maximized: those states report a parked or
-        full-screen geometry the user did not choose as the window's place.
+        open. A dialog closed where it opened records nothing, so it
+        re-centers over the main window next time (Proposal 0016); the rule
+        is WindowPlacement.save's. Does nothing when the dialog is closed,
+        and nothing while the window is minimized or maximized.
         """
-        if self.window is None or not self.window.winfo_exists():
-            return
-        if self.window.state() != "normal":
-            return
-        # The window reports physical pixels; store canonical 100% units.
-        self._saved_geometry = scale_geometry(self.window.geometry(), 1.0 / self._dpi_scale)
-        if self._report_geometry is not None:
-            self._report_geometry(self._saved_geometry)
+        self._placement.save(self.window)
 
     def _close_window(self):
         """Save the geometry and destroy the dialog: the one way this dialog closes.
@@ -258,3 +247,4 @@ class AdvancedSearch:
         # A new window does not always take keyboard focus (seen on Windows); without it Escape and Return
         # would go to the main window instead of this one.
         window.focus_force()
+        self._placement.record_opening(window)
