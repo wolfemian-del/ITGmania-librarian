@@ -148,7 +148,8 @@ class CourseGeometryAppTests(unittest.TestCase):
         self.addCleanup(settings_dir.cleanup)
         settings_path = Path(settings_dir.name) / "settings.json"
         settings_path.write_text(json.dumps({"course_geometry": "900x620+30+40"}), encoding="utf-8")
-        patcher = patch.object(app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
+        patcher = patch.object(
+            app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
         patcher.start()
         self.addCleanup(patcher.stop)
         try:
@@ -250,7 +251,8 @@ class CacheDefaultTests(unittest.TestCase):
         self.addCleanup(settings_dir.cleanup)
         settings_path = Path(settings_dir.name) / "settings.json"
         settings_path.write_text(json.dumps(settings), encoding="utf-8")
-        patcher = patch.object(app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
+        patcher = patch.object(
+            app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
         patcher.start()
         self.addCleanup(patcher.stop)
         guesser = patch.object(app, "first_existing_directory", return_value=first_existing)
@@ -600,7 +602,8 @@ class LiveDiscardedSettingsTests(unittest.TestCase):
             settings_path.write_bytes(content)
         else:
             settings_path.write_text(content, encoding="utf-8")
-        patcher = patch.object(app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
+        patcher = patch.object(
+            app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
         patcher.start()
         self.addCleanup(patcher.stop)
         return Path(tmp.name), settings_path
@@ -691,7 +694,8 @@ class LiveStartupSnapshotTests(unittest.TestCase):
                    "skipped_files": 0, "files_without_charts": 0,
                    "nested_song_tree": False, "rows": [dict(row) for _ in range(3)]}
         (settings_dir / "library_cache.json").write_text(json.dumps(payload))
-        patcher = patch.object(app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
+        patcher = patch.object(
+            app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -736,7 +740,8 @@ class LiveStartupSnapshotTests(unittest.TestCase):
                    "skipped_files": 0, "files_without_charts": 0,
                    "nested_song_tree": False, "rows": [dict(row) for _ in range(3)]}
         (settings_dir / "library_cache.json").write_text(json.dumps(payload))
-        patcher = patch.object(app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
+        patcher = patch.object(
+            app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -800,7 +805,8 @@ class LiveDataPathsDialogTests(unittest.TestCase):
                        "skipped_files": 0, "files_without_charts": 0,
                        "nested_song_tree": False, "rows": snapshot_rows}
             (settings_dir / "library_cache.json").write_text(json.dumps(payload))
-        patcher = patch.object(app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
+        patcher = patch.object(
+            app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
         patcher.start()
         self.addCleanup(patcher.stop)
         return settings_dir, cache_dir, stats_file
@@ -1034,7 +1040,8 @@ class LiveFilterPersistenceTests(unittest.TestCase):
         return settings_path
 
     def construct(self, root, settings_path):
-        patcher = patch.object(app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
+        patcher = patch.object(
+            app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
         patcher.start()
         self.addCleanup(patcher.stop)
         return app.LibraryApp(root)
@@ -1236,7 +1243,8 @@ class LiveSelectAllTests(unittest.TestCase):
         writer_root.destroy()
 
         root = self.make_root()
-        patcher = patch.object(app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
+        patcher = patch.object(
+            app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
         patcher.start()
         self.addCleanup(patcher.stop)
         application = app.LibraryApp(root)
@@ -1432,7 +1440,8 @@ class LiveLoadProgressTests(unittest.TestCase):
             (cache_dir / f"tune-{index:03}.cache").write_text(sample, encoding="utf-8")
         stats_file = settings_dir / "Stats.xml"
         stats_file.write_text((fixtures / "Stats.xml").read_text(encoding="utf-8"))
-        patcher = patch.object(app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
+        patcher = patch.object(
+            app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
         patcher.start()
         self.addCleanup(patcher.stop)
 
@@ -1547,7 +1556,9 @@ class DialogKeyBindingTests(unittest.TestCase):
                     self.assertIsNotNone(application.advanced_search)
                     self.assertIs(application.advanced_search._search_var, application.search_var)
                     mock_valid.assert_called_once_with(None)
-                    self.assertEqual(application.advanced_search._placement.saved_geometry, "700x640+5+5")
+                    self.assertEqual(
+                        application.advanced_search._placement.saved_geometry,
+                        "700x640+5+5")
                     self.assertEqual(application.advanced_search._placement._report_geometry,
                                      application._advanced_search_geometry_changed)
                 finally:
@@ -1869,7 +1880,8 @@ class LiveDpiScaleTests(unittest.TestCase):
         settings_dir = tempfile.TemporaryDirectory()
         self.addCleanup(settings_dir.cleanup)
         settings_path = Path(settings_dir.name) / "settings.json"
-        patcher = patch.object(app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
+        patcher = patch.object(
+            app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
         patcher.start()
         self.addCleanup(patcher.stop)
         try:
@@ -2321,6 +2333,33 @@ class SongPageSizingTests(unittest.TestCase):
         # (and tested there), not here.
         _page, placement = self.size_with(1400)
         placement.geometry_for_content.assert_called_once_with(760, 1400)
+
+    def test_the_opening_is_recorded_last_after_the_content_sizing_and_the_show(self):
+        # Proposal 0016 4.2: the content sizing runs update_idletasks(), which would
+        # run an earlier capture too early, so every plain close would look like a
+        # resize. The order is pinned here without a display.
+        page = app.SongPage(Mock(), Mock(), Mock(), Mock(), 1.0, Mock(return_value=Mock()))
+        page._song = {"title": "T"}
+        window = Mock()
+        window.winfo_reqheight.return_value = 600
+        placement = Mock(has_saved_size=False)
+        placement.geometry_for_content.return_value = "placed"
+        page._placement = placement
+        order = Mock()
+        order.attach_mock(window, "window")
+        order.attach_mock(placement, "placement")
+        module = sys.modules[app.SongPage.__module__]
+        with patch.object(module, "tk") as mock_tk, patch.object(module, "ttk"), \
+                patch.object(page, "_fill"):
+            mock_tk.Toplevel.return_value = window
+            page._build_window()
+        names = [call[0] for call in order.mock_calls
+                 if call[0] in ("window.withdraw", "window.update_idletasks",
+                                "placement.geometry_for_content", "window.deiconify",
+                                "window.focus_force", "placement.record_opening")]
+        self.assertEqual(names, ["window.withdraw", "window.update_idletasks",
+                                 "placement.geometry_for_content", "window.deiconify",
+                                 "window.focus_force", "placement.record_opening"])
 
 
 class LiveSongPageDirectTests(unittest.TestCase):
