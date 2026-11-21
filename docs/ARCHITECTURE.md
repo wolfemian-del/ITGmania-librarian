@@ -129,7 +129,10 @@ Each component is built by the main window with the few things it needs.
   callbacks (None when pygame-ce is not installed, which is how the page
   knows to disable Play), a callback that opens the song folder (None off
   Windows, where `os.startfile` does not exist), the display scale factor,
-  and the button factory. It owns the window, built once and re-raised by
+  the button factory, and two optional inputs for the place it was last
+  moved or resized to: the saved geometry (`"WxH+X+Y"` after a resize,
+  `"+X+Y"` after a move alone) and a callback that reports a new one. It
+  owns the window, built once and re-raised by
   `show()`; the shell holds the media record and the preview player, which
   reach the page through `show()` and the play and stop callbacks.
 - **Load/sync engine** (`library_loader.py`): the snapshot store, the two

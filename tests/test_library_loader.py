@@ -1795,6 +1795,7 @@ class LoaderFilterPersistenceTests(unittest.TestCase):
         instance.distribution_metric = Mock(get=Mock(return_value="Meter"))
         instance.course_geometry = None
         instance.advanced_search_geometry = None
+        instance.song_page_geometry = None
         instance._settings_store = stores.SettingsStore(instance.settings_path)
         instance._settings_store.load()
 
