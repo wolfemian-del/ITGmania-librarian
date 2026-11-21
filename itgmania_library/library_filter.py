@@ -1,10 +1,25 @@
-"""The filter pipeline: which rows pass, and telling the table when something changed.
+"""The filter state store: which rows pass, and telling the table when
+something changed.
 
-LibraryFilter (proposal 0009 Step 5) owns the five filter variables (shared
-with the app, which builds the dropdowns that write them), the search box,
-and the rows it filters. It does not touch the Treeview, the stores, or the
-status line: when something changed it notifies its subscribers (the app's
-refresh_table), so the table refreshes.
+LibraryFilter (proposal 0009 Step 5) is a state store with a
+controller's wiring. It holds the rows it filters — it is the single
+holder of the rows inside the UI, so the table and the Course Builder
+read them through here and there is no second copy to keep in step —
+and it holds the five filter variables (shared with the app, which
+builds the dropdowns that write them) and the search box. It decides
+which rows pass (filter_rows), and it tells its subscribers when
+something changed (the app's refresh_table), so the table refreshes:
+a dropdown or scored pick refreshes at once, a search keystroke
+refreshes after a short pause (the debounce), and a batch of changes
+refreshes once when the batch ends.
+
+It does not touch the Treeview, the stores, or the status line. It
+holds the search entry and the three dropdown widgets only for the
+small jobs that need a widget: focusing and clearing the search box,
+moving the cursor after a chart-filter change, and rebuilding the
+dropdown choices from the loaded rows. It imports no Tkinter and
+works on the widgets it is handed, so a Tk-free stand-in can drive
+it in tests.
 """
 
 from __future__ import annotations
