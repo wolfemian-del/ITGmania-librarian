@@ -759,6 +759,18 @@ class CourseGeometryTests(unittest.TestCase):
             builder.open_dialog()
         return builder, mock_window, bindings
 
+    def test_the_builder_hands_its_minimum_size_to_the_placement(self):
+        # Issue #244: the opening rule floors the size at the window's
+        # minimum, so the placement must know it.
+        builder = CourseBuilder(
+            parent=main_window_fake(),
+            status=Mock(),
+            button_factory=Mock(return_value=Mock()),
+            selected_rows=lambda: [],
+            library_rows=lambda: [],
+        )
+        self.assertEqual(builder._placement._min_size, theme.COURSE_BUILDER_MIN_SIZE)
+
     def test_open_restores_the_saved_geometry_when_its_position_is_visible(self):
         _builder, mock_window, _bindings = self.open_builder(saved_geometry="900x620+30+40")
         mock_window.geometry.assert_called_once_with("900x620+30+40")

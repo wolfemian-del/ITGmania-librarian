@@ -90,8 +90,9 @@ class SongPage:
         # window opened with, so close() can tell a plain close from a move
         # or resize. The page sizes itself to its song, so a move alone is
         # remembered as a position only.
-        self._placement = WindowPlacement(parent, dpi_scale, saved_geometry,
-                                          report_geometry, content_sized=True)
+        self._placement = WindowPlacement(
+            parent, dpi_scale, saved_geometry, report_geometry,
+            content_sized=True, min_size=theme.SONG_PAGE_MIN_SIZE)
         self._song = None
         self._media = None
         self._images = {}
