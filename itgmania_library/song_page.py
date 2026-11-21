@@ -12,6 +12,8 @@ resize is remembered, and any other open sizes to its song again. Memory
 (Proposal 0016): a resize is remembered as a full geometry, a move alone as
 a position, so the page keeps fitting each song; both persist across
 sessions through the saved_geometry and report_geometry inputs.
+
+Tests: tests/test_library_librarian.py (the SongPage*Tests classes).
 """
 
 from __future__ import annotations
