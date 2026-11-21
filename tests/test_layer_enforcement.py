@@ -11,6 +11,17 @@ import Tkinter today are the window code, plus the loader (which shows
 the loading window). A ninth module gaining a tkinter import fails here
 first, and a window module losing one fails the same way, so the set is
 updated deliberately in either direction, with the layer diagram.
+
+The layer direction is pinned too (issue #251). LAYERS below is the layer
+diagram as data: every module has a number, and a module may only import
+modules with a strictly lower number, so a same-layer or upward import
+fails here even when it closes no cycle. When this test blocks an import,
+the usual fixes keep the structure: pass the dependency in (the loader's
+on_library_changed callback is the precedent) or move the shared piece
+down into a lower module. Edit LAYERS only when the layering itself
+should change, together with the diagram in docs/ARCHITECTURE.md. A
+module need not sit at its lowest possible layer, so removing an import
+never fails this test.
 """
 
 import ast
@@ -32,6 +43,35 @@ TK_MODULES = frozenset((
     "library_librarian",
     "song_page",
 ))
+
+# The layer diagram in docs/ARCHITECTURE.md as data (issue #251): higher
+# numbers are built from lower ones. The two package entry files,
+# __init__ and __main__, are not layered and may import anything.
+LAYERS = {
+    "library_librarian": 5,
+    "library_table": 4,
+    "library_loader": 3,
+    "library_stores": 3,
+    "advanced_search": 3,
+    "distribution_panel": 3,
+    "data_paths_dialog": 3,
+    "library_filter": 2,
+    "course_builder": 2,
+    "library_sources": 2,
+    "library_dialog_query": 2,
+    "library_distribution": 2,
+    "library_media": 2,
+    "song_page": 2,
+    "library_format": 1,
+    "library_search": 1,
+    "row_tints": 1,
+    "window_placement": 1,
+    "library_constants": 0,
+    "library_geometry": 0,
+    "library_course": 0,
+    "theme": 0,
+}
+ENTRY_FILES = frozenset(("__init__", "__main__"))
 
 
 def _package_imports():
@@ -101,3 +141,27 @@ class LayerEnforcementTests(unittest.TestCase):
     def test_tkinter_importers_are_exactly_the_window_modules(self):
         _, tk_modules = _package_imports()
         self.assertEqual(tk_modules, TK_MODULES)
+
+    def test_every_module_has_a_layer_and_every_layer_has_a_module(self):
+        graph, _ = _package_imports()
+        modules = set(graph) - ENTRY_FILES
+        self.assertEqual(
+            modules - set(LAYERS), set(),
+            "module(s) with no layer: add them to LAYERS and to the diagram"
+            " in docs/ARCHITECTURE.md")
+        self.assertEqual(
+            set(LAYERS) - modules, set(),
+            "LAYERS names module(s) that no longer exist")
+
+    def test_every_import_goes_to_a_strictly_lower_layer(self):
+        graph, _ = _package_imports()
+        offending = sorted(
+            f"{module} (layer {LAYERS[module]}) imports {name}"
+            f" (layer {LAYERS[name]})"
+            for module in LAYERS
+            for name in graph[module]
+            if name in LAYERS and LAYERS[name] >= LAYERS[module])
+        self.assertEqual(
+            offending, [],
+            "imports must go to a strictly lower layer; pass the dependency"
+            " in, or move the shared piece down")
