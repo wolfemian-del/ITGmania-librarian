@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 from itgmania_library.library_constants import APP_NAME, OLD_APP_NAME
-from itgmania_library.library_geometry import parse_window_geometry
+from itgmania_library.library_geometry import parse_window_geometry, parse_window_position
 from itgmania_library.library_sources import _normalized_source_path
 
 
@@ -240,6 +240,19 @@ def _valid_window_geometry(value, min_size):
     # Tk reads it as "8 pixels from the right edge" — so emitting it here
     # would move the window to the far side of the screen on restore.
     return f"{width}x{height}+{x}+{y}"
+
+
+def _valid_window_position(value):
+    """The canonical "+X+Y" string to restore a window's position with, or None.
+
+    The position-only form (Proposal 0016): exactly two signed offsets, no
+    size, so there is no minimum to check. Rebuilt as Tk writes a position,
+    "+-8" for a negative coordinate, for the reason given above.
+    """
+    parsed = parse_window_position(value)
+    if parsed is None:
+        return None
+    return f"+{parsed[0]}+{parsed[1]}"
 
 
 class SettingsStore:

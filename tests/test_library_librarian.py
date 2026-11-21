@@ -1,5 +1,6 @@
 import contextlib
 import csv
+import functools
 import json
 import os
 import re
@@ -17,7 +18,7 @@ from itgmania_library import library_media
 from itgmania_library import library_stores as stores
 from itgmania_library import library_librarian as app
 from itgmania_library import theme
-from tests.window_fakes import main_window_fake, no_work_area
+from tests.window_fakes import main_window_fake, no_work_area, settle_opening
 
 
 def _mock_table(column_width=100):
@@ -68,6 +69,7 @@ class CourseGeometryAppTests(unittest.TestCase):
         instance.diff_var = Mock(get=Mock(return_value="All difficulties"))
         instance.course_geometry = course_geometry
         instance.advanced_search_geometry = None
+        instance.song_page_geometry = None
         instance._settings_store = stores.SettingsStore(instance.settings_path)
         instance._settings_store.load()
         return instance
@@ -126,6 +128,7 @@ class CourseGeometryAppTests(unittest.TestCase):
         builder.confirm_discard_for_app_exit.return_value = True
         instance.course_builder = builder
         instance.advanced_search = None
+        instance.song_page = None
         manager = Mock()
         manager.attach_mock(builder, "builder")
         manager.attach_mock(instance.root, "root")
@@ -134,6 +137,32 @@ class CourseGeometryAppTests(unittest.TestCase):
         self.assertLess(names.index("builder.confirm_discard_for_app_exit"),
                         names.index("builder.save_window_geometry"))
         self.assertLess(names.index("builder.save_window_geometry"), names.index("root.destroy"))
+
+    def test_live_app_passes_the_saved_place_to_the_song_page(self):
+        """Wiring guard (live Tk; skipped headless): a construction that forgot to
+        pass the song page its place and callback would silently keep it session-only."""
+        if app.tk is None:
+            self.skipTest("Tkinter is not installed")
+        try:
+            root = app.tk.Tk()
+        except app.tk.TclError:
+            self.skipTest("No display available for Tk")
+        settings_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(settings_dir.cleanup)
+        settings_path = Path(settings_dir.name) / "settings.json"
+        settings_path.write_text(json.dumps({"song_page_geometry": "+30+40"}), encoding="utf-8")
+        patcher = patch.object(
+            app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        try:
+            application = app.LibraryApp(root)
+            self.assertEqual(application.song_page_geometry, "+30+40")
+            self.assertEqual(application.song_page._placement.saved_geometry, "+30+40")
+            self.assertEqual(application.song_page._placement._report_geometry,
+                             application._song_page_geometry_changed)
+        finally:
+            root.destroy()
 
     def test_live_app_passes_the_saved_geometry_to_the_builder(self):
         """Wiring guard (live Tk; skipped headless): a construction that forgot to
@@ -187,7 +216,7 @@ class AdvancedSearchGeometryAppTests(unittest.TestCase):
         self.assertEqual(app.LibraryApp._valid_course_geometry("900x500+10+10"), "900x500+10+10")
         self.assertIsNone(app.LibraryApp._valid_advanced_search_geometry("900x500+10+10"))
 
-    def make_saving_app(self, directory, advanced_search_geometry):
+    def make_saving_app(self, directory, advanced_search_geometry, song_page_geometry=None):
         instance = object.__new__(app.LibraryApp)
         instance.settings_path = Path(directory) / "settings.json"
         instance.cache_var = Mock(get=Mock(return_value="/cache"))
@@ -201,6 +230,7 @@ class AdvancedSearchGeometryAppTests(unittest.TestCase):
         instance.diff_var = Mock(get=Mock(return_value="All difficulties"))
         instance.course_geometry = None
         instance.advanced_search_geometry = advanced_search_geometry
+        instance.song_page_geometry = song_page_geometry
         instance._settings_store = stores.SettingsStore(instance.settings_path)
         instance._settings_store.load()
         return instance
@@ -220,6 +250,7 @@ class AdvancedSearchGeometryAppTests(unittest.TestCase):
     def test_geometry_callback_stores_the_value_and_saves(self):
         instance = object.__new__(app.LibraryApp)
         instance.advanced_search_geometry = None
+        instance.song_page_geometry = None
         instance._save_settings = Mock()
         instance._advanced_search_geometry_changed("700x640+5+5")
         self.assertEqual(instance.advanced_search_geometry, "700x640+5+5")
@@ -301,6 +332,7 @@ class LibrarySnapshotTests(unittest.TestCase):
             instance.library_cache_path, app.HEADERS, stores.LIBRARY_CACHE_SCHEMA_VERSION)
         instance.course_geometry = None
         instance.advanced_search_geometry = None
+        instance.song_page_geometry = None
         return instance
 
     @staticmethod
@@ -490,6 +522,7 @@ class FilterPersistenceTests(unittest.TestCase):
         instance.distribution_metric = Mock(get=Mock(return_value="Meter"))
         instance.course_geometry = None
         instance.advanced_search_geometry = None
+        instance.song_page_geometry = None
         instance._settings_store = stores.SettingsStore(instance.settings_path)
         instance._settings_store.load()
 
@@ -1656,6 +1689,7 @@ class PerformanceAndExportTests(unittest.TestCase):
             instance.diff_var = Mock(get=Mock(return_value="All difficulties"))
             instance.course_geometry = None
             instance.advanced_search_geometry = None
+            instance.song_page_geometry = None
             instance._settings_store = stores.SettingsStore(settings_path)
             instance._settings_store.load()
 
@@ -1702,6 +1736,7 @@ class PerformanceAndExportTests(unittest.TestCase):
             instance.diff_var = Mock(get=Mock(return_value="All difficulties"))
             instance.course_geometry = None
             instance.advanced_search_geometry = None
+            instance.song_page_geometry = None
             instance._settings_store = stores.SettingsStore(settings_path)
             instance._settings_store.load()
             instance.status = Mock()
@@ -1734,6 +1769,7 @@ class PerformanceAndExportTests(unittest.TestCase):
             instance.diff_var = Mock(get=Mock(return_value="All difficulties"))
             instance.course_geometry = None
             instance.advanced_search_geometry = None
+            instance.song_page_geometry = None
             instance._settings_store = stores.SettingsStore(settings_path)
             instance._settings_store.load()
 
@@ -1834,6 +1870,7 @@ class LibraryAppExitTests(unittest.TestCase):
         instance = object.__new__(app.LibraryApp)
         instance.root = Mock()
         instance.advanced_search = None
+        instance.song_page = None
         if builder_answer is None:
             instance.course_builder = None
         else:
@@ -1863,6 +1900,88 @@ class LibraryAppExitTests(unittest.TestCase):
         instance._close_app()
         instance.advanced_search.save_window_geometry.assert_called_once_with()
         instance.root.destroy.assert_called_once_with()
+
+    def test_exit_saves_the_song_page_geometry_before_destroying_the_root(self):
+        instance = self.make_app()
+        instance.song_page = Mock()
+        manager = Mock()
+        manager.attach_mock(instance.song_page, "page")
+        manager.attach_mock(instance.root, "root")
+        instance._close_app()
+        names = [call[0] for call in manager.mock_calls]
+        self.assertLess(names.index("page.save_window_geometry"), names.index("root.destroy"))
+
+    def test_a_cancelled_exit_does_not_touch_the_song_page(self):
+        instance = self.make_app(builder_answer=False)
+        instance.song_page = Mock()
+        instance._close_app()
+        instance.song_page.save_window_geometry.assert_not_called()
+
+
+class SongPageGeometrySettingsTests(unittest.TestCase):
+    """The song page's remembered place in settings (Proposal 0016, D5)."""
+
+    def test_full_form_is_accepted_and_canonicalized(self):
+        valid = app.LibraryApp._valid_song_page_geometry
+        self.assertEqual(valid("900x620+30+40"), "900x620+30+40")
+        self.assertEqual(valid("900x620-8+40"), "900x620+-8+40")
+        self.assertEqual(valid("900x620+-8+40"), "900x620+-8+40")
+
+    def test_the_song_pages_own_minimum_size_applies(self):
+        valid = app.LibraryApp._valid_song_page_geometry
+        self.assertEqual(valid("560x420+0+0"), "560x420+0+0")
+        self.assertIsNone(valid("559x420+0+0"))
+        self.assertIsNone(valid("560x419+0+0"))
+        self.assertIsNone(valid("1x1+0+0"))
+        # Below the course window's floor (700 wide), accepted here.
+        self.assertEqual(valid("600x500+10+10"), "600x500+10+10")
+
+    def test_position_only_form_is_accepted_and_canonicalized(self):
+        valid = app.LibraryApp._valid_song_page_geometry
+        self.assertEqual(valid("+100+50"), "+100+50")
+        self.assertEqual(valid("+-8+40"), "+-8+40")
+        self.assertEqual(valid("-8+40"), "+-8+40")
+
+    def test_anything_else_is_dropped(self):
+        valid = app.LibraryApp._valid_song_page_geometry
+        for value in ("1000x620", "+100", "+100+50+7", "", "garbage", None, 7, ["+1+1"],
+                      "+" + "9" * 5000 + "+1", "900x620+30+40 "):
+            with self.subTest(value=value):
+                self.assertIsNone(valid(value))
+
+    def test_save_settings_includes_the_key_only_when_a_place_is_set(self):
+        helper = functools.partial(AdvancedSearchGeometryAppTests.make_saving_app, None)
+        for geometry in ("900x620+10+10", "+10+10"):
+            with tempfile.TemporaryDirectory() as directory:
+                instance = helper(directory, None, song_page_geometry=geometry)
+                instance._save_settings()
+                data = json.loads((Path(directory) / "settings.json").read_text(encoding="utf-8"))
+                self.assertEqual(data["song_page_geometry"], geometry)
+        with tempfile.TemporaryDirectory() as directory:
+            instance = helper(directory, None)
+            instance._save_settings()
+            data = json.loads((Path(directory) / "settings.json").read_text(encoding="utf-8"))
+            self.assertNotIn("song_page_geometry", data)
+
+    def test_a_stored_place_survives_a_save_triggered_by_something_else(self):
+        # The value is seeded at startup, so a routine save in a session that never
+        # opens the page carries it through.
+        with tempfile.TemporaryDirectory() as directory:
+            instance = AdvancedSearchGeometryAppTests.make_saving_app(
+                None, directory, None, song_page_geometry="+10+10")
+            instance.pack_var.get.return_value = "Some pack"  # an unrelated change
+            instance._save_settings()
+            data = json.loads((Path(directory) / "settings.json").read_text(encoding="utf-8"))
+            self.assertEqual(data["filter_pack"], "Some pack")
+            self.assertEqual(data["song_page_geometry"], "+10+10")
+
+    def test_the_callback_stores_the_value_and_saves(self):
+        instance = object.__new__(app.LibraryApp)
+        instance.song_page_geometry = None
+        instance._save_settings = Mock()
+        instance._song_page_geometry_changed("+5+5")
+        self.assertEqual(instance.song_page_geometry, "+5+5")
+        instance._save_settings.assert_called_once_with()
 
 
 class LiveDpiScaleTests(unittest.TestCase):
@@ -2360,6 +2479,58 @@ class SongPageSizingTests(unittest.TestCase):
         self.assertEqual(names, ["window.withdraw", "window.update_idletasks",
                                  "placement.geometry_for_content", "window.deiconify",
                                  "window.focus_force", "placement.record_opening"])
+
+    def make_page(self, saved=None, report=None):
+        return app.SongPage(main_window_fake(), Mock(), Mock(), Mock(), 1.0,
+                            Mock(return_value=Mock()), saved_geometry=saved,
+                            report_geometry=report)
+
+    def test_the_page_hands_its_saved_place_and_callback_to_a_content_sized_placement(self):
+        report = Mock()
+        page = self.make_page("+30+40", report)
+        self.assertEqual(page._placement.saved_geometry, "+30+40")
+        self.assertFalse(page._placement.has_saved_size)
+        self.assertIs(page._placement._report_geometry, report)
+        self.assertTrue(page._placement._content_sized)
+
+    def test_a_page_given_nothing_remembers_for_the_session_only(self):
+        page = self.make_page()
+        self.assertIsNone(page._placement.saved_geometry)
+        self.assertIsNone(page._placement._report_geometry)
+
+    def test_save_window_geometry_saves_the_open_window_and_is_safe_with_none_open(self):
+        page = self.make_page()
+        page._placement = Mock()
+        page.window = None
+        page.save_window_geometry()  # no page open: must not raise
+        window = Mock()
+        page.window = window
+        page.save_window_geometry()
+        page._placement.save.assert_called_with(window)
+
+    def test_close_saves_before_it_destroys_the_window(self):
+        page = self.make_page()
+        window = Mock()
+        page.window = window
+        page._placement = Mock()
+        manager = Mock()
+        manager.attach_mock(page._placement, "placement")
+        manager.attach_mock(window, "window")
+        page.close()
+        names = [call[0] for call in manager.mock_calls]
+        self.assertLess(names.index("placement.save"), names.index("window.destroy"))
+
+    def test_a_moved_page_is_reported_and_restored_by_the_next_open(self):
+        report = Mock()
+        page = self.make_page(report=report)
+        window = Mock()
+        page.window = window
+        page._placement.record_opening(window)
+        settle_opening(window, "760x580+470+185")
+        window.geometry.return_value = "760x580+30+40"
+        page.close()
+        report.assert_called_once_with("+30+40")
+        self.assertEqual(page._placement.geometry_for_content(760, 580), "760x580+30+40")
 
 
 class LiveSongPageDirectTests(unittest.TestCase):

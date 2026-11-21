@@ -8,8 +8,10 @@ the page owns the stop timer and stops the preview whenever the page
 closes, shows another song, or Stop is pressed. Sizing (Proposal 0013):
 the window opens at the height its song needs, capped at the screen, and
 the chart list scrolls when the song has more charts than fit; a move or
-resize is remembered for the session, and any other open sizes to its
-song again.
+resize is remembered, and any other open sizes to its song again. Memory
+(Proposal 0016): a resize is remembered as a full geometry, a move alone as
+a position, so the page keeps fitting each song; both persist across
+sessions through the saved_geometry and report_geometry inputs.
 """
 
 from __future__ import annotations
@@ -67,10 +69,14 @@ class SongPage:
         os.startfile does not exist)
     dpi_scale: the display scale factor
     button_factory: makes a themed button (LibraryApp._button)
+    saved_geometry: the place remembered last time, in canonical 100% units:
+        "WxH+X+Y" after a resize, "+X+Y" after a move alone, or None
+    report_geometry: called with the canonical geometry when a new place is
+        to be remembered; None keeps the memory to this session
     """
 
     def __init__(self, parent, on_play, on_stop, on_open_folder, dpi_scale,
-                 button_factory):
+                 button_factory, saved_geometry=None, report_geometry=None):
         self.parent = parent
         self.on_play = on_play
         self.on_stop = on_stop
@@ -80,10 +86,12 @@ class SongPage:
         # The window and its content while it is open.
         self.window = None
         # Where the window opens and what it remembers (Proposal 0016): the
-        # placement owns the geometry saved last time, in this session only
-        # (the page has no settings key yet), and the geometry the window
-        # opened with, so close() can tell a plain close from a move or resize.
-        self._placement = WindowPlacement(parent, dpi_scale)
+        # placement owns the geometry saved last time and the geometry the
+        # window opened with, so close() can tell a plain close from a move
+        # or resize. The page sizes itself to its song, so a move alone is
+        # remembered as a position only.
+        self._placement = WindowPlacement(parent, dpi_scale, saved_geometry,
+                                          report_geometry, content_sized=True)
         self._song = None
         self._media = None
         self._images = {}
@@ -513,13 +521,21 @@ class SongPage:
             return
         self.on_open_folder(self._media.folder)
 
+    def save_window_geometry(self):
+        """Remember the open window's place if it was moved or resized.
+
+        close() calls this, and so does the app's exit path, because the
+        page is otherwise torn down with the main window without close()
+        running. Does nothing when no page is open.
+        """
+        self._placement.save(self.window)
+
     def close(self):
         """Close the song page. A move or resize is remembered for the
-        next open in this session; a plain close records nothing, so the
-        next open sizes to its song again (not persisted — the page has
-        no settings key)."""
+        next open (and reported, to be saved with the settings); a plain
+        close records nothing, so the next open sizes to its song again."""
         self._stop_preview()
-        self._placement.save(self.window)
+        self.save_window_geometry()
         if self.window is not None:
             self.window.destroy()
         self.window = None

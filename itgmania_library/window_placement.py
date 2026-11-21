@@ -34,14 +34,20 @@ class WindowPlacement:
     report_geometry: called with the canonical geometry string whenever a
                      new place is to be remembered, or None for a window
                      with no memory
+    content_sized:   the window sizes itself to its content (the song page),
+                     so a pure move is remembered as a position alone
+                     ("+X+Y") unless the owner has already chosen a size
+                     (Proposal 0016, D4 B)
 
     A window opens, then calls record_opening(window); when it closes it
     calls save(window), which remembers a place only if the owner has moved
     or resized the window since it opened.
     """
 
-    def __init__(self, parent, dpi_scale, saved_geometry=None, report_geometry=None):
+    def __init__(self, parent, dpi_scale, saved_geometry=None, report_geometry=None,
+                 content_sized=False):
         self.parent = parent
+        self._content_sized = content_sized
         self.dpi_scale = dpi_scale
         self._saved_geometry = saved_geometry
         self._report_geometry = report_geometry
@@ -126,9 +132,32 @@ class WindowPlacement:
         current = self._canonical(window)
         if current == self._opening:
             return
+        current = self._geometry_to_remember(current)
         self._saved_geometry = current
         if self._report_geometry is not None:
             self._report_geometry(current)
+
+    def _geometry_to_remember(self, current):
+        """What to store for a changed window (Proposal 0016, D4 B).
+
+        A window that does not size itself to its content stores the full
+        geometry for any change. A content-sized window stores the full
+        geometry when its size changed (the owner resized it). When only
+        its position changed: if a size was already saved, that size with
+        the new position (so a page resized to 910 px stays 910 px tall,
+        and a size capped by a smaller monitor is not lost); otherwise the
+        position alone, so the page keeps sizing itself to each song.
+        """
+        if not self._content_sized:
+            return current
+        now = parse_window_geometry(current)
+        opened = parse_window_geometry(self._opening)
+        if now is None or opened is None or now[:2] != opened[:2]:
+            return current
+        saved = parse_window_geometry(self._saved_geometry)
+        if saved is not None:
+            return f"{saved[0]}x{saved[1]}+{now[2]}+{now[3]}"
+        return f"+{now[2]}+{now[3]}"
 
     def _canonical(self, window):
         # The window reports physical pixels; store canonical 100% units.

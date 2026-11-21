@@ -657,6 +657,7 @@ class RebindingHazardTests(unittest.TestCase):
         instance.diff_var = Mock(get=Mock(return_value="All difficulties"))
         instance.course_geometry = None
         instance.advanced_search_geometry = None
+        instance.song_page_geometry = None
         instance._settings_store = SettingsStore(settings_path)
         instance._settings_store.load()
         instance.status = Mock()

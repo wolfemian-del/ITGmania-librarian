@@ -199,3 +199,95 @@ class WindowPlacementSaveTests(unittest.TestCase):
         window.winfo_exists.return_value = 0
         window.after_idle.call_args.args[0]()
         window.geometry.assert_not_called()
+
+
+class ContentSizedSaveTests(unittest.TestCase):
+    """D4 B (Proposal 0016): what a content-sized window (the song page) stores."""
+
+    OPENED = "760x580+470+185"
+
+    def opened(self, saved=None, opened=OPENED, scale=1.0):
+        report = Mock()
+        placement = WindowPlacement(main_window_fake(), scale, saved, report,
+                                    content_sized=True)
+        window = Mock()
+        placement.record_opening(window)
+        settle_opening(window, opened)
+        return placement, window, report
+
+    def test_a_move_with_no_saved_size_stores_the_position_alone(self):
+        placement, window, report = self.opened()
+        window.geometry.return_value = "760x580+30+40"
+        placement.save(window)
+        report.assert_called_once_with("+30+40")
+        self.assertEqual(placement.saved_geometry, "+30+40")
+        self.assertFalse(placement.has_saved_size)
+
+    def test_a_negative_position_is_stored_in_the_plus_minus_spelling(self):
+        placement, window, report = self.opened()
+        window.geometry.return_value = "760x580+-8+40"
+        placement.save(window)
+        report.assert_called_once_with("+-8+40")
+
+    def test_a_resize_stores_the_full_form(self):
+        placement, window, report = self.opened()
+        window.geometry.return_value = "900x910+470+185"
+        placement.save(window)
+        report.assert_called_once_with("900x910+470+185")
+        self.assertTrue(placement.has_saved_size)
+
+    def test_a_resize_that_also_moves_stores_the_new_position_too(self):
+        placement, window, report = self.opened()
+        window.geometry.return_value = "900x910+30+40"
+        placement.save(window)
+        report.assert_called_once_with("900x910+30+40")
+
+    def test_a_move_after_a_resize_keeps_the_saved_size_with_the_new_position(self):
+        # Resized to 910 px, reopened (at the saved size), then moved only.
+        placement, window, report = self.opened(
+            saved="760x910+470+83", opened="760x910+470+83")
+        window.geometry.return_value = "760x910+30+40"
+        placement.save(window)
+        report.assert_called_once_with("760x910+30+40")
+
+    def test_a_move_keeps_a_saved_size_the_work_area_had_capped(self):
+        # Saved 760x1200, opened capped to 760x993: only the position changed,
+        # so the saved 1200 survives rather than the capped 993.
+        placement, window, report = self.opened(
+            saved="760x1200+470+0", opened="760x993+470+0")
+        window.geometry.return_value = "760x993+30+0"
+        placement.save(window)
+        report.assert_called_once_with("760x1200+30+0")
+
+    def test_a_position_only_value_with_a_taller_song_is_shifted_up_not_resized(self):
+        placement = WindowPlacement(main_window_fake(), 1.0, "+200+800", Mock(),
+                                    content_sized=True)
+        self.assertEqual(placement.geometry_for_content(760, 910), "760x910+200+131")
+
+    def test_closing_an_untouched_shifted_page_stores_nothing(self):
+        # The baseline is the geometry after the shift, so the saved +200+800 survives.
+        placement, window, report = self.opened(saved="+200+800", opened="760x910+200+131")
+        placement.save(window)
+        report.assert_not_called()
+        self.assertEqual(placement.saved_geometry, "+200+800")
+
+    def test_an_untouched_close_stores_nothing(self):
+        placement, window, report = self.opened()
+        placement.save(window)
+        report.assert_not_called()
+
+    def test_a_move_at_150_percent_stores_canonical_units(self):
+        placement, window, report = self.opened(opened="1140x870+705+277", scale=1.5)
+        window.geometry.return_value = "1140x870+45+60"
+        placement.save(window)
+        report.assert_called_once_with("+30+40")
+
+    def test_a_window_that_is_not_content_sized_stores_the_full_form_for_a_move(self):
+        report = Mock()
+        placement = WindowPlacement(main_window_fake(), 1.0, None, report)
+        window = Mock()
+        placement.record_opening(window)
+        settle_opening(window, self.OPENED)
+        window.geometry.return_value = "760x580+30+40"
+        placement.save(window)
+        report.assert_called_once_with("760x580+30+40")

@@ -52,6 +52,7 @@ from itgmania_library.library_stores import (
     _migrate_config_dir,
     _settings_file_path,
     _valid_window_geometry,
+    _valid_window_position,
 )
 
 
@@ -183,6 +184,7 @@ class LibraryApp:
         # Window geometry remembered for the two dialogs, set in _build:
         self.course_geometry = None
         self.advanced_search_geometry = None
+        self.song_page_geometry = None
         # Dialogs: a window attribute is None while that dialog is closed. The course builder is a
         # separate component (course_builder.py) that owns its window and queue; it is created in
         # _build, once the status variable exists. The Advanced Search component
@@ -388,10 +390,17 @@ class LibraryApp:
         player_on = player_available()
         play_callback = (self._play_preview if player_on else None)
         stop_callback = (self._stop_preview if player_on else None)
+        # The place it was last moved or resized to comes from settings
+        # (Proposal 0016); it is initialized here, before any save can run, so
+        # a session that never opens the page carries the stored value through.
+        self.song_page_geometry = self._valid_song_page_geometry(
+            self.saved_settings.get("song_page_geometry"))
         self.song_page = SongPage(
             self.root, on_play=play_callback, on_stop=stop_callback,
             on_open_folder=open_song_folder if hasattr(os, "startfile") else None,
-            dpi_scale=self._dpi_scale, button_factory=self._button)
+            dpi_scale=self._dpi_scale, button_factory=self._button,
+            saved_geometry=self.song_page_geometry,
+            report_geometry=self._song_page_geometry_changed)
         # The table (proposal 0009 Step 6): constructed after the filter
         # and the Distribution Panel, taking the filter and the panel's
         # show_rows; it subscribes its refresh to the filter's change
@@ -431,6 +440,8 @@ class LibraryApp:
             self.course_builder.save_window_geometry()
         if self.advanced_search is not None:
             self.advanced_search.save_window_geometry()
+        if self.song_page is not None:
+            self.song_page.save_window_geometry()
         self.root.destroy()
 
     def _course_geometry_changed(self, geometry):
@@ -507,6 +518,10 @@ class LibraryApp:
         # seventeen live-test patch sites redirect the settings file here.
         # The bare name is the imported helper, not this method.
         return _settings_file_path()
+    def _song_page_geometry_changed(self, geometry):
+        """The song page closed in a new place (Proposal 0016): remember it in settings."""
+        self.song_page_geometry = geometry
+        self._save_settings()
 
     @property
     def library_cache_path(self):
@@ -521,6 +536,17 @@ class LibraryApp:
     def _valid_advanced_search_geometry(value):
         """The canonical geometry string to restore the Advanced Search window with, or None (issue #98)."""
         return _valid_window_geometry(value, theme.ADVANCED_SEARCH_MIN_SIZE)
+
+    @staticmethod
+    def _valid_song_page_geometry(value):
+        """The canonical geometry to restore the song page with, or None (Proposal 0016).
+
+        Two forms are valid: the full "WxH+X+Y" of a resized page, at least the page's
+        minimum size, and the position-only "+X+Y" of a page that was only moved.
+        Anything else is dropped, as for the other windows.
+        """
+        return (_valid_window_geometry(value, theme.SONG_PAGE_MIN_SIZE)
+                or _valid_window_position(value))
 
     def _report_discarded_settings(self):
         """Append the discarded-settings note to the status line, once.
@@ -570,6 +596,10 @@ class LibraryApp:
         # The Advanced Search window's geometry, on the same terms (issue #98).
         if self.advanced_search_geometry is not None:
             settings["advanced_search_geometry"] = self.advanced_search_geometry
+        # The song page's place, on the same terms (Proposal 0016): a full geometry
+        # once resized, a position alone once only moved.
+        if self.song_page_geometry is not None:
+            settings["song_page_geometry"] = self.song_page_geometry
         # The store owns the dedup baseline and the atomic write (proposal
         # 0008); a failed write raises OSError, which the store leaves for
         # the app to report — and the baseline stays stale so the next
