@@ -3008,9 +3008,9 @@ class LiveSongPageDirectTests(unittest.TestCase):
         self.assertGreater(page.window.winfo_height(), short)
         self.assertFalse(page._charts_scrollbar.winfo_ismapped())
 
-    def test_a_drag_is_remembered_for_the_next_open(self):
-        # A move without a resize is also a deliberate change: the
-        # position sticks for the next open, along with the size.
+    def test_a_drag_is_remembered_as_a_position_for_the_next_open(self):
+        # A move without a resize is a deliberate change, but only of the
+        # position (Proposal 0016, D4 B): the next song still sizes itself.
         root = self.make_root()
         page = self._page(root)
         page.show(self._song(charts=self._many_charts(1)), self._media())
@@ -3019,13 +3019,23 @@ class LiveSongPageDirectTests(unittest.TestCase):
         page.window.geometry(f"760x{short}+100+100")
         root.update()
         page.close()
-        self.assertIsNotNone(page._placement.saved_geometry)
+        self.assertEqual(page._placement.saved_geometry, "+100+100")
         page.show(self._song(charts=self._many_charts(16)), self._media())
         root.update()
         self.assertEqual(page.window.winfo_x(), 100)
-        self.assertEqual(page.window.winfo_y(), 100)
-        self.assertEqual(page.window.winfo_height(), short)
-        self.assertTrue(page._charts_scrollbar.winfo_ismapped())
+        self.assertGreater(page.window.winfo_height(), short)
+        # A taller song is shifted up if it would run past the work area, as
+        # on a short screen such as the Windows runner's 768 px one.
+        work = (geometry.work_area_of(root.winfo_id())
+                or (0, 0, root.winfo_screenwidth(), root.winfo_screenheight()))
+        frame = geometry.scale_pixels(geometry.WINDOW_FRAME[1], 1.0)
+        self.assertEqual(
+            page.window.winfo_y(),
+            max(work[1], min(100, work[3] - (page.window.winfo_height() + frame))))
+        self.assertFalse(page._charts_scrollbar.winfo_ismapped())
+        # Closing that shifted page untouched keeps the place the owner chose.
+        page.close()
+        self.assertEqual(page._placement.saved_geometry, "+100+100")
 
 
 if __name__ == "__main__":
