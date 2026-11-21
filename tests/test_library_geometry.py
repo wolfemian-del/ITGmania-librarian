@@ -245,6 +245,15 @@ class OpeningGeometryPlacementTests(unittest.TestCase):
         self.assertEqual(self.place(None, (760, 580), work=(0, 0, 576, 459),
                                     min_size=(560, 420)), "560x420+0+0")
 
+    def test_the_minimum_floor_scales_with_the_display(self):
+        # Grok's review of PR #247: at 150% the 560x420 minimum is
+        # 840x630 and the frame 24x58, so on an 860x680 work area the
+        # floor wins in both dimensions.
+        self.assertEqual(self.place(None, (1140, 870),
+                                    anchor=(100, 50, 2250, 1275),
+                                    work=(0, 0, 860, 680), scale=1.5,
+                                    min_size=(560, 420)), "840x630+0+0")
+
     def test_the_frame_scales_with_the_display(self):
         # 150%: the frame is 24 by 58, so a 1350x930 window needs 1374 by 988 px of
         # the work area. Centered over a main window of 2250x1275 at +100+50 it

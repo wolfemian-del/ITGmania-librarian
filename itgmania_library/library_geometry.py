@@ -207,7 +207,7 @@ def opening_geometry(saved, size, desktop, scale, *, anchor=None, work=None,
     max_width = max(1, (work_right - work_left) - frame_width)
     max_height = max(1, (work_bottom - work_top) - frame_height)
 
-    def capped(width, height):
+    def enforced_size(width, height):
         # The size the window will actually have: capped to the work area
         # less the frame, and never below its minimum (issue #244). When
         # the work area is smaller than the minimum plus the frame, the
@@ -223,11 +223,11 @@ def opening_geometry(saved, size, desktop, scale, *, anchor=None, work=None,
     full = parse_window_geometry(saved)
     if full is not None:
         width, height, x, y = (scale_pixels(value, scale) for value in full)
-        width, height = capped(width, height)
+        width, height = enforced_size(width, height)
         if _visible_enough(desktop, x, y, width, height, scale):
             return format_geometry(width, height, x, y)
     else:
-        width, height = capped(size[0], size[1])
+        width, height = enforced_size(size[0], size[1])
         position = parse_window_position(saved)
         if position is not None:
             x, y = (scale_pixels(value, scale) for value in position)
