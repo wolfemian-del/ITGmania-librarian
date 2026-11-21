@@ -764,7 +764,7 @@ class LibraryApp:
             self.course_builder.on_library_reloaded()
 
     def _on_nothing_loaded(self):
-        """The initial refresh when no snapshot was restored."""
+        """Repaint the empty table when no snapshot was restored."""
         self._table.refresh_table()
 
     def _set_sync_menu_state(self, state):

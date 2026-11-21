@@ -54,7 +54,7 @@ class LibraryLoader:
                             a load or a sync finishes, for the table/filter/
                             Course Builder part only (Q2).
       on_nothing_loaded:    callback, delivered when load_cached_data finds no
-                            snapshot, so the app does the initial refresh.
+                            snapshot, so the shell repaints the empty table.
       report_discarded_settings: callback, for the discarded-settings note the
                             shell reports (the settings store stays in the
                             shell, so _report_discarded_settings stays app-side
@@ -178,9 +178,10 @@ class LibraryLoader:
             self.status.set("Saved library snapshot is invalid or outdated. Click Load / refresh to rebuild it.")
         else:  # paths_mismatch
             self.status.set("Saved library snapshot is for different data paths. Click Load / refresh to rebuild it.")
-        # No snapshot restored: the app does the initial refresh, so the
-        # table is not left empty. [CODE] on_nothing_loaded covers the
-        # path load_cached_data used to refresh directly.
+        # No snapshot restored: no refresh follows, so the table stays
+        # empty and the status line tells the user to Load / refresh.
+        # [CODE] on_nothing_loaded covers the path load_cached_data used
+        # to refresh directly.
         self.on_nothing_loaded()
 
     def _source_paths_changed(self):
