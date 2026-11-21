@@ -1,22 +1,33 @@
 # Changelog
 
-## Unreleased
+## 1.4.0 - 2026-11-20
 
+### New name
 - The app is now called ITGmania Librarian instead of ITGmania Library Visualizer: the window title, the About dialog and the settings folder all use the new name, and on first launch your settings folder moves to the new name, bringing your settings and saved library with it. Nothing else changes.
+
+### Song page
 - Double-click a chart (or press Enter on it) to open the song page: the song's banner, background, jacket and CD title, its music file with its length and preview window, and all of its charts with meter, BPM and scores. A file that is missing or is not a PNG shows a placeholder, and a song whose folder is not under any known song folder says so with the folder button disabled. Play preview plays the song's sample window in the app (pygame-ce, optional — without it Play is disabled); Stop ends it early, and closing the page or opening another song stops it too. Playback of a chart with its own `#MUSIC` plays that file from the start for 12 seconds, since it has no sample window of its own. The page now opens at the height its song needs instead of a fixed height, and the chart list scrolls inside the window when a song has more charts than fit on the screen; a resize in the session is still remembered for the next open. The buttons at the bottom of the page now stay visible even when the window was resized short — before, a short saved height could push them off the window entirely.
-- The launch command is now `python launch.py` instead of `python library_visualizer.py`. The app itself is unchanged: the nineteen modules now live in the `itgmania_library` package, and `launch.py` at the repository root starts it.
-- A chart with an absurd Time value no longer renders as a hundreds-of-characters duration in the Time column; anything longer than 99 hours, 59 minutes reads as blank, the way a missing Time already does.
-- Loading the library no longer fails outright when one cache file cannot be parsed; that file is skipped and counted in the load summary, the way an unreadable file already is.
-- A numeric search value with an underscore in it (for example `meter:1_000`) no longer reads as a number; it matches nothing, the way an unreadable value already does, and the count line says so.
 - The song page's preview window now comes from the song's own music file, stored on every chart row, instead of being guessed from the charts: a song whose charts all share one `#MUSIC` override no longer plays the song's sample window against that other track, and a chart with its own `#MUSIC` no longer keeps a window it should not have. The snapshot schema bumps to 6, so an old snapshot rebuilds once.
-- A filter subscriber that raises an error no longer stops the remaining subscribers from being told about the change; the first failure is still reported after all of them have run. Today there is only one subscriber, so nothing changes visibly — this keeps a second one from being silently skipped.
-- A batch of filter changes started inside another batch no longer refreshes the table when the inner block ends; the refresh waits for the outermost block, so nested batches refresh once. Nothing nests batches today, so nothing changes visibly.
-- Loading the library (and syncing scores) no longer re-scans the whole Stats file for every Edit chart without a description; the Edit entries are indexed once per load instead, so a library with many undescribed Edits loads faster. The scores themselves are unchanged.
+
+### Windows
 - The rule that decides whether Build a course and Advanced Search reopen where you left them now lives in one place instead of two identical copies (issue #103), with direct tests of each threshold. Nothing changes visibly: the windows reopen exactly as before. (Proposal 0016, step 1 of 4.)
 - Build a course, Advanced Search, the song page, the Data paths dialog and About now open centered over the library window, instead of in the top-left corner of the screen. A window that would reach past the screen edge or under the taskbar is shifted back onto the screen, and a window taller than the usable screen is shortened to fit (the song page's tall chart list scrolls, as before). If the library window is minimized, they open centered on the screen. A place you moved Build a course or Advanced Search to is still remembered and restored exactly as before. (Proposal 0016, step 2 of 4.)
 - Build a course, Advanced Search and the song page no longer remember a place they were never moved from: a window you open and close without moving or resizing it reopens centered over the library window next time, instead of pinning wherever it first appeared. A move or resize is still remembered. The song page now remembers a move or resize for the rest of the session only, the same way it did before, and opens at the height its song needs when you have not resized it. (Proposal 0016, step 3 of 4.)
 - The song page now remembers where you moved or resized it, including after you restart the app. If you only move it, it remembers the position and still opens at the height each song needs, shifted up if a taller song would otherwise run under the taskbar; once you resize it, it remembers that size too. A page you never moved or resized still opens centered over the library window. (Proposal 0016, step 4 of 4.)
 - On a very small screen, a secondary window no longer opens smaller than its own minimum size: the opening rule now floors the size at the minimum (issue #244), so the window opens at that minimum with its left and top edges on screen instead of opening smaller and being enlarged past the edge by the window manager.
+
+### Library table
+- A chart with an absurd Time value no longer renders as a hundreds-of-characters duration in the Time column; anything longer than 99 hours, 59 minutes reads as blank, the way a missing Time already does.
+- A numeric search value with an underscore in it (for example `meter:1_000`) no longer reads as a number; it matches nothing, the way an unreadable value already does, and the count line says so.
+
+### Startup and loading
+- Loading the library no longer fails outright when one cache file cannot be parsed; that file is skipped and counted in the load summary, the way an unreadable file already is.
+- Loading the library (and syncing scores) no longer re-scans the whole Stats file for every Edit chart without a description; the Edit entries are indexed once per load instead, so a library with many undescribed Edits loads faster. The scores themselves are unchanged.
+
+### Other
+- The launch command is now `python launch.py` instead of `python library_visualizer.py`. The app itself is unchanged: the nineteen modules now live in the `itgmania_library` package, and `launch.py` at the repository root starts it.
+- A filter subscriber that raises an error no longer stops the remaining subscribers from being told about the change; the first failure is still reported after all of them have run. Today there is only one subscriber, so nothing changes visibly — this keeps a second one from being silently skipped.
+- A batch of filter changes started inside another batch no longer refreshes the table when the inner block ends; the refresh waits for the outermost block, so nested batches refresh once. Nothing nests batches today, so nothing changes visibly.
 
 ## 1.3.0 - 2026-11-15
 
