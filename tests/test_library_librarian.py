@@ -2492,6 +2492,7 @@ class SongPageSizingTests(unittest.TestCase):
         self.assertFalse(page._placement.has_saved_size)
         self.assertIs(page._placement._report_geometry, report)
         self.assertTrue(page._placement._content_sized)
+        self.assertEqual(page._placement._min_size, theme.SONG_PAGE_MIN_SIZE)
 
     def test_a_page_given_nothing_remembers_for_the_session_only(self):
         page = self.make_page()

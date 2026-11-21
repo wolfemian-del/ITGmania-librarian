@@ -166,8 +166,10 @@ class OpeningGeometryPlacementTests(unittest.TestCase):
     WORK = (0, 0, 1920, 1032)
     MAIN = (100, 50, 1500, 850)
 
-    def place(self, saved, size, anchor=MAIN, work=WORK, desktop=DESKTOP, scale=1.0):
-        return data.opening_geometry(saved, size, desktop, scale, anchor=anchor, work=work)
+    def place(self, saved, size, anchor=MAIN, work=WORK, desktop=DESKTOP, scale=1.0,
+              min_size=(1, 1)):
+        return data.opening_geometry(saved, size, desktop, scale, anchor=anchor,
+                                     work=work, min_size=min_size)
 
     def test_a_dialog_is_centered_over_the_main_window(self):
         self.assertEqual(self.place(None, (1000, 620)), "1000x620+350+165")
@@ -219,6 +221,38 @@ class OpeningGeometryPlacementTests(unittest.TestCase):
 
     def test_a_position_only_value_that_is_off_screen_centers(self):
         self.assertEqual(self.place("+5000+40", (760, 580)), "760x580+470+185")
+
+    def test_a_size_below_the_minimum_is_floored_to_it(self):
+        # Issue #244: on a work area smaller than the minimum plus the
+        # frame, the cap alone would size below the minimum and Tk would
+        # enforce it anyway, so the window opens at its minimum and the
+        # position is clamped for that enforced size.
+        small = (0, 0, 500, 400)
+        minimum = (560, 420)
+        self.assertEqual(self.place("900x620+30+40", (1000, 620), work=small,
+                                    min_size=minimum), "560x420+30+40")
+        self.assertEqual(self.place("+200+100", (760, 580), work=small,
+                                    min_size=minimum), "560x420+0+0")
+        self.assertEqual(self.place(None, (760, 580), work=small,
+                                    min_size=minimum), "560x420+0+0")
+
+    def test_the_minimum_floor_starts_exactly_at_the_minimum_plus_the_frame(self):
+        # One pixel either side of the boundary: at 577x460 the cap is
+        # 561x421 (above the minimum, no floor); at 576x459 it is the
+        # minimum itself.
+        self.assertEqual(self.place(None, (760, 580), work=(0, 0, 577, 460),
+                                    min_size=(560, 420)), "561x421+0+0")
+        self.assertEqual(self.place(None, (760, 580), work=(0, 0, 576, 459),
+                                    min_size=(560, 420)), "560x420+0+0")
+
+    def test_the_minimum_floor_scales_with_the_display(self):
+        # Grok's review of PR #247: at 150% the 560x420 minimum is
+        # 840x630 and the frame 24x58, so on an 860x680 work area the
+        # floor wins in both dimensions.
+        self.assertEqual(self.place(None, (1140, 870),
+                                    anchor=(100, 50, 2250, 1275),
+                                    work=(0, 0, 860, 680), scale=1.5,
+                                    min_size=(560, 420)), "840x630+0+0")
 
     def test_the_frame_scales_with_the_display(self):
         # 150%: the frame is 24 by 58, so a 1350x930 window needs 1374 by 988 px of

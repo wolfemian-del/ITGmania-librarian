@@ -38,6 +38,8 @@ class WindowPlacement:
                      so a pure move is remembered as a position alone
                      ("+X+Y") unless the owner has already chosen a size
                      (Proposal 0016, D4 B)
+    min_size:        the window's minimum size in canonical 100% units
+                     (issue #244); the opening size never goes below it
 
     A window opens, then calls record_opening(window); when it closes it
     calls save(window), which remembers a place only if the owner has moved
@@ -45,9 +47,10 @@ class WindowPlacement:
     """
 
     def __init__(self, parent, dpi_scale, saved_geometry=None, report_geometry=None,
-                 content_sized=False):
+                 content_sized=False, min_size=(1, 1)):
         self.parent = parent
         self._content_sized = content_sized
+        self._min_size = min_size
         self.dpi_scale = dpi_scale
         self._saved_geometry = saved_geometry
         self._report_geometry = report_geometry
@@ -82,7 +85,8 @@ class WindowPlacement:
         only once its content is built."""
         desktop, work, anchor = self._surroundings()
         return opening_geometry(self._saved_geometry, (width, height), desktop,
-                                self.dpi_scale, anchor=anchor, work=work)
+                                self.dpi_scale, anchor=anchor, work=work,
+                                min_size=self._min_size)
 
     def record_opening(self, window):
         """Note the geometry the window opened with, once it has been placed.

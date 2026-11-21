@@ -68,6 +68,17 @@ class WindowPlacementTests(unittest.TestCase):
             self.assertFalse(placement.has_saved_size)
             self.assertEqual(placement.geometry_for_content(760, 910), "760x910+200+83")
 
+    def test_a_small_work_area_opens_at_the_minimum_size(self):
+        # Issue #244: the placement passes its window's minimum to the
+        # rule, so a song page on a 500x400 work area opens at 560x420
+        # rather than the 484x361 the cap alone would give.
+        placement = WindowPlacement(main_window_fake(), 1.0, None,
+                                    min_size=(560, 420))
+        with patch("itgmania_library.window_placement.work_area_of",
+                   return_value=(0, 0, 500, 400)):
+            geometry = placement.geometry_for_content(760, 580)
+        self.assertEqual(geometry, "560x420+0+0")
+
     def test_has_saved_size_is_true_only_for_a_full_geometry(self):
         self.assertFalse(self.placement().has_saved_size)
         self.assertFalse(self.placement(saved="+200+100").has_saved_size)

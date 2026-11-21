@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from itgmania_library import advanced_search
+from itgmania_library import theme
 from itgmania_library.advanced_search import AdvancedSearch
 from itgmania_library.window_placement import WindowPlacement
 from tests.window_fakes import main_window_fake, no_work_area, settle_opening
@@ -118,6 +119,12 @@ class AdvancedSearchGeometryTests(unittest.TestCase):
         with patch.object(advanced_search, "tk", mock_tk):
             component.open_dialog()
         return component, mock_window, bindings, protocols, button_factory
+
+    def test_the_component_hands_its_minimum_size_to_the_placement(self):
+        # Issue #244: the opening rule floors the size at the window's
+        # minimum, so the placement must know it.
+        self.assertEqual(make_component()._placement._min_size,
+                         theme.ADVANCED_SEARCH_MIN_SIZE)
 
     def test_open_restores_the_saved_geometry_when_its_position_is_visible(self):
         _component, mock_window, _bindings, _protocols, _buttons = self.open_component(

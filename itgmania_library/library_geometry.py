@@ -162,7 +162,7 @@ def _visible_enough(desktop, x, y, width, height, scale) -> bool:
 
 
 def opening_geometry(saved, size, desktop, scale, *, anchor=None, work=None,
-                     frame=WINDOW_FRAME) -> str:
+                     frame=WINDOW_FRAME, min_size=(1, 1)) -> str:
     """The geometry string a window opens with (issues #25, #98, #103; Proposal 0016).
 
     saved:   the geometry remembered last time, in canonical 100% units: a
@@ -177,11 +177,16 @@ def opening_geometry(saved, size, desktop, scale, *, anchor=None, work=None,
     work:    (left, top, right, bottom) of the work area, the part of the
              monitor Windows leaves free of the taskbar; default: desktop.
     frame:   the window frame's extra (width, height) in canonical units.
+    min_size: the window's minimum size in canonical units; the size never
+             goes below it, so the position is clamped for the size the
+             window will actually have (issue #244).
 
     Four rules, in this order. Integer division here is Python's floor
     division, which rounds negative values toward negative infinity.
 
-    1. The size is capped to the work area less the frame, never below 1.
+    1. The size is capped to the work area less the frame, and floored at
+       the minimum size. With the default minimum of 1x1 this is never
+       below 1.
     2. A full saved geometry whose capped box is visible enough (see
        _visible_enough) is returned as it is: a place the owner dragged to
        is not second-guessed, so it is never clamped.
@@ -196,9 +201,20 @@ def opening_geometry(saved, size, desktop, scale, *, anchor=None, work=None,
     work = work or desktop
     frame_width = scale_pixels(frame[0], scale)
     frame_height = scale_pixels(frame[1], scale)
+    min_width = scale_pixels(min_size[0], scale)
+    min_height = scale_pixels(min_size[1], scale)
     work_left, work_top, work_right, work_bottom = work
     max_width = max(1, (work_right - work_left) - frame_width)
     max_height = max(1, (work_bottom - work_top) - frame_height)
+
+    def enforced_size(width, height):
+        # The size the window will actually have: capped to the work area
+        # less the frame, and never below its minimum (issue #244). When
+        # the work area is smaller than the minimum plus the frame, the
+        # minimum wins and the window hangs off the work area; the clamp
+        # below then keeps its left and top edges on screen.
+        return (max(min_width, min(width, max_width)),
+                max(min_height, min(height, max_height)))
 
     def clamped(x, y, width, height):
         return (max(work_left, min(x, work_right - (width + frame_width))),
@@ -207,11 +223,11 @@ def opening_geometry(saved, size, desktop, scale, *, anchor=None, work=None,
     full = parse_window_geometry(saved)
     if full is not None:
         width, height, x, y = (scale_pixels(value, scale) for value in full)
-        width, height = min(width, max_width), min(height, max_height)
+        width, height = enforced_size(width, height)
         if _visible_enough(desktop, x, y, width, height, scale):
             return format_geometry(width, height, x, y)
     else:
-        width, height = min(size[0], max_width), min(size[1], max_height)
+        width, height = enforced_size(size[0], size[1])
         position = parse_window_position(saved)
         if position is not None:
             x, y = (scale_pixels(value, scale) for value in position)

@@ -59,7 +59,9 @@ class CourseBuilder:
         # when the owner has moved or resized the window. Both are optional;
         # without them the window opens centered at the theme default and
         # reports nothing. The placement owns the saved value.
-        self._placement = WindowPlacement(parent, dpi_scale, saved_geometry, report_geometry)
+        self._placement = WindowPlacement(
+            parent, dpi_scale, saved_geometry, report_geometry,
+            min_size=theme.COURSE_BUILDER_MIN_SIZE)
         # The display scale factor (issue #51): 1.0 at 100% DPI, 1.5 at
         # 150%. Geometry and pixel sizes are stored in canonical 100%
         # units and scaled to physical pixels on open.
