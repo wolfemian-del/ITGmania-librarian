@@ -1891,7 +1891,7 @@ class LoaderFilterPersistenceTests(unittest.TestCase):
             instance = self.make_loaded_instance(type_="dance-double")
             instance.settings_path = Path(directory) / "settings.json"
             loaded = make_loader(app=instance)
-            # The initial refresh arrives through on_nothing_loaded, wired
+            # The empty-table repaint arrives through on_nothing_loaded, wired
             # to the app's real handler, which calls the (mocked) refresh.
             loaded.on_nothing_loaded = instance._on_nothing_loaded
             # load_cached_data reads through the snapshot store (proposal
