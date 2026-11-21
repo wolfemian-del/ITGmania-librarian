@@ -16,7 +16,7 @@ except ImportError:
 from pathlib import Path
 
 # The release number, shown in Help > About. Keep it equal to the newest heading in CHANGELOG.md (a test checks).
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 from itgmania_library import theme
 from itgmania_library.advanced_search import AdvancedSearch
