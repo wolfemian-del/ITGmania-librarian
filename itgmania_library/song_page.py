@@ -183,7 +183,7 @@ class SongPage:
                                       font=theme.FONT_BODY)
         self._banner_label.pack(fill="x", padx=pad, pady=(pad, 0))
         self._title_label = tk.Label(window, bg=theme.BG_WINDOW, fg=theme.TEXT_TITLE,
-                                     font=theme.FONT_DIALOG_TITLE, anchor="w")
+                                     font=theme.FONT_SONG_TITLE, anchor="w")
         self._title_label.pack(fill="x", padx=pad,
                                pady=(scale_pixels(10, self.dpi_scale), 0))
         self._artist_label = tk.Label(window, bg=theme.BG_WINDOW, fg=theme.TEXT_MUTED,

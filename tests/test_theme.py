@@ -132,5 +132,52 @@ class ThemeValuesTests(unittest.TestCase):
         self.assertNotIn("tkinter", (PACKAGE / "theme.py").read_text(encoding="utf-8"))
 
 
+class ApplyFontsTests(unittest.TestCase):
+    """The bundled-font switch (Proposal 0017): apply_fonts() rebinds the
+    public font names, and every test restores Segoe afterwards so no
+    font set leaks into the next test."""
+
+    def setUp(self):
+        super().setUp()
+        self.addCleanup(theme.apply_fonts, barlow=False, wendy=False)
+
+    def test_segoe_values_are_the_default(self):
+        self.assertEqual(theme.FONT_BODY, ("Segoe UI", 9))
+        self.assertEqual(theme.FONT_BODY_BOLD, ("Segoe UI Semibold", 9))
+        self.assertEqual(theme.FONT_SONG_TITLE, ("Segoe UI Semibold", 15))
+        self.assertEqual(theme.FONT_APP_TITLE, ("Segoe UI Semibold", 19))
+
+    def test_apply_barlow_rebinds_body_names_only(self):
+        theme.apply_fonts(barlow=True, wendy=False)
+        self.assertEqual(theme.FONT_BODY, ("Barlow Condensed", 11))
+        self.assertEqual(theme.FONT_BODY_BOLD, ("Barlow Condensed", 11, "bold"))
+        self.assertEqual(theme.FONT_SMALL, ("Barlow Condensed", 10))
+        self.assertEqual(theme.FONT_ENTRY_LARGE, ("Barlow Condensed", 12))
+        self.assertEqual(theme.FONT_PANEL_TITLE, ("Barlow Condensed SemiBold", 14))
+        self.assertEqual(theme.FONT_SONG_TITLE, ("Barlow Condensed SemiBold", 15))
+        self.assertEqual(theme.FONT_APP_TITLE, ("Segoe UI Semibold", 19))
+
+    def test_apply_wendy_rebinds_title_names_only(self):
+        theme.apply_fonts(barlow=False, wendy=True)
+        self.assertEqual(theme.FONT_APP_TITLE, ("Wendy", 26))
+        self.assertEqual(theme.FONT_DIALOG_TITLE, ("Wendy", 20))
+        self.assertEqual(theme.FONT_COURSE_TITLE, ("Wendy", 22))
+        self.assertEqual(theme.FONT_BODY, ("Segoe UI", 9))
+
+    def test_apply_both_then_reset_restores_segoe(self):
+        theme.apply_fonts(barlow=True, wendy=True)
+        self.assertEqual(theme.FONT_BODY, ("Barlow Condensed", 11))
+        self.assertEqual(theme.FONT_APP_TITLE, ("Wendy", 26))
+        theme.apply_fonts(barlow=False, wendy=False)
+        self.assertEqual(theme.FONT_BODY, ("Segoe UI", 9))
+        self.assertEqual(theme.FONT_APP_TITLE, ("Segoe UI Semibold", 19))
+
+    def test_clearing_one_flag_restores_only_that_family(self):
+        theme.apply_fonts(barlow=True, wendy=True)
+        theme.apply_fonts(barlow=True, wendy=False)
+        self.assertEqual(theme.FONT_BODY, ("Barlow Condensed", 11))
+        self.assertEqual(theme.FONT_APP_TITLE, ("Segoe UI Semibold", 19))
+
+
 if __name__ == "__main__":
     unittest.main()

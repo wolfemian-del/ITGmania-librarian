@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fonts
+
+- The app now uses Barlow Condensed for body and UI text and Wendy for its four title labels, in the Simply Love style: the fonts travel with the app and load into the running process only, so nothing is installed on your machine. If a font fails to load, that text falls back to Segoe UI at the old sizes. (Proposal 0017.)
+
 ## 1.4.0 - 2026-11-20
 
 ### New name

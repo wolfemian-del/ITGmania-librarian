@@ -72,6 +72,7 @@ LAYERS = {
     "library_geometry": 0,
     "library_course": 0,
     "theme": 0,
+    "library_fonts": 0,
 }
 ENTRY_FILES = frozenset(("__init__", "__main__"))
 
