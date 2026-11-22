@@ -1,6 +1,6 @@
 > **Provenance:** load-efficiency review by DeepSeek, 2026-11-12 (original filename `deepseek_markdown_20261112_75d63a.md`). Landed in the repo with the roadmap (2026-11-22). It names the old repository `ITGmania-library-viewer`, renamed to `ITGmania-librarian` 2026-11-18.
 >
-> This is a hypothesis list, not a decision document: it measured nothing and every number in it was asserted. P1, P2, and P5 were verified by Muse against the owner's real measurements 2026-11-22 (7,499 files, 42,375 rows; parse 29 s of a ~30 s worker, insert 14 s, ~40 s end-to-end warm); P0, P3, and P4 were killed by measurement. Body below is verbatim as delivered; only this header was added.
+> This is a hypothesis list, not a decision document: it measured nothing and every number in it was asserted. P1, P2, and P5 were verified by Muse against the owner's real measurements 2026-11-22 (7,499 files, 42,375 rows; parse ~26–29 s of a ~30 s worker, insert 14 s, ~40 s end-to-end warm); P0, P3, and P4 were killed by measurement (P0 by a separate startup measurement, snapshot load ~0.35 s, not by the refresh timings above). Body below is verbatim as delivered; only this header was added.
 
 # ITGmania Library Viewer — Load Efficiency Review
 
