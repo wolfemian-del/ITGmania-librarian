@@ -18,10 +18,11 @@ Usage (from the repo root, next to launch.py):
 (the folder holding one file per song, flat, no subfolders);
 <stats-xml> is the Player Stats.xml from the same dialog.
 
-Two passes are timed, so pass 1 shows the cold read and pass 2 the
-warm one. Compare the worker subtotal with the warm Load / refresh
-total you timed in the app (~30 s): the remainder is queue delivery
-plus the table insert on the main thread.
+Two passes are timed. Pass 1 may already use cached file contents;
+measuring a cold read needs separate preparation outside this script.
+Pass 2 measures a warm read. Compare the worker subtotal with the warm
+Load / refresh total you timed in the app (~30 s): the remainder is
+queue delivery plus the table insert on the main thread.
 """
 
 from __future__ import annotations
@@ -114,7 +115,8 @@ def main(argv=None):
             print(f"  {name:<15} {times[name]:7.2f} s")
         print(f"  {'worker total':<15} {total:7.2f} s"
               f"  (parse: {len(files) / max(times['parse'], 1e-9):,.0f} files/s)")
-        if counts["skipped_files"] or counts["files_without_charts"]:
+        if (counts["skipped_files"] or counts["files_without_charts"]
+                or counts["skipped_blocks"]):
             print(f"  skipped files: {counts['skipped_files']},"
                   f" files without charts: {counts['files_without_charts']},"
                   f" skipped blocks: {counts['skipped_blocks']}")
