@@ -1,6 +1,6 @@
 """The import-surface pin (Proposal 0010, Step 1).
 
-Every name the app consumes from the nine data modules, grouped by the
+Every name the app consumes from the ten modules, grouped by the
 module it lives in. The pin was built during the split so no move could
 silently drop a name: if a name stops resolving from its home module,
 this fails before the suite ever reaches the behaviour tests. With
