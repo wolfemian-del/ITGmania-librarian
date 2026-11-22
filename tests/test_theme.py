@@ -137,15 +137,30 @@ class ApplyFontsTests(unittest.TestCase):
     public font names, and every test restores Segoe afterwards so no
     font set leaks into the next test."""
 
+    # All nine public font names with their Segoe values: the reset
+    # assertions check every one, so a missed reset on any name fails.
+    SEGOE_FONTS = {
+        "FONT_BODY": ("Segoe UI", 9),
+        "FONT_BODY_BOLD": ("Segoe UI Semibold", 9),
+        "FONT_SMALL": ("Segoe UI", 8),
+        "FONT_ENTRY_LARGE": ("Segoe UI", 10),
+        "FONT_PANEL_TITLE": ("Segoe UI Semibold", 11),
+        "FONT_DIALOG_TITLE": ("Segoe UI Semibold", 15),
+        "FONT_COURSE_TITLE": ("Segoe UI Semibold", 17),
+        "FONT_APP_TITLE": ("Segoe UI Semibold", 19),
+        "FONT_SONG_TITLE": ("Segoe UI Semibold", 15),
+    }
+
     def setUp(self):
         super().setUp()
         self.addCleanup(theme.apply_fonts, barlow=False, wendy=False)
 
+    def assert_segoe(self):
+        for name, value in self.SEGOE_FONTS.items():
+            self.assertEqual(getattr(theme, name), value, name)
+
     def test_segoe_values_are_the_default(self):
-        self.assertEqual(theme.FONT_BODY, ("Segoe UI", 9))
-        self.assertEqual(theme.FONT_BODY_BOLD, ("Segoe UI Semibold", 9))
-        self.assertEqual(theme.FONT_SONG_TITLE, ("Segoe UI Semibold", 15))
-        self.assertEqual(theme.FONT_APP_TITLE, ("Segoe UI Semibold", 19))
+        self.assert_segoe()
 
     def test_apply_barlow_rebinds_body_names_only(self):
         theme.apply_fonts(barlow=True, wendy=False)
@@ -169,8 +184,7 @@ class ApplyFontsTests(unittest.TestCase):
         self.assertEqual(theme.FONT_BODY, ("Barlow Condensed", 11))
         self.assertEqual(theme.FONT_APP_TITLE, ("Wendy", 26))
         theme.apply_fonts(barlow=False, wendy=False)
-        self.assertEqual(theme.FONT_BODY, ("Segoe UI", 9))
-        self.assertEqual(theme.FONT_APP_TITLE, ("Segoe UI Semibold", 19))
+        self.assert_segoe()
 
     def test_clearing_one_flag_restores_only_that_family(self):
         theme.apply_fonts(barlow=True, wendy=True)

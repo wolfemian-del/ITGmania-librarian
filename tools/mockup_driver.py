@@ -46,7 +46,8 @@ def rows():
                     "Pack": course_path.split("/")[0],
                     "Type": "dance-single", "Difficulty": difficulty, "Meter": meter,
                     "BPM": bpm, "Time": time_value,
-                    "Score": 985000.0 if title == "One" and difficulty == "Hard" else "",
+                    "Score": 985000.0 if title == "One" and difficulty == "Hard"
+            else "",
                     "Course path": course_path, "Music": "song.ogg",
                     "SongMusic": "song.ogg",
                     "Banner": banner, "Background": "", "Jacket": "", "CDTitle": "",
@@ -87,6 +88,7 @@ def main():
         theme.FONT_ENTRY_LARGE = (family, body + 1)
         theme.FONT_PANEL_TITLE = (family, body + 3, "bold")
         theme.FONT_DIALOG_TITLE = (family, body + 8, "bold")
+        theme.FONT_SONG_TITLE = (family, body + 8, "bold")
         theme.FONT_COURSE_TITLE = (family, body + 10, "bold")
         theme.FONT_APP_TITLE = (family, body + 13, "bold")
 
@@ -126,7 +128,8 @@ def main():
     with patch.object(app.LibraryApp, "_settings_file_path",
                       staticmethod(lambda: settings_path)):
         application = app.LibraryApp(root)
-    pump_until(root, lambda: len(application._table.tree.get_children()) == len(all_rows))
+    pump_until(root, lambda: len(application._table.tree.get_children())
+               == len(all_rows))
     for _ in range(5):
         root.update()
 

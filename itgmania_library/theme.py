@@ -74,6 +74,8 @@ FONT_APP_TITLE = ("Segoe UI Semibold", 19)    # main window heading
 FONT_SONG_TITLE = ("Segoe UI Semibold", 15)   # song-page title
 FONT_MONO_BOLD = ("Consolas", 9, "bold")      # query text in Advanced Search
 
+# The two sets cover disjoint names: apply_fonts() gives a name to the
+# Barlow set first, so a name added to both would silently take Barlow.
 _barlow_fonts = {
     "FONT_BODY": ("Barlow Condensed", 11),
     "FONT_BODY_BOLD": ("Barlow Condensed", 11, "bold"),

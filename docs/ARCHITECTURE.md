@@ -18,7 +18,9 @@ package's `__main__.py`, and is the same entry point by another name.
 
 A module only imports modules in lower layers. The layering below was
 measured from the import graph (no cycles) at main `5fc8d47` (v1.4.0), not
-drawn from intent.
+drawn from intent; it was extended with `library_fonts.py` at layer 0 in
+the Proposal 0017 implementation, which the layer test verifies on every
+run.
 
 ```
 5  library_librarian.py — the shell (LibraryApp)

@@ -4,8 +4,11 @@ The Windows registration call cannot run in this sandbox, so the tests
 that exercise the registration flow pass a fake _register callable. The
 tests that call load_fonts() with no fake run the real platform path and
 assert only what holds on every platform; the one test that depends on
-the non-Windows early return is skipped on Windows.
+the non-Windows early return is skipped on Windows. A test that means
+to reach the real Windows font API uses a real bundled font file, never
+garbage bytes.
 """
+import shutil
 import sys
 import unittest
 from pathlib import Path
@@ -22,6 +25,7 @@ BARLOW_FILES = (
 )
 WENDY_FILES = ("wendy.ttf",)
 ALL_FILES = BARLOW_FILES + WENDY_FILES
+REPO_FONTS = Path(__file__).resolve().parent.parent / "fonts"
 
 
 class LoadFontsTests(unittest.TestCase):
@@ -33,9 +37,13 @@ class LoadFontsTests(unittest.TestCase):
         return folder.name
 
     def test_missing_folder_returns_nothing_loaded(self):
-        result = load_fonts("/definitely/not/a/fonts/folder")
-        self.assertEqual(result, FontLoadResult(False, False, (), tuple(
-            f"/definitely/not/a/fonts/folder/{name}" for name in ALL_FILES)))
+        # The expectation is built with Path, not a hard-coded string:
+        # on Windows the loader's paths carry backslashes.
+        folder = Path("/definitely/not/a/fonts/folder")
+        result = load_fonts(folder)
+        self.assertEqual(result, FontLoadResult(
+            False, False, (),
+            tuple(str(folder / name) for name in ALL_FILES)))
 
     def test_empty_folder_returns_nothing_loaded(self):
         folder = self._folder_with(())
@@ -47,16 +55,22 @@ class LoadFontsTests(unittest.TestCase):
             sorted(Path(p).name for p in result.failed), sorted(ALL_FILES))
 
     def test_partial_folder_reports_the_missing_files(self):
-        folder = self._folder_with(WENDY_FILES)
-        result = load_fonts(folder)
+        # The one present file is the real bundled wendy.ttf, so on
+        # Windows the real font API is fed a valid font, not garbage.
+        folder = TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        shutil.copy(REPO_FONTS / "wendy.ttf", folder.name)
+        result = load_fonts(folder.name)
         self.assertFalse(result.barlow)
-        self.assertFalse(result.wendy)
-        self.assertEqual(result.files, ())
-        # The four Barlow files are missing on every platform. The
-        # Wendy file is garbage bytes, so on Windows it also fails to
-        # register and joins them; off Windows nothing is attempted.
-        self.assertTrue(
-            set(BARLOW_FILES) <= {Path(p).name for p in result.failed})
+        self.assertEqual(
+            sorted(Path(p).name for p in result.failed), sorted(BARLOW_FILES))
+        if sys.platform == "win32":
+            self.assertTrue(result.wendy)
+            self.assertEqual(
+                [Path(p).name for p in result.files], ["wendy.ttf"])
+        else:
+            self.assertFalse(result.wendy)
+            self.assertEqual(result.files, ())
 
     @unittest.skipUnless(sys.platform != "win32",
                          "the real path registers fonts on Windows")
@@ -74,9 +88,17 @@ class LoadFontsTests(unittest.TestCase):
         # The repo ships fonts/ beside the package with all five files,
         # so the default resolves there and nothing is missing. On
         # Windows the real files register; off Windows nothing is
-        # attempted; either way nothing is reported failed.
+        # attempted.
         result = load_fonts()
         self.assertEqual(result.failed, ())
+        if sys.platform == "win32":
+            self.assertTrue(result.barlow)
+            self.assertTrue(result.wendy)
+            self.assertEqual(len(result.files), 5)
+        else:
+            self.assertFalse(result.barlow)
+            self.assertFalse(result.wendy)
+            self.assertEqual(result.files, ())
 
     def test_fake_register_success_loads_both_families(self):
         folder = self._folder_with(ALL_FILES)
@@ -106,6 +128,45 @@ class LoadFontsTests(unittest.TestCase):
             [Path(p).name for p in result.failed],
             ["BarlowCondensed-SemiBold.ttf"])
         self.assertEqual(sorted(seen), sorted(ALL_FILES))
+
+    def test_unregister_called_for_the_files_a_failed_family_registered(self):
+        # The cleanup the rejected-file test cannot see: when SemiBold
+        # is rejected, the three Barlow files this call registered are
+        # unregistered again, so the process font state matches the
+        # reported result.
+        folder = self._folder_with(ALL_FILES)
+        unregistered = []
+
+        def register(path):
+            return path.name != "BarlowCondensed-SemiBold.ttf"
+
+        result = load_fonts(folder, _register=register,
+                            _unregister=lambda p: unregistered.append(p.name))
+        self.assertFalse(result.barlow)
+        self.assertEqual(sorted(unregistered), [
+            "BarlowCondensed-Bold.ttf",
+            "BarlowCondensed-Light.ttf",
+            "BarlowCondensed-Regular.ttf",
+        ])
+
+    def test_register_error_falls_back_without_raising(self):
+        # Proposal 0017 §4.1: a font error never stops the app starting.
+        folder = self._folder_with(ALL_FILES)
+
+        def register(path):
+            raise OSError("the OS refused the file")
+
+        result = load_fonts(folder, _register=register)
+        self.assertEqual(result, FontLoadResult(False, False, (), ()))
+
+    def test_register_attribute_error_falls_back_without_raising(self):
+        folder = self._folder_with(ALL_FILES)
+
+        def register(path):
+            raise AttributeError("no such font call")
+
+        result = load_fonts(folder, _register=register)
+        self.assertEqual(result, FontLoadResult(False, False, (), ()))
 
     def test_double_load_is_idempotent(self):
         folder = self._folder_with(ALL_FILES)
