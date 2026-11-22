@@ -12,6 +12,16 @@
 
 In plain language: the app gets the Simply Love look the owner picked by blind comparison — Barlow Condensed for every bit of body and UI text, and Wendy for the four title labels the app itself writes. The font files travel with the app in a new `fonts/` folder and are loaded into the running process only, so nothing is installed on the machine and the app looks the same on any Windows PC. The one real decision in this proposal is where that loading lives and how the theme switches to the new fonts: a small new module owns the loading, and `theme.py` gains a setter that the startup code calls before any window is built. If either font fails to load, that font's text falls back to today's Segoe at today's sizes, and the app never fails to start over a font.
 
+## Revision 1 (2026-11-22, from the Greptile and Grok reviews of PR #265)
+
+Grok reviewed as sole reviewer and signed off: **Approve**. Every cited code fact holds against main `05cefcb`, all seven decisions are the right ones, the loader contract is complete, the test plan covers the important edges, and Q1 is agreed (the About dialog's "Version …" line stays Barlow). Greptile reviewed COMMENTED, confidence 4/5, safe to merge, with one P2 finding, confirmed and fixed here. What changed:
+
+| Finding | Where it is folded in |
+|---|---|
+| The loader's argument disagreed: §4.1 said `load_fonts(fonts_dir)` while §4.3 called `load_fonts()` with no argument, leaving the implementer guessing who chooses the folder (Greptile P2) | §4.1 now defines `load_fonts(fonts_dir=None)` with the module-relative default; §4.3 calls it with no argument |
+| The ARCHITECTURE.md amendment should also cover the layer-table date line and the module-inventory table (Grok, non-blocking) | §5 names the four spots to update; there is no date line on the layer table, so there is nothing to update there |
+| Consider logging or returning the files that failed to register, useful for the Windows smoke check (Grok, non-blocking, not required by the contract) | Recorded here for the implementer, not a contract change: `FontLoadResult` already carries the files that did register, and the loader may log the failures for the smoke check |
+
 ## 1. Background and Goal
 
 The owner compared mockups of three fonts on the real app and picked Barlow Condensed over Yanone and Miso. Miso cannot be bundled at all (its license forbids redistributing it with source code), and Wendy's coverage gaps would show mid-word on accented song titles, so Wendy is used only on the four title strings the app controls and the song-page title stays Barlow — that amendment dropped the whole fallback question. The roadmap stages this as the immediate next step, a scoped update ahead of theme 2, with a short proposal first and then one implementation PR.
@@ -62,7 +72,7 @@ The sizes this proposal uses are the scope doc's width-matched equalizing sizes:
 
 **4.1 `library_fonts.py` (layer 0, no Tkinter, no package imports).** One-sentence description: given the folder the bundled fonts live in, it registers them with the operating system for this process only and reports which families resolved.
 
-Public surface: `load_fonts(fonts_dir)` returns a frozen dataclass `FontLoadResult` with two booleans, `barlow` and `wendy`, and the list of files registered. It locates the files relative to the module file, never the working directory. On Windows it calls `AddFontResourceEx` with `FR_PRIVATE` through `ctypes`; it returns before touching `ctypes.windll` when `sys.platform != "win32"`, and catches `(AttributeError, OSError)`, so importing the module elsewhere still works. Loading twice is idempotent — a second call returns the same result without re-registering. A missing folder, a missing file or a corrupt file yields `False` for that family, never an exception. The module must not reach back into the package: no `theme` import, no settings read, no window code.
+Public surface: `load_fonts(fonts_dir=None)` returns a frozen dataclass `FontLoadResult` with two booleans, `barlow` and `wendy`, and the list of files registered. When `fonts_dir` is None it defaults to the `fonts/` directory beside the package, derived from the module file (`Path(__file__).resolve().parent.parent / "fonts"`), never the working directory. `main()` calls it with no argument and takes that default; a test passes its own folder. On Windows it calls `AddFontResourceEx` with `FR_PRIVATE` through `ctypes`; it returns before touching `ctypes.windll` when `sys.platform != "win32"`, and catches `(AttributeError, OSError)`, so importing the module elsewhere still works. Loading twice is idempotent — a second call returns the same result without re-registering. A missing folder, a missing file or a corrupt file yields `False` for that family, never an exception. The module must not reach back into the package: no `theme` import, no settings read, no window code.
 
 **4.2 `theme.py`: two sets and a setter.** The module holds the Segoe set (today's values, unchanged) and the Barlow/Wendy set, and `apply_fonts(*, barlow: bool, wendy: bool)` rebinds the public names: with `barlow` true, `FONT_BODY`, `FONT_BODY_BOLD`, `FONT_SMALL`, `FONT_ENTRY_LARGE` and `FONT_PANEL_TITLE` take the Barlow sizes and `FONT_SONG_TITLE` takes Barlow SemiBold 15; with `wendy` true, `FONT_DIALOG_TITLE`, `FONT_COURSE_TITLE` and `FONT_APP_TITLE` take the Wendy sizes. `FONT_MONO_BOLD` stays Consolas in both sets. Importing the module leaves the Segoe values in place, so any test that never calls the setter sees today's fonts.
 
@@ -83,7 +93,7 @@ Does not change:
 Deliberately changed:
 
 - Every `FONT_*` value the window reads, through the setter — the only call site that changes by hand is `song_page.py:186`.
-- `docs/ARCHITECTURE.md`: the module inventory and layer table gain `library_fonts.py`; the "exactly two places" line becomes three places across two modules (geometry: work-area lookup and DPI awareness; fonts: font registration); the entry-point paragraph gains the font load.
+- `docs/ARCHITECTURE.md`: the layer diagram (layer 0 gains `library_fonts.py`), the Shared foundations row, the module-by-module paragraph, and the module-inventory table (a new row for `library_fonts.py`); the "exactly two places" line becomes three places across two modules (geometry: work-area lookup and DPI awareness; fonts: font registration); the entry-point paragraph gains the font load. There is no date line on the layer table, so there is nothing to update there.
 - `docs/fonts-barlow-wendy-scope.md`: its mockup-driver citation now points at `tools/mockup_driver.py`.
 
 ## 6. Test Plan (for the implementation PR)
