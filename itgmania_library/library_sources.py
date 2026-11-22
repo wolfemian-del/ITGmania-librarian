@@ -121,7 +121,7 @@ def _score_for_chart(scores: dict, base_key: tuple[str, str, str],
     the value the score is keyed on: for the parse it is the chart's
     #DESCRIPTION (falling back to #CHARTNAME); for a sync it is the row's
     carried "Score description" field, falling back to the Chart field
-    for a row that lacks it (the schema bump to 4 discards snapshots
+    for a row that lacks it (the schema bump to 6 discards snapshots
     written before the field existed). `edit_index` is the once-per-run
     index edit_fallback_index built from `scores` (issue #203).
     """
@@ -227,7 +227,7 @@ def merge_scores(rows: list[dict], scores: dict, edit_index: dict | None = None)
     The parse carries the scoring description in the row, so the merge
     looks up the same entry the parse did -- including for an Edit chart
     carrying both #DESCRIPTION and a different #CHARTNAME. The schema
-    bump to 4 discards snapshots written before this field existed, so
+    bump to 6 discards snapshots written before this field existed, so
     they rebuild with it; the Chart fallback is only a defensive path
     for a row that somehow lacks the field. `edit_index` is the
     once-per-run index edit_fallback_index built from `scores`; a

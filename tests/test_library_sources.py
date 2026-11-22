@@ -1243,7 +1243,7 @@ class MergeScoresTests(unittest.TestCase):
 
     def test_merge_scores_for_a_row_without_a_score_description_falls_back_to_the_chart_field(self):
         # A row that somehow lacks the carried description falls back to
-        # the Chart field (defensive: the schema bump to 4 discards
+        # the Chart field (defensive: the schema bump to 6 discards
         # snapshots written before the field existed).
         with tempfile.TemporaryDirectory() as directory:
             stats_file = Path(directory) / "Stats.xml"
