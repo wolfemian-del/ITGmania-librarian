@@ -27,3 +27,4 @@ line in each file's header is the record; this index summarizes it.
 | [0014](0014-startup-wiring.md) | Make the startup wiring plain | Accepted 2026-11-18 | PRs #234, #235 (issue #208) |
 | [0015](0015-rename-to-librarian.md) | Rename the app to ITGmania Librarian | Accepted 2026-11-18 | – (issue #209) |
 | [0016](0016-window-placement.md) | One placement rule for the dialogs: centered over the main window, remembered once moved | Draft — Revision 3, awaiting the owner's Accepted mark | – (issue #103) |
+| [0017](0017-fonts-barlow-wendy.md) | Barlow Condensed body text and Wendy titles, bundled and loaded per-process | Draft — for review | – |
