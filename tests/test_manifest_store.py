@@ -110,6 +110,21 @@ class ManifestStoreTests(unittest.TestCase):
         self.assertFalse(result.loaded)
         self.assertEqual(result.reason, "invalid")
 
+    def test_read_bool_or_float_format_version_reports_invalid(self):
+        # JSON true and 1.0 both compare equal to 1, so a plain != check
+        # would accept them as version 1.
+        for version in (True, 1.0):
+            with tempfile.TemporaryDirectory() as directory:
+                store, path = self.make_store(directory)
+                payload = {"format_version": version, "cache_dir": str(directory),
+                           "stats_file": str(Path(directory) / "Stats.xml"),
+                           "stats_mtime_ns": 1, "stats_size": 1, "files": []}
+                path.write_text(json.dumps(payload), encoding="utf-8")
+                result = store.read(Path(directory), Path(directory) / "Stats.xml")
+
+            self.assertFalse(result.loaded, f"version {version!r} accepted")
+            self.assertEqual(result.reason, "invalid")
+
     def test_read_entry_missing_a_field_reports_invalid(self):
         with tempfile.TemporaryDirectory() as directory:
             store, path = self.make_store(directory)

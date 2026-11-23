@@ -8,6 +8,7 @@ tests drive _loaded directly with the delivery kwargs the worker sends.
 """
 
 import json
+import os
 import queue
 import tempfile
 import threading
@@ -174,6 +175,8 @@ class ManifestRefreshTests(unittest.TestCase):
         rows2, kwargs2 = self.run_worker(instance, calls, fail_names=("bad.cache",))
         self.assertIn("bad.cache", calls)
         self.assertEqual(kwargs2["skipped_files"], 1)
+        # The retried failure counts in the re-parsed number (§4.4).
+        self.assertEqual(kwargs2["reparsed_files"], 1)
         self.assertEqual(len(rows2[0]), 1)
         # Once it parses, it lands in the manifest and is reused like the rest.
         calls.clear()
@@ -289,7 +292,10 @@ class ManifestRefreshTests(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertEqual(rows2[0], rows1[0])
         self.assertEqual(kwargs2["reparsed_files"], 0)
-        self.assertIn("library_cache_manifest.json", kwargs2["cache_error"])
+        # The failure is the manifest's, not the snapshot's: the snapshot
+        # was saved, so the message must not say otherwise.
+        self.assertIn("library_cache_manifest.json", kwargs2["manifest_error"])
+        self.assertEqual(kwargs2["cache_error"], "")
         # The failed write left the previous manifest untouched on disk.
         self.assertEqual((self.root / "library_cache_manifest.json").read_bytes(),
                          manifest_bytes)
@@ -303,6 +309,245 @@ class ManifestRefreshTests(unittest.TestCase):
         self.assertEqual(kwargs3["cache_error"], "")
         self.assertEqual((self.root / "library_cache_manifest.json").read_bytes(),
                          manifest_bytes)
+
+    def test_failed_manifest_write_then_new_file_for_known_song(self):
+        # Claude's finding 1 (PR #269): a failed manifest write, plus a
+        # new file for an already-known song, showed duplicate rows — the
+        # stale manifest claims the old file alone, and the coverage check
+        # compares song-directory sets, not which files claim them.
+        self.write_cache("a.cache", song="Pack/A")
+        instance = self.make_instance()
+        calls = []
+        rows1, _ = self.run_worker(instance, calls)
+        self.assertEqual(len(rows1[0]), 1)
+        self.write_cache("b.cache", song="Pack/A")
+        calls.clear()
+        with patch.object(instance.manifest_store, "write",
+                          side_effect=OSError("disk full")):
+            rows2, _ = self.run_worker(instance, calls)
+        self.assertEqual(len(rows2[0]), 2)
+        calls.clear()
+        rows3, kwargs3 = self.run_worker(instance, calls)
+        self.assertEqual(sorted(calls), ["a.cache", "b.cache"])
+        self.assertEqual(len(rows3[0]), 2)
+        self.assertEqual(rows3[0], rows2[0])
+        self.assertNotIn("reparsed_files", kwargs3)
+
+    def test_failed_snapshot_write_records_no_manifest(self):
+        # The manifest is written only after a successful snapshot write:
+        # a changed file whose snapshot write failed must be re-parsed
+        # next time, not recorded as up to date.
+        self.write_cache("a.cache", song="Pack/A")
+        self.write_cache("b.cache", song="Pack/B")
+        instance = self.make_instance()
+        calls = []
+        rows1, _ = self.run_worker(instance, calls)
+        manifest_bytes = (self.root / "library_cache_manifest.json").read_bytes()
+        self.write_cache("a.cache", song="Pack/A", charts=2)
+        real_write = instance.snapshot_store.write
+
+        def failing_write(*args):
+            raise OSError("disk full")
+
+        instance.snapshot_store.write = failing_write
+        calls.clear()
+        rows2, kwargs2 = self.run_worker(instance, calls)
+        self.assertEqual(len(rows2[0]), 3)
+        self.assertIn("disk full", kwargs2["cache_error"])
+        self.assertEqual((self.root / "library_cache_manifest.json").read_bytes(),
+                         manifest_bytes)
+        instance.snapshot_store.write = real_write
+        calls.clear()
+        rows3, _ = self.run_worker(instance, calls)
+        self.assertIn("a.cache", calls)
+        self.assertEqual(len(rows3[0]), 3)
+        self.assertEqual(rows3[0], rows2[0])
+
+    def test_coverage_failure_falls_back_to_full_parse(self):
+        # A readable manifest that does not cover the snapshot (here a
+        # hand-edited song directory) falls back to a full parse.
+        self.write_cache("a.cache", song="Pack/A")
+        self.write_cache("b.cache", song="Pack/B")
+        instance = self.make_instance()
+        calls = []
+        rows1, _ = self.run_worker(instance, calls)
+        manifest_path = self.root / "library_cache_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for item in manifest["files"]:
+            if item["name"] == "a.cache":
+                item["song_dir"] = "Pack/Elsewhere"
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        calls.clear()
+        rows2, kwargs2 = self.run_worker(instance, calls)
+        self.assertEqual(sorted(calls), ["a.cache", "b.cache"])
+        self.assertEqual(rows2[0], rows1[0])
+        self.assertNotIn("reparsed_files", kwargs2)
+
+    def test_unusable_snapshot_with_good_manifest_falls_back_to_full_parse(self):
+        self.write_cache("a.cache", song="Pack/A")
+        self.write_cache("b.cache", song="Pack/B")
+        instance = self.make_instance()
+        calls = []
+        rows1, _ = self.run_worker(instance, calls)
+        (self.root / "library_cache.json").write_text("not json", encoding="utf-8")
+        calls.clear()
+        rows2, kwargs2 = self.run_worker(instance, calls)
+        self.assertEqual(sorted(calls), ["a.cache", "b.cache"])
+        self.assertEqual(rows2[0], rows1[0])
+        self.assertNotIn("reparsed_files", kwargs2)
+
+    def test_stats_replaced_during_read_is_merged_next_refresh(self):
+        # The stat is taken before the read: if Stats.xml is replaced
+        # while it is being read, the manifest records the old stat, so
+        # the next refresh re-merges. Taken after, it would record the
+        # new stat against old scores and skip the merge.
+        self.write_cache("a.cache", song="Pack/Song")
+        self.stats_file.write_text(stats_text(), encoding="utf-8")
+        instance = self.make_instance()
+        calls = []
+        rows1, _ = self.run_worker(instance, calls)
+        self.assertEqual(rows1[0][0]["Score"], 456)
+        real_index = loader.stats_index
+
+        def replacing_index(path):
+            scores = real_index(path)
+            self.stats_file.write_text(stats_text(percent="0.50", score="789"),
+                                       encoding="utf-8")
+            return scores
+
+        calls.clear()
+        with patch.object(loader, "stats_index", replacing_index):
+            rows2, _ = self.run_worker(instance, calls)
+        self.assertEqual(rows2[0][0]["Score"], 456)
+        calls.clear()
+        rows3, _ = self.run_worker(instance, calls)
+        self.assertEqual(calls, [])
+        self.assertEqual(rows3[0][0]["Score"], 789)
+
+    def test_stats_mtime_only_change_merges_scores(self):
+        self.write_cache("a.cache", song="Pack/Song")
+        self.stats_file.write_text(stats_text(), encoding="utf-8")
+        instance = self.make_instance()
+        calls = []
+        rows1, _ = self.run_worker(instance, calls)
+        self.assertEqual(rows1[0][0]["Score"], 456)
+        calls.clear()
+        # Same length, new mtime: the score changes digits (456 -> 789),
+        # so only the mtime moves.
+        self.stats_file.write_text(stats_text(percent="0.50", score="789"),
+                                   encoding="utf-8")
+        rows2, kwargs2 = self.run_worker(instance, calls)
+        self.assertEqual(calls, [])
+        self.assertEqual(kwargs2["reparsed_files"], 0)
+        self.assertEqual(rows2[0][0]["Score"], 789)
+
+    def test_stats_size_only_change_merges_scores(self):
+        self.write_cache("a.cache", song="Pack/Song")
+        self.stats_file.write_text(stats_text(), encoding="utf-8")
+        instance = self.make_instance()
+        calls = []
+        rows1, _ = self.run_worker(instance, calls)
+        manifest = json.loads(
+            (self.root / "library_cache_manifest.json").read_text(encoding="utf-8"))
+        old_mtime_ns = manifest["stats_mtime_ns"]
+        calls.clear()
+        # Longer score, old mtime: only the size moves.
+        self.stats_file.write_text(stats_text(percent="0.50", score="1000000"),
+                                   encoding="utf-8")
+        os.utime(self.stats_file, ns=(old_mtime_ns, old_mtime_ns))
+        rows2, kwargs2 = self.run_worker(instance, calls)
+        self.assertEqual(calls, [])
+        self.assertEqual(kwargs2["reparsed_files"], 0)
+        self.assertEqual(rows2[0][0]["Score"], 1000000)
+
+    def test_same_size_file_with_new_mtime_is_reparsed(self):
+        self.write_cache("a.cache", song="Pack/A")
+        instance = self.make_instance()
+        calls = []
+        rows1, _ = self.run_worker(instance, calls)
+        calls.clear()
+        # Same length, new mtime: the title changes one letter.
+        self.write_cache("a.cache", song="Pack/A", title="Sona")
+        rows2, _ = self.run_worker(instance, calls)
+        self.assertEqual(calls, ["a.cache"])
+        self.assertEqual(len(rows2[0]), 1)
+
+    def test_new_size_file_with_old_mtime_is_reparsed(self):
+        self.write_cache("a.cache", song="Pack/A")
+        instance = self.make_instance()
+        calls = []
+        rows1, _ = self.run_worker(instance, calls)
+        manifest = json.loads(
+            (self.root / "library_cache_manifest.json").read_text(encoding="utf-8"))
+        old_mtime_ns = next(item["mtime_ns"] for item in manifest["files"]
+                            if item["name"] == "a.cache")
+        calls.clear()
+        self.write_cache("a.cache", song="Pack/A", charts=2)
+        os.utime(self.cache_dir / "a.cache", ns=(old_mtime_ns, old_mtime_ns))
+        rows2, _ = self.run_worker(instance, calls)
+        self.assertEqual(calls, ["a.cache"])
+        self.assertEqual(len(rows2[0]), 2)
+
+    def test_scandir_stat_failure_skips_the_file_quietly(self):
+        # A file whose stat fails is not in the scan at all: it is not
+        # parsed, and it is not counted in skipped_files.
+        self.write_cache("a.cache", song="Pack/A")
+        instance = self.make_instance()
+
+        class _GhostEntry:
+            name = "ghost.cache"
+
+            def is_file(self):
+                return True
+
+            def stat(self):
+                raise OSError("cannot stat")
+
+        real_scandir = os.scandir
+
+        class _ScandirWithGhost:
+            def __init__(self, path):
+                self._iterator = real_scandir(path)
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                self._iterator.close()
+                return False
+
+            def __iter__(self):
+                yield _GhostEntry()
+                yield from self._iterator
+
+        calls = []
+        with patch.object(os, "scandir", _ScandirWithGhost):
+            rows, kwargs = self.run_worker(instance, calls)
+        self.assertEqual(len(rows[0]), 1)
+        self.assertEqual(kwargs["skipped_files"], 0)
+
+    def test_stats_stat_failure_fails_the_load(self):
+        # The stat is taken before the read, so a Stats.xml that vanishes
+        # before the stat fails the load rather than recording a stat for
+        # scores that were never read.
+        self.write_cache("a.cache", song="Pack/A")
+        instance = self.make_instance()
+        stats_file = self.stats_file
+        real_stat = Path.stat
+
+        def failing_stat(path):
+            if path == stats_file:
+                raise OSError("gone")
+            return real_stat(path)
+
+        with patch.object(Path, "stat", failing_stat):
+            instance._load_worker(self.cache_dir, self.stats_file, generation=1)
+        items = []
+        while not instance._load_results.empty():
+            items.append(instance._load_results.get_nowait())
+        failed = [item for item in items if item[0] == "failed"]
+        self.assertEqual(len(failed), 1)
+        self.assertIn("Could not read", failed[0][1])
 
     def test_changed_stats_merges_scores_without_reparsing(self):
         self.write_cache("a.cache", song="Pack/Song")
@@ -429,6 +674,18 @@ class StatusLineTests(unittest.TestCase):
             instance.status.get(),
             "Scanned 2 files · re-parsed 1 · 2 charts in total"
             " · skipped 1 unreadable.")
+
+    def test_manifest_error_names_the_manifest_not_the_snapshot(self):
+        instance = self.make_loaded()
+        rows = [{"Title": "a"}, {"Title": "b"}]
+        instance._loaded(rows, 2,
+                         manifest_error="library_cache_manifest.json: disk full")
+        self.assertEqual(
+            instance.status.get(),
+            "Scanned 2 files · parsed 2 charts."
+            " Local refresh manifest not saved:"
+            " library_cache_manifest.json: disk full")
+        self.assertNotIn("Local snapshot not saved", instance.status.get())
 
 
 if __name__ == "__main__":

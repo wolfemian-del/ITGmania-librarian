@@ -339,8 +339,14 @@ class LibraryLoader:
         # A scan whose generation is no longer the latest stops quietly. The newer scan keeps the
         # progress bar running, and _loaded / _load_failed ignore anything from an older generation.
         try:
-            scores = stats_index(stats_file)
+            # The stat is taken before the read: the manifest records the
+            # stat of the file the scores were read from. Taken after, a
+            # Stats.xml replaced in the gap would be recorded with the new
+            # stat and old scores, and later refreshes would skip the
+            # merge. Taken before, a change in the other direction only
+            # costs a re-merge next time (the safe direction).
             stats_stat = stats_file.stat()
+            scores = stats_index(stats_file)
             # One scandir walk (proposal 0018, §4.2): the entry stat
             # results are the manifest comparison, so no second stat call.
             # A file whose stat fails is skipped, the way is_file() used
@@ -417,9 +423,22 @@ class LibraryLoader:
                 if (entry is not None
                         and entry["mtime_ns"] == stat.st_mtime_ns
                         and entry["size"] == stat.st_size
-                        and entry["song_dir"] not in duplicate_dirs):
-                    # Unchanged file, uniquely claimed: reuse the
-                    # snapshot's rows for its recorded song directory.
+                        and entry["song_dir"] not in duplicate_dirs
+                        and (entry["rows"] == 0
+                             or len(groups.get(entry["song_dir"], ()))
+                             == entry["rows"])):
+                    # Unchanged file, uniquely claimed, and the snapshot
+                    # group for its song holds exactly the rows the
+                    # manifest recorded for this file — those are the rows
+                    # reused. The group can hold more: a newer file for the
+                    # same song can land in the snapshot while the manifest
+                    # write fails, and the stale manifest still claims the
+                    # old file alone — the coverage check compares
+                    # song-directory sets, not which files claim them, so
+                    # it cannot see that. The zero-row exemption matters:
+                    # a zero-row record's "" group can legitimately be
+                    # non-empty (another file's rows with no
+                    # #SONGFILENAME), which the guard below handles.
                     # A zero-row record claims nothing, so it extends no
                     # rows — its recorded directory is "" and another
                     # file's rows can carry that same directory (a cache
@@ -477,6 +496,7 @@ class LibraryLoader:
                 merge_scores(rows, scores, edit_index)
             nested_song_tree = looks_like_song_tree(cache) if not scanned else False
             cache_error = ""
+            manifest_error = ""
             # The generation check and the snapshot write happen under one lock. Without it, an older
             # scan that passed the check could still be writing after a newer scan had written its
             # own snapshot, leaving the older data on disk.
@@ -499,14 +519,16 @@ class LibraryLoader:
                     # §4.2). A failed manifest write leaves the previous
                     # manifest in place and the next refresh reuses it
                     # (Revision 1); the failure is reported through
-                    # cache_error, naming the file that failed.
+                    # manifest_error, naming the file that failed — the
+                    # snapshot was saved, so it must not be reported
+                    # through cache_error.
                     if manifest_store is not None:
                         try:
                             manifest_store.write(
                                 cache, stats_file, stats_stat.st_mtime_ns,
                                 stats_stat.st_size, new_entries)
                         except (OSError, TypeError, ValueError) as exc:
-                            cache_error = f"library_cache_manifest.json: {exc}"
+                            manifest_error = f"library_cache_manifest.json: {exc}"
 
             # Hand the result to the main thread through the queue. Calling Tk
             # (root.after) from this worker thread is not guaranteed safe.
@@ -517,6 +539,7 @@ class LibraryLoader:
                 "nested_song_tree": nested_song_tree,
                 "refreshed_at": refreshed_at,
                 "cache_error": cache_error,
+                "manifest_error": manifest_error,
                 "source_paths": (str(cache), str(stats_file)),
                 "generation": generation,
             }
@@ -814,7 +837,7 @@ class LibraryLoader:
     def _loaded(self, rows, files, skipped_files=0, files_without_charts=0, skipped_blocks=0,
                 nested_song_tree=False, refreshed_at="", cache_error="",
                 from_cache=False, source_paths=None, generation=None,
-                reparsed_files=None):
+                reparsed_files=None, manifest_error=""):
         if generation is not None and self._load_is_stale(generation):
             return
         self.load_button.configure(state="normal")
@@ -872,3 +895,8 @@ class LibraryLoader:
                 + f" Snapshot refreshed {format_refresh_time(refreshed_at)}.")
         if not from_cache and cache_error:
             self.status.set(self.status.get() + f" Local snapshot not saved: {cache_error}")
+        if not from_cache and manifest_error:
+            # A manifest-only failure must not wear the snapshot's label:
+            # the snapshot was saved, and the message says so.
+            self.status.set(self.status.get()
+                            + f" Local refresh manifest not saved: {manifest_error}")

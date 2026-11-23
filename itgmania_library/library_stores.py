@@ -52,7 +52,11 @@ def _is_valid_manifest_payload(payload):
     """Whether a manifest payload has the right version, paths, and records."""
     if not isinstance(payload, dict):
         return False
-    if payload.get("format_version") != LIBRARY_CACHE_MANIFEST_FORMAT_VERSION:
+    # JSON true and 1.0 both compare equal to 1, so the version needs
+    # the same integer-but-not-boolean check the other fields get.
+    version = payload.get("format_version")
+    if (not isinstance(version, int) or isinstance(version, bool)
+            or version != LIBRARY_CACHE_MANIFEST_FORMAT_VERSION):
         return False
     if not isinstance(payload.get("cache_dir"), str):
         return False
