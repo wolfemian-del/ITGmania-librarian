@@ -310,6 +310,25 @@ class ManifestRefreshTests(unittest.TestCase):
         self.assertEqual((self.root / "library_cache_manifest.json").read_bytes(),
                          manifest_bytes)
 
+    def test_smaller_snapshot_group_is_not_reused(self):
+        # Claude's re-check nit 2: the guard compares exactly. A snapshot
+        # group holding fewer rows than the manifest recorded must not be
+        # reused, even though the file's mtime and size still match.
+        self.write_cache("a.cache", song="Pack/A", charts=2)
+        instance = self.make_instance()
+        calls = []
+        rows1, _ = self.run_worker(instance, calls)
+        self.assertEqual(len(rows1[0]), 2)
+        # Trim the snapshot group by one row, leaving the manifest alone.
+        snapshot_path = self.root / "library_cache.json"
+        snapshot = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        snapshot["rows"] = snapshot["rows"][:1]
+        snapshot_path.write_text(json.dumps(snapshot), encoding="utf-8")
+        calls.clear()
+        rows2, _ = self.run_worker(instance, calls)
+        self.assertEqual(calls, ["a.cache"])
+        self.assertEqual(len(rows2[0]), 2)
+
     def test_failed_manifest_write_then_new_file_for_known_song(self):
         # Claude's finding 1 (PR #269): a failed manifest write, plus a
         # new file for an already-known song, showed duplicate rows — the
