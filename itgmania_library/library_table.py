@@ -39,6 +39,14 @@ from itgmania_library.library_stores import _valid_column_width
 # window stays responsive while a big library streams in.
 ROW_INSERT_BUDGET_SECONDS = 0.012
 
+# Above this many rows out of place, a reorder goes through one
+# set_children call instead of per-item tree.index/tree.move (PR #271
+# Lane A, finding 2): both calls cost time proportional to the item's
+# position, so a full re-sort is O(n^2) — 5.2 s at 20,000 rows against
+# 0.39 s for the rebuild — while set_children reorders 42,375 rows in
+# 28.7 ms. A handful of displaced rows still move one by one.
+SET_CHILDREN_MOVE_THRESHOLD = 50
+
 
 def _chart_key(row):
     """The chart key that identifies a row across refreshes (Proposal 0019,
@@ -547,24 +555,50 @@ class LibraryTable:
         # surviving item also takes the new row dict: on a load the
         # filter's rows are fresh dicts, and the song page and the
         # course builder read their row back through _tree_item_rows.
+        # The saved tuple does not know about the white tag on_select
+        # writes directly onto the tree item (PR #271 Lane A, finding
+        # 1): an unchanged refresh would leave a stale selected_row tag
+        # behind, so force a rewrite of every item the tint tracker or
+        # the selection touches, even when its saved tuple matches.
+        forced = set(self._tree_tint.items) | selected_items
         for item, row in list(self._tree_item_rows.items()):
             key = _chart_key(row)
             row = new_by_key[key]
             self._tree_item_rows[item] = row
             shown = _display_tuple(row, key in selected_keys)
-            if shown != self._tree_item_display.get(item):
+            if shown != self._tree_item_display.get(item) or item in forced:
                 self.tree.item(item, values=shown[0], tags=shown[1])
                 self._tree_item_display[item] = shown
         key_to_item = {
             _chart_key(row): item
             for item, row in self._tree_item_rows.items()
         }
+        # The reorder plan (PR #271 Lane A, finding 2): per-item
+        # tree.index/tree.move is O(n^2), so a large reorder goes through
+        # one set_children call instead. Displaced counts the surviving
+        # rows out of place against the order they should appear in. The
+        # walk also needs to know whether there is anything to place at
+        # all, so a refresh with nothing to insert or move does not show
+        # a "Loading …" progress count (the owner's smoke check).
+        survivor_keys = {_chart_key(row)
+                         for row in self._tree_item_rows.values()}
+        target_order = [_chart_key(row) for row in visible
+                        if _chart_key(row) in survivor_keys]
+        displaced = sum(1 for a, b in zip(self._tree_item_order,
+                                          target_order) if a != b)
+        inserts_pending = any(_chart_key(row) not in survivor_keys
+                              for row in visible)
+        large_reorder = displaced > SET_CHILDREN_MOVE_THRESHOLD
+        show_progress = inserts_pending or displaced > 0
+        placed = [] if large_reorder else None
         self._apply_diff_batch(visible, 0, generation, selected_keys,
                                key_to_item, selected_items,
-                               colliding_songs)
+                               colliding_songs, large_reorder, placed,
+                               show_progress)
 
     def _apply_diff_batch(self, visible, start, generation, selected_keys,
-                          key_to_item, selected_items, colliding_songs):
+                          key_to_item, selected_items, colliding_songs,
+                          large_reorder, placed, show_progress):
         """Insert the new rows and move the reordered ones, in time-boxed
         batches under the same deadline and rescheduling as _insert_batch.
         Deletes and in-place updates already ran synchronously in
@@ -573,7 +607,10 @@ class LibraryTable:
         the item that belongs there, or inserts a fresh one. The order
         list is the table's own record of the tree order, so the
         already-there check is a list lookup, not a tree call; tree.index
-        is only asked when a row actually has to move."""
+        is only asked when a row actually has to move. On a large reorder
+        the walk skips the per-item moves and collects the items in
+        visible order instead, and the last batch reorders the whole
+        level with one set_children call."""
 
         if generation != self._render_generation:
             return
@@ -590,26 +627,45 @@ class LibraryTable:
                 self._tree_item_display[item] = (values, tags)
                 if key not in colliding_songs:
                     key_to_item[key] = item
-                if key in selected_keys:
+                # Selection is carried by exact item, never expanded
+                # across a colliding key (Greptile P1 #2, PR #271 Lane B):
+                # a block re-insert destroys the selected item's identity,
+                # and positional matching is forbidden, so the selection
+                # drops for that key instead of landing on every row that
+                # shares it. A unique key keeps its item through a sort
+                # or sync, so the one-row choice survives there.
+                if key in selected_keys and key[0] not in colliding_songs:
                     self.tree.selection_add(item)
                     selected_items.add(item)
                     self._tree_tint.note_selected(item)
+                if large_reorder:
+                    placed.append(item)
             elif (index >= len(self._tree_item_order)
                     or self._tree_item_order[index] != key):
                 item = key_to_item[key]
-                current = self.tree.index(item)
-                self.tree.move(item, "", index)
-                self._tree_item_order.pop(current)
-                self._tree_item_order.insert(index, key)
+                if large_reorder:
+                    placed.append(item)
+                else:
+                    current = self.tree.index(item)
+                    self.tree.move(item, "", index)
+                    self._tree_item_order.pop(current)
+                    self._tree_item_order.insert(index, key)
+            elif large_reorder:
+                placed.append(key_to_item[key])
             index += 1
             if time.perf_counter() >= deadline:
                 break
         if index < len(visible):
-            self.count_label.set(f"Loading {index:,} of {len(visible):,} charts…")
+            if show_progress:
+                self.count_label.set(f"Loading {index:,} of {len(visible):,} charts…")
             self._parent.after(1, lambda: self._apply_diff_batch(
                 visible, index, generation, selected_keys, key_to_item,
-                selected_items, colliding_songs))
+                selected_items, colliding_songs, large_reorder, placed,
+                show_progress))
         else:
+            if large_reorder:
+                self.tree.set_children("", *placed)
+                self._tree_item_order = [_chart_key(row) for row in visible]
             self._set_final_count(visible)
             self._tree_tint.reset(selected_items)
 

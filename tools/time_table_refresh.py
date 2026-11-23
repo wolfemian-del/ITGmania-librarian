@@ -2,10 +2,13 @@
 
 Opens the real app on the owner's library — the real settings, cache, and
 Stats.xml — and times, separately: filter_rows; the no-change refresh
-(filter + sorts + diff walk); tree.delete of all items; tree.insert per
-row (steady-state and first paint); the after(1, ...) batch overhead at
-ROW_INSERT_BUDGET_SECONDS 12/50/200 ms; the distribution redraw; and the
-diff with a few changed rows.
+(filter + sorts + diff walk + the panel push); tree.delete of all items;
+tree.insert per row (steady-state and first paint); the after(1, ...)
+batch overhead at ROW_INSERT_BUDGET_SECONDS 12/50/200 ms; the
+distribution redraw; the diff with a few changed rows; and the detach
+trial (Proposal 0021, D7): the filter-toggle round trip through the
+production table, and the raw detach/reattach against delete/insert in
+a disposable Treeview at the library's scale.
 
 Run from the repo, next to launch.py, on Windows with a display:
     python tools/time_table_refresh.py
@@ -52,6 +55,22 @@ def wait_for_settled(root, table, visible_count, timeout=180):
     return pump_until(root, settled, timeout)
 
 
+def reset_table_state(table):
+    """Empty the tree and clear the table's saved diff state together
+    (Greptile P1 #1): deleting the items without clearing
+    _tree_item_rows/_tree_item_order/_tree_item_display leaves the diff
+    thinking every row is already showing, so the next refresh skips
+    every insert and the trial waits the full deadline. The tint tracker
+    and the focus go with them, so no stale tag or focused row survives
+    the reset."""
+    table.tree.delete(*table.tree.get_children())
+    table._tree_item_rows.clear()
+    table._tree_item_order.clear()
+    table._tree_item_display.clear()
+    table._tree_tint.reset()
+    table.tree.focus("")
+
+
 def time_full_insert(root, table, visible_count, budget_ms):
     """Empty the tree, then time the full re-insert at one batch budget.
 
@@ -59,7 +78,7 @@ def time_full_insert(root, table, visible_count, budget_ms):
     count is the after() reschedules the inserter made; the first paint
     is when the first row appears in the tree.
     """
-    table.tree.delete(*table.tree.get_children())
+    reset_table_state(table)
     batches = [0]
     original_after = table._parent.after
 
@@ -90,16 +109,78 @@ def time_full_insert(root, table, visible_count, budget_ms):
     return total, batches[0], first_paint
 
 
+def time_filter_toggle(root, table, filt, visible_count, rows):
+    """Time the filter-toggle round trip through the production table
+    (Proposal 0021, D7): narrow to one difficulty, then widen back to
+    all of them. The widening is the operation detach accelerates: today
+    it re-inserts every hidden row, with detach it reattaches them.
+    Returns (narrow seconds, widen seconds, narrowed count, difficulty).
+    The filter is left where it started (all difficulties)."""
+    difficulties = sorted({row["Difficulty"] for row in rows
+                           if row["Difficulty"]})
+    pick = "Hard" if "Hard" in difficulties else difficulties[len(difficulties) // 2]
+    started = time.perf_counter()
+    filt.diff_var.set(pick)
+    narrowed = len(filt.filter_rows())
+    wait_for_settled(root, table, narrowed)
+    narrow_s = time.perf_counter() - started
+    started = time.perf_counter()
+    filt.diff_var.set("All difficulties")
+    wait_for_settled(root, table, visible_count)
+    widen_s = time.perf_counter() - started
+    return narrow_s, widen_s, narrowed, pick
+
+
+def time_raw_detach_reattach(root, row_count):
+    """Time the raw Tk operations in a disposable Treeview (Proposal
+    0021, D7): detach every row and reattach each one at its index,
+    against deleting every row and inserting them all again. No
+    LibraryTable bookkeeping exists here, so no saved state can be
+    corrupted — the comparison is bare Tk only. Returns (detach seconds,
+    reattach seconds, delete seconds, insert seconds)."""
+    tree = tk.ttk.Treeview(root)
+    for _ in range(row_count):
+        tree.insert("", "end")
+    root.update()
+    children = tree.get_children()
+    start = time.perf_counter()
+    for item in children:
+        tree.detach(item)
+    detach_s = time.perf_counter() - start
+    start = time.perf_counter()
+    for index, item in enumerate(children):
+        tree.move(item, "", index)
+    root.update()
+    reattach_s = time.perf_counter() - start
+    start = time.perf_counter()
+    tree.delete(*tree.get_children())
+    delete_s = time.perf_counter() - start
+    start = time.perf_counter()
+    for _ in range(row_count):
+        tree.insert("", "end")
+    root.update()
+    insert_s = time.perf_counter() - start
+    tree.destroy()
+    return detach_s, reattach_s, delete_s, insert_s
+
+
 def main():
     root = tk.Tk()
     application = app.LibraryApp(root)
     table = application._table
     filt = application._filter
     panel = application.distribution_panel
-    if not pump_until(root,
-                      lambda: len(table.tree.get_children()) > 0, 120):
+    # Wait for the initial load to settle completely, not just for the
+    # first row (Greptile P2 #4): the first rows stream in through
+    # _insert_batch, and a no-change refresh measured before the fill
+    # finishes would absorb the rest of it.
+    if not pump_until(root, lambda: len(filt.library_rows()) > 0, 120):
         print("The table is empty after 120 s: no snapshot restored?")
         print("Load the library in the app once, then run this again.")
+        root.destroy()
+        return
+    if not wait_for_settled(root, table, len(filt.library_rows())):
+        print("The table never settled: the initial fill did not finish.")
         root.destroy()
         return
     rows = filt.library_rows()
@@ -108,7 +189,8 @@ def main():
           f"{len(rows):,} total (filter passes all)")
 
     # filter_rows on its own, and the no-change refresh (filter + sorts
-    # + diff walk) — the difference is the sorts plus the diff walk.
+    # + diff walk + the panel push) — the difference is the sorts, the
+    # diff walk, and one redraw.
     start = time.perf_counter()
     filt.filter_rows()
     filter_s = time.perf_counter() - start
@@ -117,7 +199,7 @@ def main():
     wait_for_settled(root, table, len(visible))
     refresh_s = time.perf_counter() - start
     print(f"filter_rows: {filter_s:.2f} s")
-    print(f"no-change refresh (filter + sorts + diff): {refresh_s:.2f} s")
+    print(f"no-change refresh (filter + sorts + diff + panel push): {refresh_s:.2f} s")
 
     # tree.delete of every item, timed on its own.
     start = time.perf_counter()
@@ -160,8 +242,29 @@ def main():
     changed_s = time.perf_counter() - start
     print(f"diff refresh, {CHANGED_ROWS} changed rows: {changed_s:.2f} s")
 
+    # The detach trial (Proposal 0021, D7): the filter-toggle round
+    # trip through the production table, then the raw Tk comparison.
+    narrow_s, widen_s, narrowed, pick = time_filter_toggle(
+        root, table, filt, len(visible), rows)
+    print(f"filter toggle to {pick} ({narrowed:,} rows): {narrow_s:.2f} s; "
+          f"widen back: {widen_s:.2f} s")
+    detach_s, reattach_s, raw_delete_s, raw_insert_s = \
+        time_raw_detach_reattach(root, len(visible))
+    raw_detach_total = detach_s + reattach_s
+    raw_delete_total = raw_delete_s + raw_insert_s
+    ratio = (raw_delete_total / raw_detach_total
+             if raw_detach_total else float("inf"))
+    print(f"raw detach+reattach at {len(visible):,} rows: "
+          f"{raw_detach_total:.2f} s (detach {detach_s:.2f} s, "
+          f"reattach {reattach_s:.2f} s); delete+insert: "
+          f"{raw_delete_total:.2f} s (delete {raw_delete_s:.2f} s, "
+          f"insert {raw_insert_s:.2f} s); ratio {ratio:.1f}x")
+
     print()
-    other_s = delete_s + redraw_s + refresh_s
+    # refresh_s already includes one redraw (refresh_table pushes the
+    # visible rows to the panel), so adding redraw_s again would count
+    # it twice (Greptile P2 #4).
+    other_s = delete_s + refresh_s
     if insert_total_12 is not None and insert_total_12 > other_s * 2:
         print("Verdict: per-item insert dominates — §2's inference holds.")
     else:
