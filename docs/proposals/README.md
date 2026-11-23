@@ -26,5 +26,6 @@ line in each file's header is the record; this index summarizes it.
 | [0013](0013-song-page-sizing.md) | Size the song page by its contents, and scroll the chart list | Accepted 2026-11-17 | [#217](https://github.com/wolfemian-del/ITGmania-library-viewer/pull/217) |
 | [0014](0014-startup-wiring.md) | Make the startup wiring plain | Accepted 2026-11-18 | PRs #234, #235 (issue #208) |
 | [0015](0015-rename-to-librarian.md) | Rename the app to ITGmania Librarian | Accepted 2026-11-18 | – (issue #209) |
-| [0016](0016-window-placement.md) | One placement rule for the dialogs: centered over the main window, remembered once moved | Draft — Revision 3, awaiting the owner's Accepted mark | – (issue #103) |
-| [0017](0017-fonts-barlow-wendy.md) | Barlow Condensed body text and Wendy titles, bundled and loaded per-process | Draft — for review | – |
+| [0016](0016-window-placement.md) | One placement rule for the dialogs: centered over the main window, remembered once moved | Accepted 2026-11-19 | PRs #243, #245–#248 (merged 2026-11-21) |
+| [0017](0017-fonts-barlow-wendy.md) | Barlow Condensed body text and Wendy titles, bundled and loaded per-process | Accepted 2026-11-22 | PR #266 (merged 2026-11-22) |
+| [0018](0018-manifest-incremental-refresh.md) | P1 — manifest-based incremental refresh | Accepted 2026-11-22 | PR #269 (proposal #268; merged 2026-11-23) |
