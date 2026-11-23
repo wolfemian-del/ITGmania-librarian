@@ -1,0 +1,83 @@
+# Implementation Proposal: P1 — manifest-based incremental refresh
+
+| | |
+|---|---|
+| **Status** | Draft — for review |
+| **Author** | Muse |
+| **Date** | 2026-11-22 |
+| **Base** | main `a9cec86` (PR #266 merged) |
+| **Related** | `docs/ROADMAP.md` (faster refresh is the next scoped item after the font update, P1 first, then P5, then P2); `docs/research/deepseek-load-efficiency-review.md` (DeepSeek's P1/P2/P5, verified against the owner's measurements 2026-11-22); `tools/time_refresh_parse.py` (the timing script); board item "Faster refresh — P1 manifest / P2 multiprocessing" (Backlog, Scoped) |
+
+---
+
+In plain language: pressing Load / refresh today re-reads every song in the library, which takes about 40 seconds on the owner's machine even when nothing changed. After this change, a refresh first checks a small record — the manifest — of what each cache file looked like the last time it was read, and re-reads only the files that changed. With a few files changed, the refresh should take about 15 seconds instead of 40, most of the remaining time being the table filling in, which is a later job (P5). Nothing about the app looks different, and a refresh still shows exactly the same library a full re-read would. The one real decision in this proposal is what the manifest records: enough to find each unchanged song's rows in the saved snapshot, without changing the snapshot itself.
+
+## 1. Background and Goal
+
+The font update merged (PR #266, main `a9cec86`), and the roadmap stages faster refresh as the next scoped item, in the order the measurements dictate: P1 first, then P5, then P2. The measurement behind the order: a warm refresh spends ~29 s of its ~30 s worker parsing cache files, and the parse is CPU-bound, so the only way to make the common case fast is to not parse files that have not changed. P2 (process-pool parsing) stays for the full-parse case, and P5 (chunked streaming) stays for the 14 s table insert; neither is touched here.
+
+Modularity, up front: this change persists a new file format (the manifest), adds a new store that owns it, and alters `LibraryLoader`'s constructor contract (it gains a second store input). It does not move a component boundary and it does not change the snapshot format, the parse, or the table insert. Done means: a warm refresh with no changed files finishes its worker in ~1 s and shows the same rows a full parse would, a refresh after a scores sync is still incremental, and the full suite is green.
+
+## 2. Current State (measured on main `a9cec86`)
+
+The refresh worker is `LibraryLoader._load_worker` [CODE: `itgmania_library/library_loader.py:320-407`]. It reads Stats.xml (`stats_index`, ~0.05 s), lists the cache folder (`[p for p in cache.iterdir() if p.is_file()]`, discovery 0.08 s), builds the Edit fallback index once, then calls `parse_cache_file(path, scores, edit_index)` for every file and writes the snapshot (`snapshot_store.write`, ~0.7 s). `parse_cache_file` [CODE: `itgmania_library/library_sources.py:248`] reads the whole file as text, splits it on `#NOTEDATA:`, and drops chart blocks that lack `#STEPSTYPE` or `#DIFFICULTY` (`:290-292`, counted as `skipped_blocks`). A file that raises is counted in `skipped_files` and skipped (issue #205). The worker delivers the rows as one `("loaded", ...)` message; the main thread inserts them (the 14 s P5 attacks) and the snapshot summary is recorded for the scores sync to write back.
+
+The numbers are the owner's, measured 2026-11-22 on his machine (Ryzen 9 4900HS, Python 3.14.7; timing script `tools/time_refresh_parse.py`): 7,499 files, 42,375 chart rows; worker 29.82/29.99 s, parse 29.00/29.11 s (97%), `stats_index` ~0.05 s, discovery 0.08 s, snapshot write ~0.7 s; end-to-end warm ~40 s (26 s cache + a further 14 s insert/render); cold full read 106 s. The snapshot load at startup is ~0.35 s (the P0 measurement). Two sandbox measurements ground the design's cheap steps [RAN: Python 3.12.3, this worktree]: `merge_scores` over 42,375 fixture rows takes 0.27 s, and an `os.scandir` walk with `stat()` over 7,499 files takes 0.022 s (against 0.040 s for `iterdir` + `is_file`).
+
+Coupling inventory. The snapshot is JSON at `settings_path.with_name("library_cache.json")` [CODE: `itgmania_library/library_librarian.py:553-554`], owned by `SnapshotStore` [CODE: `itgmania_library/library_stores.py:95`], format `{schema_version: 6, cache_dir, stats_file, refreshed_at, files, skipped_files, files_without_charts, skipped_blocks, nested_song_tree, rows}`; rows are a flat list with no per-file key, and `_is_valid_row` requires every column plus "Course path" with scalar values only. The snapshot read has five-branch validation (missing / unreadable / invalid / paths_mismatch / loaded) and rejects a version or path mismatch. `LibraryLoader.__init__` [CODE: `itgmania_library/library_loader.py:77-113`] takes 14 keyword-only inputs including `snapshot_store`; the app constructs the store at `library_librarian.py:131` and the loader at `:266`. The scores sync rewrites the snapshot with merged rows under the same `_snapshot_lock` (`_sync_scores_worker`, `library_loader.py:448-553`); it never adds or removes rows. The layer table puts `library_loader` and `library_stores` at layer 3. Tests: `tests/test_library_loader.py`, `tests/test_snapshot_store.py`, `tests/test_library_sources.py`; full suite at this base is 954 tests OK, 74 skipped.
+
+## 3. The Decisions
+
+Three real choices, each with a recommendation.
+
+**D1. The manifest records, per file, the song it produced — and the snapshot does not change.** Each entry holds the file name, `st_mtime_ns`, `st_size`, the song directory its rows carry ("Course path"), the row count, and the skipped-blocks count. On refresh the worker reads the snapshot's rows, groups them by Course path, and keeps the groups whose file is unchanged. The alternative is a hidden per-row source-file key in the snapshot (the validator would accept it — extra scalar keys pass `_is_valid_row`), but that is a snapshot schema bump to 7, discarding every existing snapshot on upgrade, for a mapping the manifest can hold alone. The snapshot stays exactly as it is, and the first refresh after the upgrade simply does a full parse and writes the manifest.
+
+**D2. The manifest is valid by coverage, not by timestamp.** The worker uses the manifest only when its file set, by song directory, exactly covers the snapshot's row groups: every distinct Course path in the snapshot is claimed by a manifest entry, and every manifest entry's song directory is either in the snapshot or recorded with zero rows. The alternative is pairing the two files by a shared stamp (the snapshot's `refreshed_at`), but the scores sync rewrites the snapshot with a new stamp while changing no rows — a stamp pairing would make every refresh after a sync a full parse, which is the common case, not the edge. Coverage survives the sync because the sync never adds or removes rows. A manifest that fails coverage, fails to parse, or names different paths is discarded and the refresh is a full parse.
+
+**D3. A changed Stats.xml re-derives scores; it never forces a re-parse.** Stats.xml changes on every play session, so treating its change as a full re-parse would make P1 useless in practice. The manifest records Stats.xml's `st_mtime_ns` and `st_size`; when they differ, the worker re-reads Stats.xml (it already does, 0.05 s) and runs `merge_scores` over all rows — reused and new — which costs 0.27 s at this library's scale. When Stats.xml is unchanged, reused rows keep their scores and only new or changed files' rows are looked up inline by the parse, as today.
+
+## 4. Recommended Design in Detail
+
+**4.1 `ManifestStore` (layer 3, `library_stores.py`, beside `SnapshotStore`).** One-sentence description: given the settings directory, it owns the manifest file — the per-file record of the last scan — reading it back only when it is usable, and writing it atomically beside the snapshot.
+
+The file is `library_cache_manifest.json`, next to `library_cache.json` (derived the same way, from the settings path). It is compact JSON, written with the existing `write_file_atomically` helper, in this shape: `{format_version: 1, cache_dir, stats_file, stats_mtime_ns, stats_size, files: [{name, mtime_ns, size, song_dir, rows, skipped_blocks}]}`. `name` is the file name within the flat cache folder; `song_dir` is the Course path the file's rows carry, or `""` when the file produced no rows. The read returns a result in the shape of `SnapshotResult` — usable, or a reason (missing / unreadable / invalid / paths_mismatch) — and the worker treats any reason as "no manifest, full parse". Validation: the JSON parses, `format_version` is 1, both paths match the current ones (normalized, as the snapshot does), and every entry has the six fields with the right types; anything else is invalid. The store never touches Tk, the loader, or the snapshot; it must not read the cache folder itself — the walk belongs to the worker.
+
+**4.2 The worker (`_load_worker`).** The discovery step becomes one `os.scandir` walk (DeepSeek's P4, folded in here because the manifest comparison needs the stat results anyway; as a standalone it was killed by measurement at 0.08 s). For each entry the worker takes `st_mtime_ns` and `st_size` from the same walk — no second stat call. Then, per file:
+
+- unchanged (name in the manifest with matching mtime and size): keep the snapshot's rows for that file's recorded song directory;
+- changed or new: `parse_cache_file` as today, and drop the snapshot rows for the manifest's recorded song directory (the old one, so a renamed song's old rows go with it);
+- gone (in the manifest, not in the folder): drop that song directory's rows;
+- failed to parse: not recorded in the manifest, so it is re-parsed on every refresh until it succeeds (today's behaviour; a transient failure mid-write must not strand a song).
+
+Two files claiming one song directory are never trusted: both files are always re-parsed and their rows rebuilt from the fresh parses, so a duplicated cache file cannot silently drop rows. Merged rows are emitted in current file order — the snapshot groups in the order their files appear in the walk, fresh parses in place — so a P1 refresh delivers rows in exactly the order a full parse would. The summary counts are carried, not guessed: `files` is the current file count, `files_without_charts` and `skipped_blocks` sum the manifest's per-file records for unchanged files plus the fresh parses' outcomes, and `skipped_files` counts only failures in this refresh. If Stats.xml changed (D3), `merge_scores` runs over the merged rows before delivery. The snapshot and the manifest are written under the one `_snapshot_lock`, snapshot first; the manifest is written only if the snapshot write succeeded, and a manifest-write failure is reported the way a snapshot-write failure is today (`cache_error`), leaving the next refresh to fall back to a full parse.
+
+**4.3 Constructor and construction.** `LibraryLoader.__init__` gains one keyword-only input, `manifest_store`, in the Data group beside `snapshot_store`; the app constructs a `ManifestStore` from the settings path next to the snapshot store and passes it in. The shell's other construction sites are untouched, and `load_cached_data` at startup is untouched — the manifest plays no part in the startup restore.
+
+**4.4 The status line.** The load summary keeps its shape ("Scanned N files · M charts …"), and the worker's delivery is unchanged (`("loaded", ...)` with the same summary fields), so `_loaded` and the table need no change.
+
+## 5. What Does Not Change
+
+- The snapshot format: no schema bump, no migration; snapshots written before P1 load as today, and the first refresh after the upgrade is a full parse that writes the manifest.
+- The startup snapshot load, the scores sync (it keeps rewriting the snapshot under the same lock; the manifest survives it by the coverage rule in D2), and the parse itself — P2's target is untouched, and P1's loop over changed files is the unit P2 will parallelize for the full-parse case.
+- The table insert and the `("loaded", ...)` delivery — P5's target is untouched; P1's win is the worker, ~30 s to ~1 s, and the end-to-end ~40 s to ~15 s with few files changed (the ~1 s floor is the snapshot read, ~0.35 s, plus the snapshot write, ~0.7 s, which P1 does not change).
+- The read-only cache-cleanup candidate's ground: the manifest's walk is the same walk its scan needs, and the manifest's per-file records (name, mtime, size, song directory, row count) are the records it would compare against the cache. P1 builds no cleanup UI and deletes nothing.
+- `docs/ARCHITECTURE.md`: the `library_stores.py` paragraph gains the manifest store, and the entry-point paragraph gains the manifest write. The layer diagram, the layer-3 row, and the module-inventory table do not change — no new module, no new layer.
+
+## 6. Test Plan (for the implementation PR)
+
+- **Manifest store tests** (`tests/test_manifest_store.py`, new): write then read round-trips; each validation branch (missing, unreadable, invalid version, paths mismatch, malformed entry) returns unusable; the atomic-write helper is reused, not reimplemented.
+- **Decision tests** (loader tests, on fixture folders): unchanged files are not re-parsed (a fake parse counter); changed, new, and deleted files behave as §4.2; two files sharing a song directory are both re-parsed; a manifest whose song directories do not cover the snapshot falls back to a full parse; a scores-sync-rewritten snapshot stays incremental.
+- **Counts and order tests:** the merged summary counts equal a full parse's counts on a fixture library with a changed file, a new file, and a deleted file; the merged row order equals the full-parse row order.
+- **Stats tests:** a changed Stats.xml re-derives scores over reused rows without re-parsing; an unchanged Stats.xml leaves reused rows untouched.
+- **Timing:** `tools/time_refresh_parse.py` gains an incremental pass that reuses the previous pass's snapshot and manifest; the full-parse numbers are re-measured on the owner's machine, and the incremental worker time is measured there too (the sandbox library is 6 files and cannot show the win).
+- **Full suite:** `python -m unittest discover -s tests` green (954 tests, 74 skipped headless, at the base).
+
+## 7. Open Questions for Reviewers
+
+- **Q1.** A file that fails to parse is re-parsed on every refresh until it succeeds (recommendation: today's behaviour; failures are rare and usually a malformed file, but a transient failure while the game writes the cache must not strand a song). The alternative is recording it in the manifest as "skip until changed", which saves one parse attempt per refresh but would keep a transiently-failed song out of the library until its mtime moves. Is the re-parse-every-time cost worth the safety?
+- **Q2.** Two cache files claiming one song directory are both re-parsed every refresh (recommendation: the duplicate case the engine should not produce, handled by never trusting it). The exact alternative is the per-row source-file key in the snapshot (D1's rejected option), which would make duplicates exact at the cost of a schema bump. Is the always-re-parse rule enough, or does the duplicate case deserve the exact treatment?
+- **Q3.** The load summary keeps its shape, and a refresh that re-parsed fewer files than it scanned reads the same as a full parse ("Scanned N files · M charts"). Should the summary name the re-parsed count when it is less than the scanned count (for example "· re-parsed 3 files"), so the owner can see the manifest working — or is that noise on a line that should stay short?
+
+---
+
+*Written by Muse.*
