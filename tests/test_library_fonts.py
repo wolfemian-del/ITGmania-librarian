@@ -29,6 +29,14 @@ REPO_FONTS = Path(__file__).resolve().parent.parent / "fonts"
 
 
 class LoadFontsTests(unittest.TestCase):
+    def setUp(self):
+        super().setUp()
+        # _REGISTERED is module-level and ignores which registrar made
+        # an entry, so clear it between tests: a test that reuses a
+        # folder would otherwise see a stale answer. This mirrors the
+        # reset the theme tests already do for the font names.
+        self.addCleanup(library_fonts._REGISTERED.clear)
+
     def _folder_with(self, names):
         folder = TemporaryDirectory()
         self.addCleanup(folder.cleanup)
@@ -60,6 +68,15 @@ class LoadFontsTests(unittest.TestCase):
         folder = TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         shutil.copy(REPO_FONTS / "wendy.ttf", folder.name)
+        if sys.platform == "win32":
+            # A font added with AddFontResourceEx stays loaded for the
+            # process, and Windows will not delete a file that is in
+            # use: unregister it before the folder cleanup runs, or
+            # the teardown raises PermissionError. These cleanups are
+            # registered after the folder cleanup, so they run first.
+            wendy_path = Path(folder.name) / "wendy.ttf"
+            self.addCleanup(library_fonts._REGISTERED.discard, wendy_path)
+            self.addCleanup(library_fonts._windows_unregister, wendy_path)
         result = load_fonts(folder.name)
         self.assertFalse(result.barlow)
         self.assertEqual(
@@ -109,6 +126,15 @@ class LoadFontsTests(unittest.TestCase):
             sorted(Path(p).name for p in result.files), sorted(ALL_FILES))
         self.assertEqual(result.failed, ())
 
+    def test_empty_folder_reports_five_failures_with_no_duplicates(self):
+        # The duplicate-failed guard (Revision 1): with a fake register
+        # the loop runs on every platform, so this pins the guard where
+        # the missing-folder tests cannot (they return early off Windows).
+        folder = self._folder_with(())
+        result = load_fonts(folder, _register=lambda path: True)
+        self.assertEqual(len(result.failed), 5)
+        self.assertEqual(len(set(result.failed)), 5)
+
     def test_rejected_file_falls_back_its_whole_family(self):
         # A corrupt file the OS rejects: Barlow falls back as a whole
         # (its other three files do not stay registered), Wendy loads.
@@ -128,6 +154,14 @@ class LoadFontsTests(unittest.TestCase):
             [Path(p).name for p in result.failed],
             ["BarlowCondensed-SemiBold.ttf"])
         self.assertEqual(sorted(seen), sorted(ALL_FILES))
+        # The rollback also discards the three files from _REGISTERED:
+        # a later call with a register that accepts everything must
+        # register them again, not skip them as already loaded. If the
+        # discard were deleted, only SemiBold would be called here.
+        calls = []
+        again = load_fonts(folder, _register=lambda p: calls.append(p.name) or True)
+        self.assertTrue(again.barlow)
+        self.assertEqual(sorted(calls), sorted(BARLOW_FILES))
 
     def test_unregister_called_for_the_files_a_failed_family_registered(self):
         # The cleanup the rejected-file test cannot see: when SemiBold
@@ -151,13 +185,26 @@ class LoadFontsTests(unittest.TestCase):
 
     def test_register_error_falls_back_without_raising(self):
         # Proposal 0017 §4.1: a font error never stops the app starting.
+        # Barlow registers, then Wendy's register raises: the error
+        # path unregisters what this call registered, so the process
+        # font state matches the all-False result, and a later call can
+        # register those files again.
         folder = self._folder_with(ALL_FILES)
+        unregistered = []
 
         def register(path):
-            raise OSError("the OS refused the file")
+            if path.name == "wendy.ttf":
+                raise OSError("the OS refused the file")
+            return True
 
-        result = load_fonts(folder, _register=register)
+        result = load_fonts(folder, _register=register,
+                            _unregister=lambda p: unregistered.append(p.name))
         self.assertEqual(result, FontLoadResult(False, False, (), ()))
+        self.assertEqual(sorted(unregistered), sorted(BARLOW_FILES))
+        calls = []
+        again = load_fonts(folder, _register=lambda p: calls.append(p.name) or True)
+        self.assertTrue(again.barlow)
+        self.assertEqual(sorted(calls), sorted(ALL_FILES))
 
     def test_register_attribute_error_falls_back_without_raising(self):
         folder = self._folder_with(ALL_FILES)

@@ -65,7 +65,7 @@ def _windows_unregister(path: Path) -> None:
     """Undo a registration made by _windows_register."""
     remove = ctypes.windll.gdi32.RemoveFontResourceExW
     remove.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32, ctypes.c_void_p]
-    remove.restype = ctypes.c_bool
+    remove.restype = ctypes.c_int
     remove(str(path), _FR_PRIVATE, None)
 
 

@@ -1,6 +1,7 @@
 import contextlib
 import csv
 import functools
+import io
 import json
 import os
 import re
@@ -14,6 +15,7 @@ from unittest.mock import MagicMock, Mock, patch
 from itgmania_library import data_paths_dialog as dialog
 from itgmania_library import distribution_panel as dp
 from itgmania_library import library_geometry as geometry
+from itgmania_library.library_fonts import FontLoadResult
 from itgmania_library import library_media
 from itgmania_library import library_stores as stores
 from itgmania_library import library_librarian as app
@@ -1434,6 +1436,50 @@ class StartupWiringTests(unittest.TestCase):
                           lambda self: events.append("start")):
             instance._init_loader()
         self.assertEqual(events, ["report", "start"])
+
+    def test_main_loads_fonts_before_creating_the_window(self):
+        # Proposal 0017 §4.3: load_fonts() then theme.apply_fonts()
+        # then tk.Tk(). A font loaded after the first window exists
+        # would not reach the widgets, so the order is the contract.
+        events = []
+        applied = {}
+        root = Mock()
+        fake_tk = Mock()
+        fake_tk.Tk.side_effect = lambda: events.append("tk") or root
+
+        def apply_fonts(**kwargs):
+            events.append("apply")
+            applied.update(kwargs)
+
+        with (patch.object(app, "declare_dpi_awareness",
+                           lambda: events.append("dpi")),
+              patch.object(app, "load_fonts",
+                           lambda: events.append("load")
+                           or FontLoadResult(True, False)),
+              patch.object(theme, "apply_fonts", apply_fonts),
+              patch.object(app, "tk", fake_tk),
+              patch.object(app, "LibraryApp")):
+            app.main()
+        self.assertEqual(events, ["dpi", "load", "apply", "tk"])
+        self.assertEqual(applied, {"barlow": True, "wendy": False})
+
+    def test_main_reports_failed_fonts_on_stderr(self):
+        # Proposal 0017 erratum: when files failed to load, main()
+        # says so on stderr, so the Windows smoke check can read why
+        # the app is in Segoe.
+        root = Mock()
+        fake_tk = Mock()
+        fake_tk.Tk.return_value = root
+        failed = FontLoadResult(
+            False, False, (), ("C:/fonts/BarlowCondensed-Light.ttf",))
+        with (patch.object(app, "declare_dpi_awareness"),
+              patch.object(app, "load_fonts", return_value=failed),
+              patch.object(theme, "apply_fonts"),
+              patch.object(app, "tk", fake_tk),
+              patch.object(app, "LibraryApp"),
+              contextlib.redirect_stderr(io.StringIO()) as err):
+            app.main()
+        self.assertIn("BarlowCondensed-Light.ttf", err.getvalue())
 
 
 class SyncMenuStateTests(unittest.TestCase):

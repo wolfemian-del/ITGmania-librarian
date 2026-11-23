@@ -183,6 +183,9 @@ class ApplyFontsTests(unittest.TestCase):
         theme.apply_fonts(barlow=True, wendy=True)
         self.assertEqual(theme.FONT_BODY, ("Barlow Condensed", 11))
         self.assertEqual(theme.FONT_APP_TITLE, ("Wendy", 26))
+        # FONT_MONO_BOLD is not one of the nine rebindable names: the
+        # switch never touches it (§4.2, §5).
+        self.assertEqual(theme.FONT_MONO_BOLD, ("Consolas", 9, "bold"))
         theme.apply_fonts(barlow=False, wendy=False)
         self.assert_segoe()
 

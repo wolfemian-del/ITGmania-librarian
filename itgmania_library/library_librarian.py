@@ -877,6 +877,11 @@ def main():
     # the theme switches to the sets that loaded, and a family that did
     # not load keeps today's Segoe sizes.
     loaded = load_fonts()
+    if loaded.failed:
+        # Erratum (Proposal 0017): the smoke check cannot read a
+        # dataclass field, so say on stderr why the app is in Segoe.
+        print("Bundled fonts failed to load:",
+              ", ".join(loaded.failed), file=sys.stderr)
     theme.apply_fonts(barlow=loaded.barlow, wendy=loaded.wendy)
     root = tk.Tk()
     LibraryApp(root)
