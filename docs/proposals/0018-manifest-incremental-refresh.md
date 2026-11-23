@@ -10,7 +10,9 @@
 
 ---
 
-**Revision 1 (2026-11-22):** §4.2 corrected — a failed manifest write leaves the previous manifest in place and the next refresh reuses it (Greptile's P2 on PR #268), with the reasons the reuse is safe now stated there, plus the mtime/size caveat (Grok's finding 5). §6 gained the stale-manifest test. Q3 (whether the summary names the re-parsed count) is still the owner's call.
+**Revision 1 (2026-11-22):** §4.2 corrected — a failed manifest write leaves the previous manifest in place and the next refresh reuses it (Greptile's P2 on PR #268), with the reasons the reuse is safe now stated there, plus the mtime/size caveat (Grok's finding 5). §6 gained the stale-manifest test.
+
+**Revision 2 (2026-11-22):** Q3 decided (Claude's call, PR #268) — the summary names the re-parsed count by replacing "parsed" (see §4.4 and §7 Q3).
 
 ---
 
@@ -57,13 +59,13 @@ Two files claiming one song directory are never trusted: both files are always r
 
 **4.3 Constructor and construction.** `LibraryLoader.__init__` gains one keyword-only input, `manifest_store`, in the Data group beside `snapshot_store`; the app constructs a `ManifestStore` from the settings path next to the snapshot store and passes it in. The shell's other construction sites are untouched, and `load_cached_data` at startup is untouched — the manifest plays no part in the startup restore.
 
-**4.4 The status line.** The load summary keeps its shape ("Scanned N files · M charts …"), and the worker's delivery is unchanged (`("loaded", ...)` with the same summary fields), so `_loaded` and the table need no change.
+**4.4 The status line.** The full-parse line is unchanged ("Scanned N files · parsed M charts."). On a manifest-assisted refresh where at least one file was reused, the base segment instead reads "Scanned N files · re-parsed K · M charts in total." — the word "parsed" is replaced, not appended to, so the line never claims charts were parsed that were copied forward from the snapshot; the conditional segments and the "Snapshot refreshed …" suffix follow unchanged. The worker's `("loaded", ...)` kwargs gain `reparsed_files` (int: the files actually passed to `parse_cache_file` — changed, new, retried failures, both files of a duplicated song directory); `_loaded` gains one keyword defaulted to `None`, and `None` means the old text. It is not persisted: not a snapshot field, not a manifest field, and the `_snapshot_*` counters and the scores sync do not carry it. The startup restore is untouched (`from_cache` takes the "Showing saved library snapshot…" branch). The table needs no change.
 
 ## 5. What Does Not Change
 
 - The snapshot format: no schema bump, no migration; snapshots written before P1 load as today, and the first refresh after the upgrade is a full parse that writes the manifest.
 - The startup snapshot load, the scores sync (it keeps rewriting the snapshot under the same lock; the manifest survives it by the coverage rule in D2), and the parse itself — P2's target is untouched, and P1's loop over changed files is the unit P2 will parallelize for the full-parse case.
-- The table insert and the `("loaded", ...)` delivery — P5's target is untouched; P1's win is the worker, ~30 s to ~1 s, and the end-to-end ~40 s to ~15 s with few files changed (the ~1 s floor is the snapshot read, ~0.35 s, plus the snapshot write, ~0.7 s, which P1 does not change).
+- The table insert — P5's target is untouched. The `("loaded", ...)` delivery gains one optional kwarg (`reparsed_files`, defaulted `None`, §4.4) and nothing else; P1's win is the worker, ~30 s to ~1 s, and the end-to-end ~40 s to ~15 s with few files changed (the ~1 s floor is the snapshot read, ~0.35 s, plus the snapshot write, ~0.7 s, which P1 does not change).
 - The read-only cache-cleanup candidate's ground: the manifest's walk is the same walk its scan needs, and the manifest's per-file records (name, mtime, size, song directory, row count) are the records it would compare against the cache. P1 builds no cleanup UI and deletes nothing.
 - `docs/ARCHITECTURE.md`: the `library_stores.py` paragraph gains the manifest store, and the entry-point paragraph gains the manifest write. The layer diagram, the layer-3 row, and the module-inventory table do not change — no new module, no new layer.
 
@@ -74,6 +76,7 @@ Two files claiming one song directory are never trusted: both files are always r
 - **Counts and order tests:** the merged summary counts equal a full parse's counts on a fixture library with a changed file, a new file, and a deleted file; the merged row order equals the full-parse row order.
 - **Stale-manifest test** (loader tests, on fixture folders): with the previous manifest still on disk after a failed manifest write and the song set unchanged, the refresh produces the same rows and counts as a full parse — changed files re-parsed, unchanged files reused.
 - **Stats tests:** a changed Stats.xml re-derives scores over reused rows without re-parsing; an unchanged Stats.xml leaves reused rows untouched.
+- **Status-line tests** (loader tests): `reparsed_files=3` gives "Scanned N files · re-parsed 3 · M charts in total."; `reparsed_files=0` gives "re-parsed 0"; `None` keeps the old text. One worker-level assertion: a refresh that discards the manifest delivers the full-parse text.
 - **Timing:** `tools/time_refresh_parse.py` gains an incremental pass that reuses the previous pass's snapshot and manifest; the full-parse numbers are re-measured on the owner's machine, and the incremental worker time is measured there too (the sandbox library is 6 files and cannot show the win).
 - **Full suite:** `python -m unittest discover -s tests` green (954 tests, 74 skipped headless, at the base).
 
@@ -81,7 +84,7 @@ Two files claiming one song directory are never trusted: both files are always r
 
 - **Q1.** A file that fails to parse is re-parsed on every refresh until it succeeds (recommendation: today's behaviour; failures are rare and usually a malformed file, but a transient failure while the game writes the cache must not strand a song). The alternative is recording it in the manifest as "skip until changed", which saves one parse attempt per refresh but would keep a transiently-failed song out of the library until its mtime moves. Is the re-parse-every-time cost worth the safety?
 - **Q2.** Two cache files claiming one song directory are both re-parsed every refresh (recommendation: the duplicate case the engine should not produce, handled by never trusting it). The exact alternative is the per-row source-file key in the snapshot (D1's rejected option), which would make duplicates exact at the cost of a schema bump. Is the always-re-parse rule enough, or does the duplicate case deserve the exact treatment?
-- **Q3.** The load summary keeps its shape, and a refresh that re-parsed fewer files than it scanned reads the same as a full parse ("Scanned N files · M charts"). Should the summary name the re-parsed count when it is less than the scanned count (for example "· re-parsed 3 files"), so the owner can see the manifest working — or is that noise on a line that should stay short?
+- **Q3 — decided (Revision 2, Claude's call).** The summary names the re-parsed count, by replacing "parsed" rather than appending: "Scanned N files · re-parsed K · M charts in total." on a manifest-assisted refresh where at least one file was reused (including K = 0), and the unchanged full-parse text otherwise. Grok's mild preference was to append ("· re-parsed 3" after "parsed M charts"); Claude's shape was chosen because the appended form reads as contradictory and the replaced form keeps the full-parse line byte-for-byte. See §4.4 for the delivery (`reparsed_files` kwarg, defaulted `None`, not persisted) and §6 for the test additions.
 
 ---
 
