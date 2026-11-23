@@ -154,14 +154,17 @@ class FakeTreeview:
         self._counter = 0
         # How the table reordered rows: a test reads these to pin the
         # move arm (per-item moves for a small reorder, one set_children
-        # for a large one).
+        # for a large one) and the insert arm (at-index for a small
+        # placement, at "end" for a large one).
         self.move_calls = []
         self.set_children_calls = []
+        self.insert_calls = []
 
     def insert(self, parent, index, values=(), tags=()):
         item = f"item{self._counter}"
         self._counter += 1
         self._items[item] = {"values": tuple(values), "tags": tuple(tags)}
+        self.insert_calls.append(index)
         if index == "end" or index >= len(self._order):
             self._order.append(item)
         else:
@@ -1380,6 +1383,83 @@ class DiffSetChildrenTests(unittest.TestCase):
         self.assertEqual(len(tree.set_children_calls), 1)
         self.assertEqual(len(tree._items), 61)
         self.assertEqual(tree.shown_rows(table), expected)
+
+
+class DiffLargePlacementTests(unittest.TestCase):
+    """A large placement — many inserts, no displaced survivor — goes
+    through one set_children call with new rows appended at "end"
+    (PR #271 Revision 2: the §6 widen inserts 31,591 rows while
+    displacing no survivor, and insert-at-index is O(position) in Tk).
+    A narrow rebuilds the order list in one pass instead of removing
+    each deleted key from it (the §6 narrow spent 10 s on list.remove).
+    """
+
+    @staticmethod
+    def make_loaded_table(rows):
+        table, tree = make_diff_table(rows=rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+        return table, tree
+
+    @staticmethod
+    def many_rows(count):
+        return diff_rows(*[(f"P{i:02d}/1", "dance-single", "Hard", "")
+                           for i in range(count)])
+
+    def test_widen_uses_one_set_children_and_appends_inserts(self):
+        rows = self.many_rows(70)
+        table, tree = self.make_loaded_table(rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.set_rows(rows[:10])
+        self.assertEqual(tree.shown_rows(table), rows[:10])
+        sets_before = len(tree.set_children_calls)
+        moves_before = len(tree.move_calls)
+        inserts_before = len(tree.insert_calls)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.set_rows(rows)
+
+        self.assertEqual(len(tree.set_children_calls), sets_before + 1)
+        self.assertEqual(
+            tree.set_children_calls[-1], tuple(tree._order))
+        self.assertEqual(len(tree.move_calls), moves_before)
+        widen_inserts = tree.insert_calls[inserts_before:]
+        self.assertEqual(len(widen_inserts), 60)
+        self.assertTrue(all(index == "end" for index in widen_inserts))
+        self.assertEqual(tree.shown_rows(table), rows)
+        self.assertEqual(table._tree_item_order,
+                         [table_module._chart_key(row) for row in rows])
+
+    def test_narrow_rebuilds_the_order_list(self):
+        rows = self.many_rows(70)
+        table, tree = self.make_loaded_table(rows)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.set_rows(rows[:10])
+
+        self.assertEqual(tree.shown_rows(table), rows[:10])
+        self.assertEqual(table._tree_item_order,
+                         [table_module._chart_key(row)
+                          for row in rows[:10]])
+        self.assertEqual(len(table._tree_item_rows), 10)
+
+    def test_small_widen_inserts_at_index_without_set_children(self):
+        rows = self.many_rows(10)
+        table, tree = self.make_loaded_table(rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.set_rows(rows[:9])
+        self.assertEqual(tree.shown_rows(table), rows[:9])
+        sets_before = len(tree.set_children_calls)
+        inserts_before = len(tree.insert_calls)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.set_rows(rows)
+
+        self.assertEqual(len(tree.set_children_calls), sets_before)
+        widen_inserts = tree.insert_calls[inserts_before:]
+        self.assertEqual(len(widen_inserts), 1)
+        self.assertEqual(widen_inserts[0], 9)
+        self.assertEqual(tree.shown_rows(table), rows)
 
 
 class DiffSelectionTests(unittest.TestCase):

@@ -76,7 +76,11 @@ def time_full_insert(root, table, visible_count, budget_ms):
 
     Returns (total seconds, batches, first-paint seconds). The batch
     count is the after() reschedules the inserter made; the first paint
-    is when the first row appears in the tree.
+    is when the first row appears in the tree — read right after the
+    refresh returns, because the first batch inserts synchronously and
+    a root.update() in the pump drains the whole after() chain in one
+    call, so a check after update() always reports the finished tree
+    (Revision 2: the first-paint number used to equal the total).
     """
     reset_table_state(table)
     batches = [0]
@@ -93,6 +97,8 @@ def time_full_insert(root, table, visible_count, budget_ms):
             started = time.perf_counter()
             table.refresh_table()
             painted_at = None
+            if table.tree.get_children():
+                painted_at = time.perf_counter()
             deadline = time.monotonic() + 180
             while time.monotonic() < deadline:
                 root.update()

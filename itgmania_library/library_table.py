@@ -39,13 +39,17 @@ from itgmania_library.library_stores import _valid_column_width
 # window stays responsive while a big library streams in.
 ROW_INSERT_BUDGET_SECONDS = 0.012
 
-# Above this many rows out of place, a reorder goes through one
-# set_children call instead of per-item tree.index/tree.move (PR #271
-# Lane A, finding 2): both calls cost time proportional to the item's
-# position, so a full re-sort is O(n^2) — 5.2 s at 20,000 rows against
-# 0.39 s for the rebuild — while set_children reorders 42,375 rows in
-# 28.7 ms. A handful of displaced rows still move one by one.
-SET_CHILDREN_MOVE_THRESHOLD = 50
+# Above this many rows to place, a diff walk goes through one
+# set_children call instead of per-item tree.index/tree.move and
+# insert-at-index (PR #271 Lane A, finding 2, and the §6 widen):
+# both calls cost time proportional to the item's position, so a full
+# re-sort is O(n^2) — 5.2 s at 20,000 rows against 0.39 s for the
+# rebuild — while set_children reorders 42,375 rows in 28.7 ms, and
+# insert-at-index is 160 µs/row at 20,000 rows against 5 µs/row at
+# "end". A handful of placements still go one by one. The count is
+# total placements — inserts plus displaced rows — because a filter
+# widen inserts thousands of rows without displacing any survivor.
+SET_CHILDREN_PLACEMENT_THRESHOLD = 50
 
 
 def _chart_key(row):
@@ -535,8 +539,19 @@ class LibraryTable:
                 self.tree.delete(item)
                 del self._tree_item_rows[item]
                 del self._tree_item_display[item]
-                self._tree_item_order.remove(key)
                 selected_items.discard(item)
+        # The order list is rebuilt in one pass from the survivors,
+        # never edited item by item: removing each deleted key from the
+        # list is O(n) per key, so a narrow that drops 31,591 rows
+        # spends 10 s on list.remove alone (§6: the same operation in
+        # isolation took 10.53 s, the rebuild 0.003 s). The survivors
+        # keep their relative order, and a key a deleted item shared
+        # with a survivor cannot occur — a colliding song is deleted
+        # as a block — so filtering on the survivor keys is exact.
+        survivor_keys = {_chart_key(row)
+                         for row in self._tree_item_rows.values()}
+        self._tree_item_order = [key for key in self._tree_item_order
+                                 if key in survivor_keys]
         # Selection first, so the tags the update below writes already
         # agree with the selection the tree shows.
         for item, row in self._tree_item_rows.items():
@@ -573,22 +588,28 @@ class LibraryTable:
             _chart_key(row): item
             for item, row in self._tree_item_rows.items()
         }
-        # The reorder plan (PR #271 Lane A, finding 2): per-item
-        # tree.index/tree.move is O(n^2), so a large reorder goes through
-        # one set_children call instead. Displaced counts the surviving
-        # rows out of place against the order they should appear in. The
-        # walk also needs to know whether there is anything to place at
-        # all, so a refresh with nothing to insert or move does not show
-        # a "Loading …" progress count (the owner's smoke check).
-        survivor_keys = {_chart_key(row)
-                         for row in self._tree_item_rows.values()}
+        # The reorder plan (PR #271 Lane A, finding 2, and the §6
+        # widen): per-item tree.index/tree.move and insert-at-index
+        # are O(n^2), so a large placement goes through one
+        # set_children call instead. Displaced counts the surviving
+        # rows out of place against the order they should appear in;
+        # inserts counts the rows the walk must add. The trigger is
+        # total placements, not displaced rows alone: a filter widen
+        # inserts thousands of rows while displacing no survivor, so
+        # a displaced-only trigger never fires for it — and the widen
+        # is where the insert arm is slowest. The walk also needs to
+        # know whether there is anything to place at all, so a refresh
+        # with nothing to insert or move does not show a "Loading …"
+        # progress count (the owner's smoke check).
         target_order = [_chart_key(row) for row in visible
                         if _chart_key(row) in survivor_keys]
         displaced = sum(1 for a, b in zip(self._tree_item_order,
                                           target_order) if a != b)
-        inserts_pending = any(_chart_key(row) not in survivor_keys
-                              for row in visible)
-        large_reorder = displaced > SET_CHILDREN_MOVE_THRESHOLD
+        inserts = sum(1 for row in visible
+                      if _chart_key(row) not in survivor_keys)
+        inserts_pending = inserts > 0
+        large_reorder = (displaced + inserts
+                         > SET_CHILDREN_PLACEMENT_THRESHOLD)
         show_progress = inserts_pending or displaced > 0
         placed = [] if large_reorder else None
         self._apply_diff_batch(visible, 0, generation, selected_keys,
@@ -607,10 +628,15 @@ class LibraryTable:
         the item that belongs there, or inserts a fresh one. The order
         list is the table's own record of the tree order, so the
         already-there check is a list lookup, not a tree call; tree.index
-        is only asked when a row actually has to move. On a large reorder
-        the walk skips the per-item moves and collects the items in
-        visible order instead, and the last batch reorders the whole
-        level with one set_children call."""
+        is only asked when a row actually has to move. On a large
+        placement the walk skips the per-item moves and the per-item
+        inserts at index — both are O(position) in Tk — and collects
+        the items in visible order instead, appending new rows at the
+        end; the last batch reorders the whole level with one
+        set_children call. The order list mirrors the tree throughout
+        the walk (a new row is appended to both), so a refresh that
+        supersedes a half-finished walk still reads a true tree order.
+        """
 
         if generation != self._render_generation:
             return
@@ -621,9 +647,22 @@ class LibraryTable:
             key = _chart_key(row)
             if key[0] in colliding_songs or key not in key_to_item:
                 values, tags = _display_tuple(row, key in selected_keys)
-                item = self.tree.insert("", index, values=values, tags=tags)
+                if large_reorder:
+                    # A new row goes to the end, not to its index:
+                    # insert-at-index costs time proportional to the
+                    # position (§6: 160 µs/row at 20,000 rows against
+                    # 5 µs/row at "end"), and the single set_children
+                    # at the end puts it in its place. The order list
+                    # mirrors the tree, so the key is appended.
+                    item = self.tree.insert("", "end", values=values,
+                                            tags=tags)
+                    self._tree_item_order.append(key)
+                    placed.append(item)
+                else:
+                    item = self.tree.insert("", index, values=values,
+                                            tags=tags)
+                    self._tree_item_order.insert(index, key)
                 self._tree_item_rows[item] = row
-                self._tree_item_order.insert(index, key)
                 self._tree_item_display[item] = (values, tags)
                 if key not in colliding_songs:
                     key_to_item[key] = item
@@ -638,8 +677,6 @@ class LibraryTable:
                     self.tree.selection_add(item)
                     selected_items.add(item)
                     self._tree_tint.note_selected(item)
-                if large_reorder:
-                    placed.append(item)
             elif (index >= len(self._tree_item_order)
                     or self._tree_item_order[index] != key):
                 item = key_to_item[key]
