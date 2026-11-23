@@ -380,7 +380,8 @@ def make_loader(app=None, **overrides):
     handler, so a load exercises the loader -> app handoff end to end; the loader
     is also attached as app._loader, the way the shell's __init__ does."""
     parts = dict(
-        snapshot_store=Mock(), cache_var=Mock(), stats_var=Mock(),
+        snapshot_store=Mock(), manifest_store=Mock(),
+        cache_var=Mock(), stats_var=Mock(),
         status=Mock(), progress=Mock(), load_button=Mock(),
         set_sync_menu_state=Mock(), on_library_changed=Mock(),
         on_nothing_loaded=Mock(), report_discarded_settings=Mock(),
@@ -401,7 +402,7 @@ class LoaderConstructionTests(unittest.TestCase):
     """The loader's constructor contract (proposal 0014): keyword-only inputs,
     every input kept, and the snapshot summary declared from the start."""
 
-    INPUTS = ("snapshot_store", "cache_var", "stats_var", "status", "progress",
+    INPUTS = ("snapshot_store", "manifest_store", "cache_var", "stats_var", "status", "progress",
               "load_button", "set_sync_menu_state", "on_library_changed",
               "on_nothing_loaded", "report_discarded_settings", "save_settings",
               "dialog", "had_saved_paths", "root")
@@ -867,7 +868,7 @@ class RefreshGenerationTests(unittest.TestCase):
             instance.snapshot_store.write.return_value = "2026-01-01T00:00:00"
             instance.root = Mock()
 
-            row = {"Title": "a"}
+            row = {"Title": "a", "Course path": "P/S"}
             with patch.object(loader, "parse_cache_file", return_value=([row], 3)):
                 instance._load_worker(cache_dir, stats_file, generation=1)
 
@@ -902,7 +903,7 @@ class RefreshGenerationTests(unittest.TestCase):
             instance.snapshot_store.write.return_value = "2026-01-01T00:00:00"
             instance.root = Mock()
 
-            row = {"Title": "a"}
+            row = {"Title": "a", "Course path": "P/S"}
 
             def parse_side_effect(path, scores, edit_index=None):
                 if path.name == "bad.cache":

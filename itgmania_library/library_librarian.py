@@ -73,6 +73,7 @@ from itgmania_library.window_placement import WindowPlacement
 from itgmania_library.library_sources import cache_dir_candidates, first_existing_directory
 from itgmania_library.library_stores import (
     LIBRARY_CACHE_SCHEMA_VERSION,
+    ManifestStore,
     SettingsStore,
     SnapshotStore,
     _migrate_config_dir,
@@ -116,10 +117,11 @@ class LibraryApp:
         self.root.configure(bg=theme.BG_WINDOW)
 
     def _init_stores(self):
-        """Create the two stores that own the files on disk.
+        """Create the three stores that own the files on disk.
 
         Needs: nothing built yet. Provides: self.settings_path,
-        self._snapshot_store (library_cache.json), self._settings_store
+        self._snapshot_store (library_cache.json), self._manifest_store
+        (library_cache_manifest.json), self._settings_store
         (settings.json) and self.saved_settings, the settings read once.
         """
         # The config dir moved with the rename (proposal 0015): migrate it
@@ -130,6 +132,9 @@ class LibraryApp:
         # against the current schema version.
         self._snapshot_store = SnapshotStore(
             self.library_cache_path, HEADERS, LIBRARY_CACHE_SCHEMA_VERSION)
+        # The manifest store owns library_cache_manifest.json (proposal
+        # 0018); its path is derived the same way, from the settings path.
+        self._manifest_store = ManifestStore(self.library_cache_manifest_path)
         # The settings store owns settings.json (proposal 0008). Loading it
         # seeds the store's dedup baseline; a failure is remembered on the
         # store (last_read_error) and reported once the window is built
@@ -265,6 +270,7 @@ class LibraryApp:
         saved = self.saved_settings
         self._loader = LibraryLoader(
             snapshot_store=self._snapshot_store,
+            manifest_store=self._manifest_store,
             cache_var=self.cache_var,
             stats_var=self.stats_var,
             status=self.status,
@@ -552,6 +558,10 @@ class LibraryApp:
     @property
     def library_cache_path(self):
         return self.settings_path.with_name("library_cache.json")
+
+    @property
+    def library_cache_manifest_path(self):
+        return self.settings_path.with_name("library_cache_manifest.json")
 
     @staticmethod
     def _valid_course_geometry(value):
