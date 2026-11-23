@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — for review |
+| **Status** | Accepted - 2026-11-23 |
 | **Author** | Muse |
 | **Date** | 2026-11-23 |
 | **Base** | main `48d7a5b` (PR #269 merged) |
