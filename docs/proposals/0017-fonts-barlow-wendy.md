@@ -22,6 +22,13 @@ Grok reviewed as sole reviewer and signed off: **Approve**. Every cited code fac
 | The ARCHITECTURE.md amendment should also cover the layer-table date line and the module-inventory table (Grok, non-blocking) | §5 names the four spots to update; there is no date line on the layer table, so there is nothing to update there |
 | Consider logging or returning the files that failed to register, useful for the Windows smoke check (Grok, non-blocking, not required by the contract) | Recorded here for the implementer, not a contract change: `FontLoadResult` already carries the files that did register, and the loader may log the failures for the smoke check |
 
+## Erratum (2026-11-22, from the Claude Lane A review of PR #266)
+
+The implementation departed from the accepted §4.1 text in one place, and clarified §4.2 in another. Both are recorded here rather than silently, on the owner's decision.
+
+- **`FontLoadResult` also carries `failed`.** §4.1 as accepted said the failures were "recorded for the implementer, not a contract change" and that the loader "may log" them; the implementation instead returns the failed files as a fourth dataclass field. The field is additive and defaulted, and `main()` reads only `.barlow` and `.wendy`, so no caller breaks. `main()` now prints the failed files to stderr when the list is non-empty, so the Windows smoke check can read why the app is in Segoe — a dataclass field alone cannot be read from a double-click. Known limit, unchanged: on the error path (the register call raises) the loader still returns `failed=()` with both families `False`, which looks identical to the non-Windows result.
+- **`apply_fonts` restores on a false flag.** §4.2 says the setter "rebinds the nine public names" and §6 requires "a reset to Segoe after each test"; a false flag therefore restores that family's Segoe values rather than leaving the names alone. That reading is a clarification, not a departure — a leave-alone setter could not provide the reset.
+
 ## 1. Background and Goal
 
 The owner compared mockups of three fonts on the real app and picked Barlow Condensed over Yanone and Miso. Miso cannot be bundled at all (its license forbids redistributing it with source code), and Wendy's coverage gaps would show mid-word on accented song titles, so Wendy is used only on the four title strings the app controls and the song-page title stays Barlow — that amendment dropped the whole fallback question. The roadmap stages this as the immediate next step, a scoped update ahead of theme 2, with a short proposal first and then one implementation PR.

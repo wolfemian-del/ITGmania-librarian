@@ -68,6 +68,7 @@ from itgmania_library.library_geometry import (
     scale_geometry,
     scale_pixels,
 )
+from itgmania_library.library_fonts import load_fonts
 from itgmania_library.window_placement import WindowPlacement
 from itgmania_library.library_sources import cache_dir_candidates, first_existing_directory
 from itgmania_library.library_stores import (
@@ -872,6 +873,16 @@ def main():
     # Declare DPI awareness before the first window exists (issue #51):
     # without it Windows bitmap-stretches the app at 125%/150%.
     declare_dpi_awareness()
+    # Load the bundled fonts before the first window exists (Proposal 0017):
+    # the theme switches to the sets that loaded, and a family that did
+    # not load keeps today's Segoe sizes.
+    loaded = load_fonts()
+    if loaded.failed:
+        # Erratum (Proposal 0017): the smoke check cannot read a
+        # dataclass field, so say on stderr why the app is in Segoe.
+        print("Bundled fonts failed to load:",
+              ", ".join(loaded.failed), file=sys.stderr)
+    theme.apply_fonts(barlow=loaded.barlow, wendy=loaded.wendy)
     root = tk.Tk()
     LibraryApp(root)
     root.mainloop()

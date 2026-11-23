@@ -40,7 +40,7 @@ The remaining theme constants become Barlow Condensed at the equalizing sizes fr
 ## Proposal, tests, verification
 
 - **Proposal first** (short): a new module is a component boundary, and bundle-plus-per-process-load vs use-if-installed are defensible designs constraining later work. The proposal carries the loader design, the layer assignment, and the FONTS.md note shape. Then one implementation PR.
-- **Tests:** loader unit tests (missing files → fallback, no crash; double-load idempotent; non-Windows path returns nothing loaded), theme tests for both font sets, full suite green. Mockup driver re-run (`~/workspace/overnight/mockup_driver.py`) with the real bundled files. No accented-title case is needed anymore — no Wendy string is exposed to user data.
+- **Tests:** loader unit tests (missing files → fallback, no crash; double-load idempotent; non-Windows path returns nothing loaded), theme tests for both font sets, full suite green. Mockup driver re-run (`tools/mockup_driver.py`) with the real bundled files. No accented-title case is needed anymore — no Wendy string is exposed to user data.
 - **Windows smoke check by Ian:** warranted here — the loading path is Windows-only and cannot be verified in this sandbox. The mockup screenshots are Linux rendering; the smoke check is the real verification.
 - **Not in scope:** Miso in any form, the "Distribution" panel heading, menu-bar or title-bar fonts, any change to column widths, row height, or dialog geometry (dialogs size by content, so the bigger Wendy titles just make them wider).
 

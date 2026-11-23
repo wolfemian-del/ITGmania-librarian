@@ -56,6 +56,13 @@ DIFFICULTY_COLOR_UNKNOWN = "#94a3b8"  # a difficulty name not listed above
 CHART_BAR_UNKNOWN = "#64748b"         # the "?" bar (value missing)
 
 # --- Fonts ---
+# Two sets: today's Segoe UI set, and the Barlow Condensed / Wendy set the
+# app switches to once the bundled fonts load. Importing this module leaves
+# the Segoe values in place; apply_fonts() rebinds the public names before
+# any widget is built, so the window code reads the new fonts without
+# changing any call site. Weights follow the scope doc: body bold uses the
+# Bold face (the form the mockups used), Semibold headings use SemiBold
+# where it exists, and Wendy has a single weight so its titles carry none.
 FONT_BODY = ("Segoe UI", 9)
 FONT_BODY_BOLD = ("Segoe UI Semibold", 9)
 FONT_SMALL = ("Segoe UI", 8)
@@ -64,7 +71,45 @@ FONT_PANEL_TITLE = ("Segoe UI Semibold", 11)  # "Distribution" heading
 FONT_DIALOG_TITLE = ("Segoe UI Semibold", 15) # Advanced Search heading
 FONT_COURSE_TITLE = ("Segoe UI Semibold", 17) # course builder heading
 FONT_APP_TITLE = ("Segoe UI Semibold", 19)    # main window heading
+FONT_SONG_TITLE = ("Segoe UI Semibold", 15)   # song-page title
 FONT_MONO_BOLD = ("Consolas", 9, "bold")      # query text in Advanced Search
+
+# The two sets cover disjoint names: apply_fonts() gives a name to the
+# Barlow set first, so a name added to both would silently take Barlow.
+_barlow_fonts = {
+    "FONT_BODY": ("Barlow Condensed", 11),
+    "FONT_BODY_BOLD": ("Barlow Condensed", 11, "bold"),
+    "FONT_SMALL": ("Barlow Condensed", 10),
+    "FONT_ENTRY_LARGE": ("Barlow Condensed", 12),
+    "FONT_PANEL_TITLE": ("Barlow Condensed SemiBold", 14),
+    "FONT_SONG_TITLE": ("Barlow Condensed SemiBold", 15),
+}
+_wendy_fonts = {
+    "FONT_DIALOG_TITLE": ("Wendy", 20),
+    "FONT_COURSE_TITLE": ("Wendy", 22),
+    "FONT_APP_TITLE": ("Wendy", 26),
+}
+# The Segoe values above, captured so apply_fonts() can restore them.
+_segoe_fonts = {name: globals()[name]
+                for name in _barlow_fonts | _wendy_fonts}
+
+
+def apply_fonts(*, barlow, wendy):
+    """Switch the public font names to the bundled sets that loaded.
+
+    Each flag switches its own names to the bundled set when true and back
+    to Segoe when false, so calling this with both flags false restores
+    today's fonts. Call it before any widget is built: the window code
+    reads the names at construction time, so a widget built before this
+    call keeps the Segoe values it was built with.
+    """
+    for name, segoe in _segoe_fonts.items():
+        if barlow and name in _barlow_fonts:
+            globals()[name] = _barlow_fonts[name]
+        elif wendy and name in _wendy_fonts:
+            globals()[name] = _wendy_fonts[name]
+        else:
+            globals()[name] = segoe
 
 # --- Distribution chart text sizes (points; the chart is drawn by matplotlib, which picks its own font family) ---
 CHART_TEXT_SIZE_MESSAGE = 9   # "no data" message in the chart area

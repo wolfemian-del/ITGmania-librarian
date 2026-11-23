@@ -1,6 +1,6 @@
 """The import-surface pin (Proposal 0010, Step 1).
 
-Every name the app consumes from the ten modules, grouped by the
+Every name the app consumes from the eleven modules, grouped by the
 module it lives in. The pin was built during the split so no move could
 silently drop a name: if a name stops resolving from its home module,
 this fails before the suite ever reaches the behaviour tests. With
@@ -25,6 +25,7 @@ from itgmania_library import library_format
 from itgmania_library import library_geometry
 from itgmania_library import library_dialog_query
 from itgmania_library import library_distribution
+from itgmania_library import library_fonts
 from itgmania_library import library_search
 from itgmania_library import library_sources
 from itgmania_library import library_stores
@@ -103,6 +104,10 @@ class ImportSurfaceTests(unittest.TestCase):
     def test_window_placement_names_resolve(self):
         # Proposal 0016: the helper the five secondary windows hold.
         self._assert_resolve(("WindowPlacement",), module=window_placement)
+
+    def test_library_fonts_names_resolve(self):
+        # Proposal 0017: the per-process loader for the bundled fonts.
+        self._assert_resolve(("FontLoadResult", "load_fonts"), module=library_fonts)
 
     def test_course_names_resolve(self):
         # Re-pointed to library_course.py at Step 4.
