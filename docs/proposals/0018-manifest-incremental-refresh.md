@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — for review |
+| **Status** | Accepted - 2026-11-22 |
 | **Author** | Muse |
 | **Date** | 2026-11-22 |
 | **Base** | main `a9cec86` (PR #266 merged) |
