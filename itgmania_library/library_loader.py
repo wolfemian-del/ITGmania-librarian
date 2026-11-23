@@ -12,6 +12,7 @@ Tests: tests/test_library_loader.py.
 
 from __future__ import annotations
 
+import os
 import queue
 import threading
 import time
@@ -38,6 +39,21 @@ from itgmania_library.library_sources import (
 )
 
 
+def _manifest_covers_snapshot(entries, rows):
+    """Whether the manifest's song directories exactly cover the snapshot's row groups.
+
+    Proposal 0018, D2: validity by coverage, not timestamps. The check
+    survives the scores sync because the sync never adds or removes rows
+    (and never changes Course paths), so the song-directory sets still
+    match even though refreshed_at moved. An entry with no rows claims
+    nothing, so a file that produced no charts can neither cover nor
+    break a song directory.
+    """
+    snapshot_dirs = {row["Course path"] for row in rows}
+    claimed_dirs = {entry["song_dir"] for entry in entries.values() if entry["rows"] > 0}
+    return snapshot_dirs == claimed_dirs
+
+
 class LibraryLoader:
     """Load the library (scan or snapshot), sync scores, report progress/status.
 
@@ -45,6 +61,7 @@ class LibraryLoader:
 
     Data:
       snapshot_store:       the snapshot store, passed in (already standalone).
+      manifest_store:       the manifest store, passed in (proposal 0018).
       cache_var, stats_var: the path variables, read.
     The window the loader drives:
       status:               the status StringVar, for progress/status reporting.
@@ -74,12 +91,13 @@ class LibraryLoader:
     The shell calls start() once, after construction (proposal 0014).
     """
 
-    def __init__(self, *, snapshot_store, cache_var, stats_var,
+    def __init__(self, *, snapshot_store, manifest_store, cache_var, stats_var,
                  status, progress, load_button, set_sync_menu_state,
                  on_library_changed, on_nothing_loaded,
                  report_discarded_settings, save_settings,
                  dialog, had_saved_paths, root):
         self.snapshot_store = snapshot_store
+        self.manifest_store = manifest_store
         self.cache_var = cache_var
         self.stats_var = stats_var
         self.status = status
@@ -322,9 +340,21 @@ class LibraryLoader:
         # progress bar running, and _loaded / _load_failed ignore anything from an older generation.
         try:
             scores = stats_index(stats_file)
-            rows = []
-            files = [p for p in cache.iterdir() if p.is_file()]
-            total = len(files)
+            stats_stat = stats_file.stat()
+            # One scandir walk (proposal 0018, §4.2): the entry stat
+            # results are the manifest comparison, so no second stat call.
+            # A file whose stat fails is skipped, the way is_file() used
+            # to skip it — it is not in the scan at all.
+            scanned = []
+            with os.scandir(cache) as entries:
+                for entry in entries:
+                    if not entry.is_file():
+                        continue
+                    try:
+                        scanned.append((entry.name, entry.stat()))
+                    except OSError:
+                        continue
+            total = len(scanned)
             if self._load_is_stale(generation):
                 # Superseded before the first file: queue nothing, not even
                 # the progress report below.
@@ -336,34 +366,116 @@ class LibraryLoader:
             # shared by every file's parse, so the fallback never rescans
             # the scores dict per undescribed Edit chart (issue #203).
             edit_index = edit_fallback_index(scores)
+            # The incremental path (proposal 0018): the manifest is read
+            # first, and the snapshot only when the manifest loaded — the
+            # snapshot read is the expensive one, and a missing manifest
+            # already means a full parse. A bare test instance without a
+            # manifest store scans the same way (getattr, like the
+            # _snapshot_* reads below).
+            manifest_store = getattr(self, "manifest_store", None)
+            manifest_result = (manifest_store.read(cache, stats_file)
+                               if manifest_store is not None else None)
+            snapshot_result = None
+            incremental = False
+            if manifest_result is not None and manifest_result.loaded:
+                snapshot_result = self.snapshot_store.read(cache, stats_file)
+                incremental = (snapshot_result.loaded
+                               and _manifest_covers_snapshot(
+                                   manifest_result.entries,
+                                   snapshot_result.rows))
+            stats_changed = (incremental
+                             and (manifest_result.stats_mtime_ns
+                                  != stats_stat.st_mtime_ns
+                                  or manifest_result.stats_size
+                                  != stats_stat.st_size))
+            if incremental:
+                # Group the snapshot's rows by song directory, in snapshot
+                # order, and find the song directories two files claim:
+                # both of those files are always re-parsed, so no rows are
+                # lost to a duplicated cache file (proposal 0018, §4.2).
+                groups = {}
+                for row in snapshot_result.rows:
+                    groups.setdefault(row["Course path"], []).append(row)
+                claimed = {}
+                for name, entry in manifest_result.entries.items():
+                    if entry["rows"] > 0:
+                        claimed.setdefault(entry["song_dir"], []).append(name)
+                duplicate_dirs = {song_dir for song_dir, names in claimed.items()
+                                  if len(names) > 1}
+            rows = []
             skipped_files = 0
             files_without_charts = 0
             skipped_blocks = 0
-            for index, path in enumerate(files, start=1):
+            reparsed_files = 0
+            reused_files = 0
+            new_entries = {}
+            for index, (name, stat) in enumerate(scanned, start=1):
                 if self._load_is_stale(generation):
                     return
-                try:
-                    chart_rows, blocks = parse_cache_file(path, scores, edit_index)
-                    skipped_blocks += blocks
-                    if not chart_rows:
+                entry = (manifest_result.entries.get(name)
+                         if incremental else None)
+                if (entry is not None
+                        and entry["mtime_ns"] == stat.st_mtime_ns
+                        and entry["size"] == stat.st_size
+                        and entry["song_dir"] not in duplicate_dirs):
+                    # Unchanged file, uniquely claimed: reuse the
+                    # snapshot's rows for its recorded song directory.
+                    # A zero-row record claims nothing, so it extends no
+                    # rows — its recorded directory is "" and another
+                    # file's rows can carry that same directory (a cache
+                    # file with no #SONGFILENAME), which reusing here
+                    # would duplicate.
+                    if entry["rows"] > 0:
+                        rows.extend(groups.get(entry["song_dir"], []))
+                    if entry["rows"] == 0:
                         files_without_charts += 1
-                    rows.extend(chart_rows)
-                except Exception:
-                    # Any failure parsing one file skips that file: a
-                    # malformed cache must not kill the whole load
-                    # (issue #205). The count reaches the load summary
-                    # the way unreadable files already do. The catch is
-                    # deliberately broad — the parse touches the file,
-                    # the tag regex and the scores index, and no single
-                    # file's failure mode should sink the scan.
-                    skipped_files += 1
+                    skipped_blocks += entry["skipped_blocks"]
+                    reused_files += 1
+                    new_entries[name] = entry
+                else:
+                    try:
+                        reparsed_files += 1
+                        chart_rows, blocks = parse_cache_file(
+                            cache / name, scores, edit_index)
+                        skipped_blocks += blocks
+                        if not chart_rows:
+                            files_without_charts += 1
+                        rows.extend(chart_rows)
+                        # The song directory the file's rows carry, or ""
+                        # when the file produced no rows (proposal 0018,
+                        # §4.1): a zero-row record claims nothing.
+                        song_dir = chart_rows[0]["Course path"] if chart_rows else ""
+                        new_entries[name] = {
+                            "name": name, "mtime_ns": stat.st_mtime_ns,
+                            "size": stat.st_size, "song_dir": song_dir,
+                            "rows": len(chart_rows), "skipped_blocks": blocks,
+                        }
+                    except Exception:
+                        # Any failure parsing one file skips that file: a
+                        # malformed cache must not kill the whole load
+                        # (issue #205). The count reaches the load summary
+                        # the way unreadable files already do. The catch is
+                        # deliberately broad — the parse touches the file,
+                        # the tag regex and the scores index, and no single
+                        # file's failure mode should sink the scan. A
+                        # failed file is not recorded in the manifest, so
+                        # it is re-parsed on every refresh until it
+                        # succeeds (proposal 0018, §4.2).
+                        skipped_files += 1
                 # Every 25 files, and on the last one: often enough for the
                 # bar to move smoothly, rarely enough to churn the queue.
                 # A scan superseded mid-loop stops reporting with it.
                 if (index % 25 == 0 or index == total) and not self._load_is_stale(generation):
                     self._load_results.put(("progress", index, total, generation))
 
-            nested_song_tree = looks_like_song_tree(cache) if not files else False
+            # A changed Stats.xml re-derives scores over all rows instead
+            # of forcing a re-parse (proposal 0018, D3): Stats.xml changes
+            # on every play session, so a re-parse here would make the
+            # manifest useless in practice. Fresh rows were already scored
+            # inline by the parse, so merging them again is a no-op.
+            if stats_changed:
+                merge_scores(rows, scores, edit_index)
+            nested_song_tree = looks_like_song_tree(cache) if not scanned else False
             cache_error = ""
             # The generation check and the snapshot write happen under one lock. Without it, an older
             # scan that passed the check could still be writing after a newer scan had written its
@@ -376,15 +488,29 @@ class LibraryLoader:
                 self._load_results.put(("phase", "Saving snapshot…", generation))
                 try:
                     refreshed_at = self.snapshot_store.write(
-                        cache, stats_file, rows, len(files), skipped_files,
+                        cache, stats_file, rows, len(scanned), skipped_files,
                         files_without_charts, nested_song_tree, skipped_blocks)
                 except (OSError, TypeError, ValueError) as exc:
                     refreshed_at = ""
                     cache_error = str(exc)
+                else:
+                    # The manifest is written only if the snapshot write
+                    # succeeded, under the same lock (proposal 0018,
+                    # §4.2). A failed manifest write leaves the previous
+                    # manifest in place and the next refresh reuses it
+                    # (Revision 1); the failure is reported through
+                    # cache_error, naming the file that failed.
+                    if manifest_store is not None:
+                        try:
+                            manifest_store.write(
+                                cache, stats_file, stats_stat.st_mtime_ns,
+                                stats_stat.st_size, new_entries)
+                        except (OSError, TypeError, ValueError) as exc:
+                            cache_error = f"library_cache_manifest.json: {exc}"
 
             # Hand the result to the main thread through the queue. Calling Tk
             # (root.after) from this worker thread is not guaranteed safe.
-            self._load_results.put(("loaded", (rows, len(files)), {
+            delivery = {
                 "skipped_files": skipped_files,
                 "files_without_charts": files_without_charts,
                 "skipped_blocks": skipped_blocks,
@@ -393,7 +519,14 @@ class LibraryLoader:
                 "cache_error": cache_error,
                 "source_paths": (str(cache), str(stats_file)),
                 "generation": generation,
-            }))
+            }
+            if incremental and reused_files:
+                # The manifest was used and at least one file was reused:
+                # _loaded names the re-parsed count (proposal 0018,
+                # Revision 2). A full parse — or a refresh that reused
+                # nothing — carries no count, so the old text stands.
+                delivery["reparsed_files"] = reparsed_files
+            self._load_results.put(("loaded", (rows, len(scanned)), delivery))
         except ET.ParseError as exc:
             self._load_results.put(("failed",
                                     f"Stats.xml is malformed or incomplete and could not be parsed.\n\n{exc}",
@@ -679,8 +812,9 @@ class LibraryLoader:
         messagebox.showerror("Could not load library", message)
 
     def _loaded(self, rows, files, skipped_files=0, files_without_charts=0, skipped_blocks=0,
-                nested_song_tree=False,
-                refreshed_at="", cache_error="", from_cache=False, source_paths=None, generation=None):
+                nested_song_tree=False, refreshed_at="", cache_error="",
+                from_cache=False, source_paths=None, generation=None,
+                reparsed_files=None):
         if generation is not None and self._load_is_stale(generation):
             return
         self.load_button.configure(state="normal")
@@ -715,7 +849,16 @@ class LibraryLoader:
                 if nested_song_tree else " Select the flat Cache/Songs folder."
             self.status.set("No files found at this folder level." + hint)
         else:
-            summary = f"Scanned {files:,} files · parsed {len(rows):,} charts"
+            # A manifest-assisted refresh names the re-parsed count
+            # (proposal 0018, Revision 2): "parsed N charts" would claim
+            # charts were read that were copied forward from the snapshot,
+            # so the word is replaced, not appended to. None means a full
+            # parse, and the line stays exactly as it was.
+            if reparsed_files is None:
+                summary = f"Scanned {files:,} files · parsed {len(rows):,} charts"
+            else:
+                summary = (f"Scanned {files:,} files · re-parsed {reparsed_files:,} "
+                           f"· {len(rows):,} charts in total")
             if skipped_files:
                 summary += f" · skipped {skipped_files:,} unreadable"
             if files_without_charts:

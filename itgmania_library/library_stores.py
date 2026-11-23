@@ -1,5 +1,6 @@
-"""Persistence — the snapshot store that owns library_cache.json and the
-settings store that owns settings.json."""
+"""Persistence — the snapshot store that owns library_cache.json, the
+manifest store that owns library_cache_manifest.json, and the settings
+store that owns settings.json."""
 
 from __future__ import annotations
 
@@ -19,6 +20,55 @@ from itgmania_library.library_sources import _normalized_source_path
 
 # The library snapshot (proposal 0008): SnapshotStore owns library_cache.json.
 LIBRARY_CACHE_SCHEMA_VERSION = 6
+
+# The refresh manifest (proposal 0018): ManifestStore owns
+# library_cache_manifest.json.
+LIBRARY_CACHE_MANIFEST_FORMAT_VERSION = 1
+
+
+def _is_valid_manifest_entry(item):
+    """Whether one manifest file record has every field with the right types.
+
+    A record is a plain dict (the snapshot's rows are plain dicts too):
+    the file name, its mtime in nanoseconds and size in bytes, the song
+    directory its rows carry ("" when the file produced no rows), the row
+    count, and the skipped-blocks count. A mistyped or missing field means
+    a hand-edited or damaged file, and the whole manifest is discarded.
+    """
+    if not isinstance(item, dict):
+        return False
+    if not isinstance(item.get("name"), str) or not item["name"]:
+        return False
+    if not isinstance(item.get("song_dir"), str):
+        return False
+    for key in ("mtime_ns", "size", "rows", "skipped_blocks"):
+        value = item.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return False
+    return True
+
+
+def _is_valid_manifest_payload(payload):
+    """Whether a manifest payload has the right version, paths, and records."""
+    if not isinstance(payload, dict):
+        return False
+    if payload.get("format_version") != LIBRARY_CACHE_MANIFEST_FORMAT_VERSION:
+        return False
+    if not isinstance(payload.get("cache_dir"), str):
+        return False
+    if not isinstance(payload.get("stats_file"), str):
+        return False
+    for key in ("stats_mtime_ns", "stats_size"):
+        value = payload.get(key)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return False
+    files = payload.get("files")
+    if not isinstance(files, list):
+        return False
+    if not all(_is_valid_manifest_entry(item) for item in files):
+        return False
+    names = [item["name"] for item in files]
+    return len(set(names)) == len(names)
 
 
 def _nonnegative_int(value):
@@ -172,6 +222,95 @@ class SnapshotStore:
         )
 
 
+@dataclasses.dataclass
+class ManifestResult:
+    """What ManifestStore.read returns: the usable records, or the reason it could not load.
+
+    Either loaded (the per-file records by file name, and the Stats.xml
+    mtime and size the scan recorded) or not loaded with a reason kind
+    (missing / unreadable / invalid / paths_mismatch) and a detail string
+    — str(exc) for unreadable, None otherwise. The loader maps every
+    reason kind to "no manifest, full parse".
+    """
+
+    loaded: bool
+    entries: dict = dataclasses.field(default_factory=dict)
+    stats_mtime_ns: int = 0
+    stats_size: int = 0
+    reason: str | None = None
+    detail: str | None = None
+
+
+class ManifestStore:
+    """Owns library_cache_manifest.json: the per-file record of the last scan.
+
+    It never touches Tk, the app, or the snapshot. The loader hands it a
+    scan's per-file records to write, and reads it back to decide which
+    files a refresh can skip (proposal 0018). Records are plain dicts —
+    the snapshot's rows are plain dicts too — keyed by file name within
+    the flat cache folder.
+    """
+
+    def __init__(self, manifest_path):
+        self.manifest_path = Path(manifest_path)
+
+    def write(self, cache_dir, stats_file, stats_mtime_ns, stats_size, entries):
+        """Write a scan's per-file records; entries maps file name to record.
+
+        Raises OSError/TypeError/ValueError exactly as SnapshotStore.write
+        does: the worker catches them and reports the failure instead of
+        delivering rows. The previous manifest stays in place when the
+        write fails (write_file_atomically replaces only on success), and
+        the next refresh reuses it — see proposal 0018, Revision 1.
+        """
+        payload = {
+            "format_version": LIBRARY_CACHE_MANIFEST_FORMAT_VERSION,
+            "cache_dir": str(cache_dir),
+            "stats_file": str(stats_file),
+            "stats_mtime_ns": stats_mtime_ns,
+            "stats_size": stats_size,
+            # Sorted by file name: the walk order is arbitrary per run, so
+            # an unsorted manifest would differ every refresh even when
+            # nothing changed. The read builds a dict, so the order here
+            # carries no meaning beyond a stable file.
+            "files": [entries[name] for name in sorted(entries)],
+        }
+        text = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+        write_file_atomically(text, self.manifest_path)
+
+    def read(self, current_cache_dir, current_stats_file):
+        """Read the manifest back: the per-file records, or the reason it could not be loaded."""
+        try:
+            with self.manifest_path.open("r", encoding="utf-8") as handle:
+                payload = json.load(handle)
+        except FileNotFoundError:
+            return ManifestResult(loaded=False, reason="missing")
+        except (OSError, ValueError, RecursionError) as exc:
+            # ValueError covers UnicodeDecodeError and JSONDecodeError;
+            # RecursionError covers a deeply nested file. FileNotFoundError
+            # is caught first because it is a subclass of OSError.
+            return ManifestResult(loaded=False, reason="unreadable", detail=str(exc))
+
+        if not _is_valid_manifest_payload(payload):
+            return ManifestResult(loaded=False, reason="invalid")
+
+        if not (
+            _normalized_source_path(payload.get("cache_dir", ""))
+            == _normalized_source_path(current_cache_dir)
+            and _normalized_source_path(payload.get("stats_file", ""))
+            == _normalized_source_path(current_stats_file)
+        ):
+            return ManifestResult(loaded=False, reason="paths_mismatch")
+
+        entries = {item["name"]: item for item in payload["files"]}
+        return ManifestResult(
+            loaded=True,
+            entries=entries,
+            stats_mtime_ns=payload["stats_mtime_ns"],
+            stats_size=payload["stats_size"],
+        )
+
+
 def _settings_file_path():
     appdata = os.getenv("APPDATA")
     if appdata:
@@ -309,7 +448,10 @@ class SettingsStore:
 
 
 __all__ = [
+    "LIBRARY_CACHE_MANIFEST_FORMAT_VERSION",
     "LIBRARY_CACHE_SCHEMA_VERSION",
+    "ManifestResult",
+    "ManifestStore",
     "SettingsStore",
     "SnapshotResult",
     "SnapshotStore",

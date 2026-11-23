@@ -1390,6 +1390,7 @@ class StartupWiringTests(unittest.TestCase):
         instance.root = Mock()
         instance._snapshot_store = Mock()
         instance._snapshot_store.snapshot_path.is_file.return_value = False
+        instance._manifest_store = Mock()
         instance.cache_var, instance.stats_var = Mock(), Mock()
         instance.status, instance.progress = Mock(), Mock()
         instance.load_button = Mock()
@@ -1405,6 +1406,7 @@ class StartupWiringTests(unittest.TestCase):
 
         loaded = instance._loader
         self.assertIs(loaded.snapshot_store, instance._snapshot_store)
+        self.assertIs(loaded.manifest_store, instance._manifest_store)
         self.assertIs(loaded.cache_var, instance.cache_var)
         self.assertIs(loaded.stats_var, instance.stats_var)
         self.assertIs(loaded.status, instance.status)
