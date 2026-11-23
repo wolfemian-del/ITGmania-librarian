@@ -426,12 +426,20 @@ class ManifestRefreshTests(unittest.TestCase):
         calls = []
         rows1, _ = self.run_worker(instance, calls)
         self.assertEqual(rows1[0][0]["Score"], 456)
+        manifest = json.loads(
+            (self.root / "library_cache_manifest.json").read_text(encoding="utf-8"))
+        old_mtime_ns = manifest["stats_mtime_ns"]
+        new_mtime_ns = old_mtime_ns + 1_000_000_000
         real_index = loader.stats_index
 
         def replacing_index(path):
             scores = real_index(path)
             self.stats_file.write_text(stats_text(percent="0.50", score="789"),
                                        encoding="utf-8")
+            # Force the replacement a second past the recorded stat: the
+            # next refresh must see a changed file, not depend on the
+            # clock advancing between the two writes.
+            os.utime(self.stats_file, ns=(new_mtime_ns, new_mtime_ns))
             return scores
 
         calls.clear()
@@ -450,11 +458,18 @@ class ManifestRefreshTests(unittest.TestCase):
         calls = []
         rows1, _ = self.run_worker(instance, calls)
         self.assertEqual(rows1[0][0]["Score"], 456)
+        manifest = json.loads(
+            (self.root / "library_cache_manifest.json").read_text(encoding="utf-8"))
+        old_mtime_ns = manifest["stats_mtime_ns"]
         calls.clear()
         # Same length, new mtime: the score changes digits (456 -> 789),
-        # so only the mtime moves.
+        # so only the mtime moves. Force it a second past the recorded
+        # one rather than depending on the clock advancing between the
+        # two writes.
         self.stats_file.write_text(stats_text(percent="0.50", score="789"),
                                    encoding="utf-8")
+        new_mtime_ns = old_mtime_ns + 1_000_000_000
+        os.utime(self.stats_file, ns=(new_mtime_ns, new_mtime_ns))
         rows2, kwargs2 = self.run_worker(instance, calls)
         self.assertEqual(calls, [])
         self.assertEqual(kwargs2["reparsed_files"], 0)
@@ -484,9 +499,17 @@ class ManifestRefreshTests(unittest.TestCase):
         instance = self.make_instance()
         calls = []
         rows1, _ = self.run_worker(instance, calls)
+        manifest = json.loads(
+            (self.root / "library_cache_manifest.json").read_text(encoding="utf-8"))
+        old_mtime_ns = next(item["mtime_ns"] for item in manifest["files"]
+                            if item["name"] == "a.cache")
         calls.clear()
-        # Same length, new mtime: the title changes one letter.
+        # Same length, new mtime: the title changes one letter. Force the
+        # mtime a second past the recorded one rather than depending on
+        # the clock advancing between the two writes.
         self.write_cache("a.cache", song="Pack/A", title="Sona")
+        new_mtime_ns = old_mtime_ns + 1_000_000_000
+        os.utime(self.cache_dir / "a.cache", ns=(new_mtime_ns, new_mtime_ns))
         rows2, _ = self.run_worker(instance, calls)
         self.assertEqual(calls, ["a.cache"])
         self.assertEqual(len(rows2[0]), 1)
