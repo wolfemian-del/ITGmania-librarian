@@ -40,6 +40,39 @@ from itgmania_library.library_stores import _valid_column_width
 ROW_INSERT_BUDGET_SECONDS = 0.012
 
 
+def _chart_key(row):
+    """The chart key that identifies a row across refreshes (Proposal 0019,
+    D3): the scores join key plus the chart description, which is what
+    distinguishes two Edit charts of the same type and difficulty in one
+    song. The loader builds fresh row dicts on every refresh, so identity
+    cannot be id(row). The engine does not guarantee this key is unique
+    (Song::AddSteps appends without dedup, and two Edits can share a
+    description), so a key that collides inside one song is never matched
+    — the diff re-inserts that song's rows as a block instead (see
+    _apply_diff)."""
+
+    return (row.get("Course path", ""), row.get("Type", ""),
+            row.get("Difficulty", ""), row.get("Chart", ""))
+
+
+def _display_tuple(row, selected=False):
+    """The (values, tags) a row is shown with: the 40 display values and
+    the difficulty/selection tags. One shared helper for the insert path
+    and the in-place update path, so the two cannot drift — on tags as
+    well as values, so a sync that changes difficulty or selection state
+    cannot leave the tint behind (Proposal 0019, Revision 1)."""
+
+    values = []
+    for col in HEADERS:
+        value = row.get(col, "")
+        if col == "Time" and value != "":
+            value = format_duration(value)
+        elif isinstance(value, float):
+            value = f"{value:g}"
+        values.append(value)
+    return tuple(values), row_tints.row_tags(row, selected)
+
+
 def _default_column_width(column):
     """The default width of a column, in canonical 100% units."""
     if column in ("Title", "Subtitle", "Artist", "Pack"):
@@ -114,6 +147,12 @@ class LibraryTable:
         # the table reads them through filter.library_rows().
         self._render_generation = 0
         self._tree_item_rows = {}
+        # The diff's state (Proposal 0019): the chart keys in tree order,
+        # and the display tuple each item was last shown with. All three
+        # maps are maintained together by the table's own insert, delete,
+        # and move paths — nothing else mutates the tree.
+        self._tree_item_order = []
+        self._tree_item_display = {}
         self._dragged_column = None
         self._drag_start_x = None
         self._tree_tint = None
@@ -404,11 +443,14 @@ class LibraryTable:
             self.tree.heading(column, text=heading)
 
     def refresh_table(self, preserve_selection=False):
-        selected_rows = set()
+        # Selection is carried by chart key, not by item id (Proposal
+        # 0019, step 3): the loader builds fresh row dicts on a load, so
+        # id(row) cannot survive a refresh that replaces the list.
+        selected_keys = set()
         if preserve_selection:
-            selected_rows = {
-                id(self._tree_item_rows[item]) for item in self.tree.selection()
-                if item in self._tree_item_rows
+            selected_keys = {
+                _chart_key(row) for item in self.tree.selection()
+                if (row := self._tree_item_rows.get(item)) is not None
             }
         self._render_generation += 1
         generation = self._render_generation
@@ -420,21 +462,165 @@ class LibraryTable:
             if column in NUMERIC_COLUMNS:
                 present.sort(key=lambda row: number(str(row.get(column))), reverse=descending)
             elif column == "Difficulty":
-                present.sort(key=lambda row: difficulty_sort_key(row.get(column, "")), reverse=descending)
+                present.sort(
+                    key=lambda row: difficulty_sort_key(row.get(column, "")),
+                    reverse=descending)
             elif column == "BPM":
                 present.sort(key=bpm_sort_key, reverse=descending)
             elif column == "Grade":
-                present.sort(key=lambda row: grade_sort_key(row.get(column, "")), reverse=descending)
+                present.sort(
+                    key=lambda row: grade_sort_key(row.get(column, "")),
+                    reverse=descending)
             else:
-                present.sort(key=lambda row: str(row.get(column, "")).casefold(), reverse=descending)
+                present.sort(
+                    key=lambda row: str(row.get(column, "")).casefold(),
+                    reverse=descending)
             visible = present + missing
-        self.tree.delete(*self.tree.get_children())
-        self._tree_item_rows = {}
-        self._tree_tint.reset()
-        # The count label is set by _insert_batch: a progress count while rows
-        # are still streaming in, the final totals once the last batch lands.
-        self._insert_batch(visible, 0, generation, selected_rows)
+        if not self._tree_item_rows:
+            # The tree starts empty (first load, or the last refresh
+            # emptied it): a full insert, streaming in through the
+            # existing batched inserter. The selection bridges by key
+            # back to the row ids the inserter keeps.
+            selected_rows = {
+                id(row) for row in visible
+                if _chart_key(row) in selected_keys
+            }
+            self._tree_tint.reset()
+            self._insert_batch(visible, 0, generation, selected_rows)
+        else:
+            self._apply_diff(visible, generation, selected_keys)
         self._show_rows(visible)
+
+    def _apply_diff(self, visible, generation, selected_keys):
+        """Make the tree show `visible` by changing only what differs
+        from what is already showing (Proposal 0019, step 2).
+
+        Deletes and in-place value updates run synchronously here — they
+        are cheap Tcl calls. Inserts and moves run in time-boxed batches
+        through _apply_diff_batch, reusing _insert_batch's shape. The
+        count label and the tint reset land when the last batch does."""
+
+        new_keys = set()
+        new_by_key = {}
+        colliding_songs = set()
+        for row in visible:
+            key = _chart_key(row)
+            if key in new_keys:
+                # Two rows share one key in this song: never guess which
+                # is which — the song's rows are re-inserted as a block.
+                colliding_songs.add(key[0])
+            new_keys.add(key)
+            new_by_key.setdefault(key, row)
+        # A key the current tree holds twice is a collision too: the
+        # previous refresh re-inserted that song as a block, so both of
+        # its items share the key, and neither may be matched.
+        seen_keys = set()
+        for row in self._tree_item_rows.values():
+            key = _chart_key(row)
+            if key in seen_keys:
+                colliding_songs.add(key[0])
+            seen_keys.add(key)
+        selected_items = set(self.tree.selection())
+        for item, row in list(self._tree_item_rows.items()):
+            key = _chart_key(row)
+            if key[0] in colliding_songs or key not in new_keys:
+                self.tree.delete(item)
+                del self._tree_item_rows[item]
+                del self._tree_item_display[item]
+                self._tree_item_order.remove(key)
+                selected_items.discard(item)
+        # Selection first, so the tags the update below writes already
+        # agree with the selection the tree shows.
+        for item, row in self._tree_item_rows.items():
+            key = _chart_key(row)
+            if key in selected_keys and item not in selected_items:
+                self.tree.selection_add(item)
+                selected_items.add(item)
+                self._tree_tint.note_selected(item)
+            elif key not in selected_keys and item in selected_items:
+                self.tree.selection_remove(item)
+                selected_items.discard(item)
+        # A content change is detected from the saved display tuple,
+        # never by comparing row dicts: merge_scores re-derives score
+        # fields in place, so on a sync the old and new dicts are the
+        # same objects and a dict comparison would see no change. The
+        # surviving item also takes the new row dict: on a load the
+        # filter's rows are fresh dicts, and the song page and the
+        # course builder read their row back through _tree_item_rows.
+        for item, row in list(self._tree_item_rows.items()):
+            key = _chart_key(row)
+            row = new_by_key[key]
+            self._tree_item_rows[item] = row
+            shown = _display_tuple(row, key in selected_keys)
+            if shown != self._tree_item_display.get(item):
+                self.tree.item(item, values=shown[0], tags=shown[1])
+                self._tree_item_display[item] = shown
+        key_to_item = {
+            _chart_key(row): item
+            for item, row in self._tree_item_rows.items()
+        }
+        self._apply_diff_batch(visible, 0, generation, selected_keys,
+                               key_to_item, selected_items,
+                               colliding_songs)
+
+    def _apply_diff_batch(self, visible, start, generation, selected_keys,
+                          key_to_item, selected_items, colliding_songs):
+        """Insert the new rows and move the reordered ones, in time-boxed
+        batches under the same deadline and rescheduling as _insert_batch.
+        Deletes and in-place updates already ran synchronously in
+        _apply_diff, so this walk only places rows: for each position in
+        `visible` order it leaves the item that is already there, moves
+        the item that belongs there, or inserts a fresh one. The order
+        list is the table's own record of the tree order, so the
+        already-there check is a list lookup, not a tree call; tree.index
+        is only asked when a row actually has to move."""
+
+        if generation != self._render_generation:
+            return
+        deadline = time.perf_counter() + ROW_INSERT_BUDGET_SECONDS
+        index = start
+        while index < len(visible):
+            row = visible[index]
+            key = _chart_key(row)
+            if key[0] in colliding_songs or key not in key_to_item:
+                values, tags = _display_tuple(row, key in selected_keys)
+                item = self.tree.insert("", index, values=values, tags=tags)
+                self._tree_item_rows[item] = row
+                self._tree_item_order.insert(index, key)
+                self._tree_item_display[item] = (values, tags)
+                if key not in colliding_songs:
+                    key_to_item[key] = item
+                if key in selected_keys:
+                    self.tree.selection_add(item)
+                    selected_items.add(item)
+                    self._tree_tint.note_selected(item)
+            elif (index >= len(self._tree_item_order)
+                    or self._tree_item_order[index] != key):
+                item = key_to_item[key]
+                current = self.tree.index(item)
+                self.tree.move(item, "", index)
+                self._tree_item_order.pop(current)
+                self._tree_item_order.insert(index, key)
+            index += 1
+            if time.perf_counter() >= deadline:
+                break
+        if index < len(visible):
+            self.count_label.set(f"Loading {index:,} of {len(visible):,} charts…")
+            self._parent.after(1, lambda: self._apply_diff_batch(
+                visible, index, generation, selected_keys, key_to_item,
+                selected_items, colliding_songs))
+        else:
+            self._set_final_count(visible)
+            self._tree_tint.reset(selected_items)
+
+    def _set_final_count(self, rows):
+        """The count label's settled text, once a refresh has landed."""
+        total = len(self._filter.library_rows())
+        count_text = f"{len(rows):,} charts shown · {total:,} total"
+        hint = self._filter.search_hint()
+        if hint:
+            count_text += f" — {hint}"
+        self.count_label.set(count_text)
 
     def _insert_batch(self, rows, start, generation, selected_rows=None):
         if generation != self._render_generation:
@@ -447,17 +633,12 @@ class LibraryTable:
         stop = start
         while stop < len(rows):
             row = rows[stop]
-            values = []
-            for col in HEADERS:
-                value = row.get(col, "")
-                if col == "Time" and value != "":
-                    value = format_duration(value)
-                elif isinstance(value, float):
-                    value = f"{value:g}"
-                values.append(value)
             keep_selected = id(row) in selected_rows
-            item = self.tree.insert("", "end", values=values, tags=row_tints.row_tags(row, keep_selected))
+            values, tags = _display_tuple(row, keep_selected)
+            item = self.tree.insert("", "end", values=values, tags=tags)
             self._tree_item_rows[item] = row
+            self._tree_item_order.append(_chart_key(row))
+            self._tree_item_display[item] = (values, tags)
             if keep_selected:
                 self.tree.selection_add(item)
                 self._tree_tint.note_selected(item)
@@ -468,12 +649,9 @@ class LibraryTable:
             self.count_label.set(f"Loading {stop:,} of {len(rows):,} charts…")
             self._parent.after(1, lambda: self._insert_batch(rows, stop, generation, selected_rows))
         else:
-            total = len(self._filter.library_rows())
-            count_text = f"{len(rows):,} charts shown · {total:,} total"
-            hint = self._filter.search_hint()
-            if hint:
-                count_text += f" — {hint}"
-            self.count_label.set(count_text)
+            # The count label is set by _insert_batch: a progress count while rows
+            # are still streaming in, the final totals once the last batch lands.
+            self._set_final_count(rows)
 
     def selected_rows(self):
         """The chart rows currently selected in the main table (for the course builder)."""

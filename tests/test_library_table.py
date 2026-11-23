@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 
 from itgmania_library.library_constants import TAP_FIELDS
 from itgmania_library.library_geometry import scale_pixels
+from itgmania_library.library_sources import merge_scores
 from itgmania_library.library_stores import SettingsStore
 from itgmania_library import library_table as table_module
 from itgmania_library import row_tints
@@ -78,7 +79,7 @@ def make_table(column_order=None, column_widths=None, sort_keys=None,
                visible_columns=None, column_visibility=None,
                group_visibility=None, rows=(), show_rows=None,
                save_settings=None, count_label=None, dpi_scale=1.0,
-               on_open_row=None):
+               on_open_row=None, tree=None):
     """A real LibraryTable on fake Tk objects, plus the Mock tree it built.
 
     The Treeview and scrollbars are patched to Mocks (the table creates
@@ -88,12 +89,15 @@ def make_table(column_order=None, column_widths=None, sort_keys=None,
     column_visibility
     and group_visibility default to fresh FakeVariable dicts, or pass
     the app's shared dicts (the save tests do, so _save_settings reads
-    the same objects the table mutates).
+    the same objects the table mutates). Pass a tree to build the table
+    on it instead of a Mock — the diff tests pass a FakeTreeview, which
+    keeps the tree's state the way a real Treeview does.
     """
     parent = Mock()
-    tree = Mock()
-    tree.get_children.return_value = []
-    tree.column.return_value = 100
+    if tree is None:
+        tree = Mock()
+        tree.get_children.return_value = []
+        tree.column.return_value = 100
     if column_visibility is None:
         column_visibility = {
             col: FakeVariable(True if visible_columns is None
@@ -132,6 +136,144 @@ def rows_for(*specs):
     return [{"Pack": pack, "Type": type_, "Difficulty": difficulty,
              "Title": "Song", "Grade": ""}
             for pack, type_, difficulty in specs]
+
+
+class FakeTreeview:
+    """A minimal in-memory Treeview: items in order, values/tags, selection.
+
+    The diff tests need a tree that actually keeps state — a Mock returns
+    the same item for every insert and forgets deletes — so this fake
+    models the parts LibraryTable uses: insert/delete/move/index/item,
+    get_children, and the selection set. Everything else is a no-op.
+    """
+
+    def __init__(self):
+        self._items = {}
+        self._order = []
+        self._selection = set()
+        self._counter = 0
+
+    def insert(self, parent, index, values=(), tags=()):
+        item = f"item{self._counter}"
+        self._counter += 1
+        self._items[item] = {"values": tuple(values), "tags": tuple(tags)}
+        if index == "end" or index >= len(self._order):
+            self._order.append(item)
+        else:
+            self._order.insert(index, item)
+        return item
+
+    def delete(self, *items):
+        for item in items:
+            self._items.pop(item, None)
+            if item in self._order:
+                self._order.remove(item)
+            self._selection.discard(item)
+
+    def move(self, item, parent, index):
+        self._order.remove(item)
+        if index == "end" or index >= len(self._order):
+            self._order.append(item)
+        else:
+            self._order.insert(index, item)
+
+    def index(self, item):
+        return self._order.index(item)
+
+    def get_children(self, item=None):
+        return tuple(self._order)
+
+    def item(self, item, option=None, **kwargs):
+        if option is not None:
+            if option == "values":
+                return self._items[item]["values"]
+            return self._items[item]["tags"]
+        if kwargs:
+            if "values" in kwargs:
+                self._items[item]["values"] = tuple(kwargs["values"])
+            if "tags" in kwargs:
+                self._items[item]["tags"] = tuple(kwargs["tags"])
+        return dict(self._items[item])
+
+    def selection(self):
+        return tuple(item for item in self._order if item in self._selection)
+
+    def selection_add(self, *items):
+        self._selection.update(items)
+
+    def selection_remove(self, *items):
+        self._selection.difference_update(items)
+
+    def selection_set(self, items):
+        self._selection = set(items)
+
+    def exists(self, item):
+        return item in self._items
+
+    def focus(self):
+        return ""
+
+    # The constructor and the column/heading helpers call these; they do
+    # nothing here.
+    def heading(self, *args, **kwargs):
+        pass
+
+    def column(self, *args, **kwargs):
+        return 100
+
+    def configure(self, *args, **kwargs):
+        pass
+
+    def grid(self, *args, **kwargs):
+        pass
+
+    def bind(self, *args, **kwargs):
+        pass
+
+    def tag_configure(self, *args, **kwargs):
+        pass
+
+    def identify_region(self, *args, **kwargs):
+        return "cell"
+
+    def identify_column(self, *args, **kwargs):
+        return "#1"
+
+    def winfo_width(self):
+        return 300
+
+    def yview(self, *args, **kwargs):
+        pass
+
+    def xview(self, *args, **kwargs):
+        pass
+
+    # Test helpers: the visible contents, row for row and in order.
+    def shown_rows(self, table):
+        return [table._tree_item_rows[item] for item in self._order]
+
+    def shown_values(self):
+        return [self._items[item]["values"] for item in self._order]
+
+
+def make_diff_table(rows=(), sort_keys=None):
+    """A real LibraryTable on a FakeTreeview, so the diff tests can read
+    the tree's actual contents after a refresh."""
+    return make_table(rows=rows, sort_keys=sort_keys, tree=FakeTreeview())
+
+
+def diff_rows(*specs):
+    """Chart rows from (Course path, Type, Difficulty, Chart) specs, for
+    the diff tests. Pack and Title come from the path, so the default
+    Pack sort orders them by pack."""
+    rows = []
+    for path, type_, difficulty, chart in specs:
+        pack, title = path.split("/", 1)
+        rows.append({"Course path": path, "Type": type_,
+                     "Difficulty": difficulty, "Chart": chart,
+                     "Pack": pack, "Title": title, "Grade": "",
+                     "Time": 60, "Meter": 10})
+    return rows
 
 
 class OpenRowBindingTests(unittest.TestCase):
@@ -782,10 +924,15 @@ class TableWiringGuardTests(unittest.TestCase):
         # count so the explicit refresh below is the one pinned.
         show_rows.reset_mock()
         tree.reset_mock()
+        tree.selection.return_value = ()
         with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
             table.refresh_table()
         show_rows.assert_called_once_with([rows[1]])
-        self.assertEqual(tree.insert.call_count, 1)
+        # Nothing changed since the pack pick's refresh, so the diff
+        # inserts and deletes nothing (Proposal 0019): the panel still
+        # gets its push, but the tree is left alone.
+        tree.insert.assert_not_called()
+        tree.delete.assert_not_called()
 
 
 class LayoutStateTests(unittest.TestCase):
@@ -907,3 +1054,365 @@ class ShiftSortClickTests(unittest.TestCase):
 
         self.assertEqual(table.layout_state()["sort_keys"], [["Pack", False]])
         table.refresh_table.assert_not_called()
+
+
+class DiffUnchangedTests(unittest.TestCase):
+    """A refresh whose rows are unchanged inserts and deletes nothing
+    (Proposal 0019, §6)."""
+
+    @staticmethod
+    def make_loaded_table(rows):
+        table, tree = make_diff_table(rows=rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+        return table, tree
+
+    def test_unchanged_refresh_keeps_the_same_items_in_the_same_order(self):
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = self.make_loaded_table(rows)
+        before = list(tree._order)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+
+        self.assertEqual(tree._order, before)
+        self.assertEqual(tree.shown_rows(table), rows)
+        table.count_label.set.assert_called_with("2 charts shown · 2 total")
+
+    def test_unchanged_refresh_with_fresh_dicts_keeps_the_items(self):
+        # A load brings fresh row dicts with the same keys: the diff
+        # matches by key, so the items survive even though id(row) changed.
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = self.make_loaded_table(rows)
+        before = list(tree._order)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.set_rows([dict(row) for row in rows])
+
+        self.assertEqual(tree._order, before)
+        self.assertEqual(tree.shown_rows(table),
+                         table._filter.library_rows())
+
+
+class DiffChangeTests(unittest.TestCase):
+    """A changed row updates in place, a new row inserts at its sorted
+    position, and a deleted row is removed (Proposal 0019, §6)."""
+
+    def test_changed_row_updates_in_place_without_a_new_item(self):
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = make_diff_table(rows=rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+        before = list(tree._order)
+        rows[0]["Grade"] = "AAA"
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+
+        self.assertEqual(tree._order, before)
+        grade_index = list(app.HEADERS).index("Grade")
+        self.assertEqual(tree._items[before[0]]["values"][grade_index],
+                         "AAA")
+
+    def test_new_row_inserts_at_its_sorted_position(self):
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("C/3", "dance-single", "Hard", ""))
+        table, tree = make_diff_table(rows=rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+        before = list(tree._order)
+        new_rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                             ("B/2", "dance-single", "Hard", ""),
+                             ("C/3", "dance-single", "Hard", ""))
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.set_rows(new_rows)
+
+        self.assertEqual(tree.shown_rows(table), new_rows)
+        self.assertEqual(tree._order[0], before[0])
+        self.assertEqual(tree._order[2], before[1])
+        self.assertEqual(len(tree._items), 3)
+
+    def test_deleted_row_is_removed_and_survivors_keep_their_items(self):
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""),
+                         ("C/3", "dance-single", "Hard", ""))
+        table, tree = make_diff_table(rows=rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+        before = list(tree._order)
+        new_rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                             ("C/3", "dance-single", "Hard", ""))
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.set_rows(new_rows)
+
+        self.assertEqual(tree.shown_rows(table), new_rows)
+        self.assertEqual(tree._order, [before[0], before[2]])
+        self.assertEqual(len(tree._items), 2)
+
+    def test_colliding_key_reinserts_the_song_as_a_block(self):
+        # Two Edit charts of one song share one key (same description):
+        # the diff never guesses which is which — both rows are deleted
+        # and re-inserted, and the other song's item survives.
+        rows = diff_rows(("A/1", "dance-single", "Edit", "My edit"),
+                         ("A/1", "dance-single", "Edit", "My edit"),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = make_diff_table(rows=rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+        before = list(tree._order)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+
+        self.assertEqual(tree._order[2], before[2])
+        self.assertNotEqual(tree._order[0], before[0])
+        self.assertNotEqual(tree._order[1], before[1])
+        self.assertEqual(tree.shown_rows(table), rows)
+
+    def test_edits_with_different_descriptions_are_distinct_rows(self):
+        # The Chart component of the key is what keeps two Edits of one
+        # song apart: an unchanged refresh leaves both items alone.
+        rows = diff_rows(("A/1", "dance-single", "Edit", "First"),
+                         ("A/1", "dance-single", "Edit", "Second"),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = make_diff_table(rows=rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+        before = list(tree._order)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+
+        self.assertEqual(tree._order, before)
+        self.assertEqual(tree.shown_rows(table), rows)
+
+
+class DiffSortTests(unittest.TestCase):
+    """A re-sort moves rows without re-inserting them (Proposal 0019, §6,
+    subject to Q2)."""
+
+    def test_resort_moves_rows_without_reinserting(self):
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""),
+                         ("C/3", "dance-single", "Hard", ""))
+        table, tree = make_diff_table(rows=rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+        before = list(tree._order)
+        self.assertEqual(tree.shown_rows(table), rows)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.sort_by("Pack")  # toggles Pack to descending
+
+        self.assertEqual(set(tree._order), set(before))
+        self.assertEqual(len(tree._items), 3)
+        self.assertEqual(tree.shown_rows(table),
+                         [rows[2], rows[1], rows[0]])
+        table.count_label.set.assert_called_with("3 charts shown · 3 total")
+
+
+class DiffSelectionTests(unittest.TestCase):
+    """Selection is preserved by key across a diff (Proposal 0019, §6)."""
+
+    @staticmethod
+    def make_loaded_table(rows):
+        table, tree = make_diff_table(rows=rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+        return table, tree
+
+    def test_selection_survives_a_diff_by_key(self):
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = self.make_loaded_table(rows)
+        tree.selection_add(tree._order[0])
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table(preserve_selection=True)
+
+        self.assertEqual(tree.selection(), (tree._order[0],))
+        self.assertIn(row_tints.SELECTED_ROW_TAG,
+                      tree._items[tree._order[0]]["tags"])
+        self.assertEqual(table._tree_tint.items, {tree._order[0]})
+
+    def test_selection_survives_fresh_row_dicts_by_key(self):
+        # A load replaces the row dicts: the old id(row) carry would drop
+        # the selection, but the key carry keeps it. The filter's rows are
+        # swapped directly here so no refresh runs before the pinned one.
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = self.make_loaded_table(rows)
+        tree.selection_add(tree._order[0])
+        table._filter._rows = [dict(row) for row in rows]
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table(preserve_selection=True)
+
+        self.assertEqual(tree.selection(), (tree._order[0],))
+
+    def test_a_load_clears_the_selection(self):
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = self.make_loaded_table(rows)
+        tree.selection_add(tree._order[0])
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+
+        self.assertEqual(tree.selection(), ())
+        self.assertNotIn(row_tints.SELECTED_ROW_TAG,
+                         tree._items[tree._order[0]]["tags"])
+        self.assertEqual(table._tree_tint.items, set())
+
+
+class DiffFilterTests(unittest.TestCase):
+    """A filter narrowing keeps the surviving items (Proposal 0019, §6)."""
+
+    def test_filter_narrowing_keeps_the_surviving_items(self):
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""),
+                         ("C/3", "dance-single", "Hard", ""))
+        table, tree = make_diff_table(rows=rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+        before = list(tree._order)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.pack_var.set("B")
+
+        self.assertEqual(tree.shown_rows(table), [rows[1]])
+        self.assertEqual(tree._order, [before[1]])
+        self.assertEqual(len(tree._items), 1)
+        table.count_label.set.assert_called_with("1 charts shown · 3 total")
+
+
+class DiffSyncTests(unittest.TestCase):
+    """A sync re-scores cells in place through the real sync path
+    (Proposal 0019, §6): merge_scores mutates the shown rows in place,
+    then _on_library_changed issues the preserve-selection refresh. The
+    diff must detect the change from its saved display tuples, not from
+    the row dicts — the old and new dicts are the same objects."""
+
+    def test_sync_rescores_cells_in_place(self):
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = make_diff_table(rows=rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+        before = list(tree._order)
+        scores = {("a/1", "dance-single", "hard"): {
+            "PercentDP": 0.95, "Grade": "Tier02", "Score": 1000000,
+            "plays": 3, "last_played": "2026-01-01", "MaxCombo": 500}}
+        merge_scores(rows, scores)
+        instance = object.__new__(app.LibraryApp)
+        instance._table = table
+        instance._filter = table._filter
+        instance.course_builder = None
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            instance._on_library_changed(rows, preserve_selection=True)
+
+        # Same items, none re-inserted — but the first row's cells show
+        # the new score.
+        self.assertEqual(tree._order, before)
+        grade_index = list(app.HEADERS).index("Grade")
+        best_index = list(app.HEADERS).index("Best %")
+        values = tree._items[before[0]]["values"]
+        self.assertEqual(values[grade_index], "★★★")
+        self.assertEqual(values[best_index], "95")
+        self.assertEqual(tree._items[before[1]]["values"][grade_index], "")
+
+
+class DiffGenerationTests(unittest.TestCase):
+    """A superseded generation inserts nothing, and a zero budget batches
+    the diff the way _insert_batch batches a full insert (Proposal 0019,
+    §6)."""
+
+    @staticmethod
+    def make_loaded_table(rows):
+        table, tree = make_diff_table(rows=rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+        return table, tree
+
+    def test_superseded_batch_inserts_nothing(self):
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("C/3", "dance-single", "Hard", ""))
+        table, tree = self.make_loaded_table(rows)
+        new_rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                             ("B/2", "dance-single", "Hard", ""),
+                             ("C/3", "dance-single", "Hard", ""))
+        # A zero budget: the diff's first batch places one row and
+        # schedules a continuation.
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 0):
+            table._filter.set_rows(new_rows)
+        continuation = table._parent.after.call_args.args[1]
+        # A newer refresh supersedes it and finishes the diff itself.
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+        self.assertEqual(tree.shown_rows(table), new_rows)
+        before = list(tree._order)
+
+        continuation()
+
+        self.assertEqual(tree._order, before)
+        self.assertEqual(tree.shown_rows(table), new_rows)
+
+    def test_zero_budget_batches_the_diff_and_the_continuation_finishes_it(self):
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("C/3", "dance-single", "Hard", ""))
+        table, tree = self.make_loaded_table(rows)
+        new_rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                             ("B/2", "dance-single", "Hard", ""),
+                             ("C/3", "dance-single", "Hard", ""))
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 0):
+            table._filter.set_rows(new_rows)
+        table.count_label.set.assert_called_with("Loading 1 of 3 charts…")
+        continuation = table._parent.after.call_args.args[1]
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            continuation()
+
+        self.assertEqual(tree.shown_rows(table), new_rows)
+        table.count_label.set.assert_called_with("3 charts shown · 3 total")
+
+
+class DiffEquivalenceTests(unittest.TestCase):
+    """The tree contents after a diffed refresh equal the tree contents
+    after a rebuild, row for row and in order (Proposal 0019, §6)."""
+
+    def test_diffed_refresh_matches_a_rebuild_row_for_row(self):
+        old_rows = diff_rows(
+            ("A/1", "dance-single", "Hard", ""),
+            ("A/1", "dance-single", "Challenge", ""),
+            ("B/2", "dance-double", "Hard", ""),
+            ("B/2", "dance-single", "Medium", ""),
+            ("C/3", "dance-single", "Easy", ""),
+            ("C/3", "dance-single", "Hard", ""))
+        # One changed (a score lands), one new (sorts into the middle),
+        # one deleted.
+        new_rows = diff_rows(
+            ("A/1", "dance-single", "Hard", ""),
+            ("A/1", "dance-single", "Challenge", ""),
+            ("B/2", "dance-double", "Hard", ""),
+            ("B/2", "dance-single", "Hard", ""),
+            ("B/2", "dance-single", "Medium", ""),
+            ("C/3", "dance-single", "Easy", ""))
+        new_rows[1]["Grade"] = "AAA"
+        # The diffed table: load the old rows, then the new ones.
+        table_a, tree_a = make_diff_table(rows=old_rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table_a.refresh_table()
+            table_a._filter.set_rows(new_rows)
+        # The rebuilt table: a fresh table on the new rows.
+        table_b, tree_b = make_diff_table(rows=new_rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table_b.refresh_table()
+
+        self.assertEqual(tree_a.shown_rows(table_a),
+                         tree_b.shown_rows(table_b))
+        self.assertEqual(tree_a.shown_values(), tree_b.shown_values())
