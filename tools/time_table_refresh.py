@@ -170,12 +170,30 @@ def time_raw_detach_reattach(root, row_count):
     return detach_s, reattach_s, delete_s, insert_s
 
 
+def _restore_filters(filt, saved):
+    """Put the filter choices back (see main: the trials clear them)."""
+    filt.pack_var.set(saved[0])
+    filt.type_var.set(saved[1])
+    filt.diff_var.set(saved[2])
+
+
 def main():
     root = tk.Tk()
     application = app.LibraryApp(root)
     table = application._table
     filt = application._filter
     panel = application.distribution_panel
+    # The trials measure the full library, so a saved filter that hides
+    # rows would make the startup wait time out (Greptile P2,
+    # retrigger 2026-11-23): the wait expects the tree to hold the
+    # whole library, and set_choices keeps a valid saved choice. Clear
+    # all three filters first, and put the saved choices back at every
+    # exit so the driver leaves the app as it found it.
+    saved_filters = (filt.pack_var.get(), filt.type_var.get(),
+                     filt.diff_var.get())
+    filt.pack_var.set("All packs")
+    filt.type_var.set("All types")
+    filt.diff_var.set("All difficulties")
     # Wait for the initial load to settle completely, not just for the
     # first row (Greptile P2 #4): the first rows stream in through
     # _insert_batch, and a no-change refresh measured before the fill
@@ -183,10 +201,12 @@ def main():
     if not pump_until(root, lambda: len(filt.library_rows()) > 0, 120):
         print("The table is empty after 120 s: no snapshot restored?")
         print("Load the library in the app once, then run this again.")
+        _restore_filters(filt, saved_filters)
         root.destroy()
         return
     if not wait_for_settled(root, table, len(filt.library_rows())):
         print("The table never settled: the initial fill did not finish.")
+        _restore_filters(filt, saved_filters)
         root.destroy()
         return
     rows = filt.library_rows()
@@ -276,6 +296,7 @@ def main():
     else:
         print("Verdict: the insert does NOT dominate — see §7 Q3, the "
               "implementation should also take the dominant term.")
+    _restore_filters(filt, saved_filters)
     root.destroy()
 
 

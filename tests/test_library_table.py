@@ -1582,6 +1582,11 @@ class DiffSelectionTests(unittest.TestCase):
 
         self.assertEqual(tree.selection(), ())
         self.assertEqual(table._tree_tint.items, set())
+        # Greptile P2 (retrigger): the tag must agree with the
+        # selection — neither duplicate keeps the white tag.
+        for item in tree._order:
+            self.assertNotIn(row_tints.SELECTED_ROW_TAG,
+                             tree._items[item]["tags"])
         # The sort itself still lands: B first, then the two Edits.
         self.assertEqual(tree.shown_rows(table),
                          [rows[2], rows[0], rows[1]])

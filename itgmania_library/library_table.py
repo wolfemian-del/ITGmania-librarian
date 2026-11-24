@@ -675,7 +675,14 @@ class LibraryTable:
             row = visible[index]
             key = _chart_key(row, key_cache)
             if key[0] in colliding_songs or key not in key_to_item:
-                values, tags = _display_tuple(row, key in selected_keys)
+                # The tag and the selection agree by construction
+                # (Greptile P2, retrigger 2026-11-23): the tag is
+                # key-based, the selection is item-based and drops
+                # colliding keys, so a colliding key that kept its
+                # key-based tag would stay white although unselected.
+                selected = (key in selected_keys
+                            and key[0] not in colliding_songs)
+                values, tags = _display_tuple(row, selected)
                 if large_reorder:
                     # A new row goes to the end, not to its index:
                     # insert-at-index costs time proportional to the
@@ -702,7 +709,7 @@ class LibraryTable:
                 # drops for that key instead of landing on every row that
                 # shares it. A unique key keeps its item through a sort
                 # or sync, so the one-row choice survives there.
-                if key in selected_keys and key[0] not in colliding_songs:
+                if selected:
                     self.tree.selection_add(item)
                     selected_items.add(item)
                     self._tree_tint.note_selected(item)
