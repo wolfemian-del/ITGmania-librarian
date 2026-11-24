@@ -1462,6 +1462,57 @@ class DiffLargePlacementTests(unittest.TestCase):
         self.assertEqual(tree.shown_rows(table), rows)
 
 
+class DiffKeyCacheTests(unittest.TestCase):
+    """The chart key is built once per row dict per refresh (PR #271
+    Revision 3: the §6 profile showed _chart_key called twelve times
+    per row — 508,500 calls for 42,375 rows on a Title click, a fifth
+    of the click). The tests count the tuple builds, not the _chart_key
+    calls: the calls still happen (a dozen per row), but all after the
+    first are cache hits."""
+
+    @staticmethod
+    def count_builds():
+        calls = []
+        real = table_module._chart_key_tuple
+
+        def counting(row):
+            calls.append(1)
+            return real(row)
+
+        return calls, counting
+
+    def test_no_change_refresh_builds_each_key_once(self):
+        rows = diff_rows(("P00/1", "dance-single", "Hard", ""),
+                         ("P01/1", "dance-single", "Hard", ""),
+                         ("P02/1", "dance-single", "Hard", ""),
+                         ("P03/1", "dance-single", "Hard", ""),
+                         ("P04/1", "dance-single", "Hard", ""))
+        table, tree = make_diff_table(rows=rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+        calls, counting = self.count_builds()
+        with patch.object(table_module, "_chart_key_tuple", counting):
+            with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+                table.refresh_table()
+        # Without the cache the same refresh builds the tuple twelve
+        # times per row (once per call site); with it, once per dict.
+        self.assertEqual(len(calls), len(rows))
+
+    def test_full_insert_builds_each_key_once(self):
+        rows = diff_rows(("P00/1", "dance-single", "Hard", ""),
+                         ("P01/1", "dance-single", "Hard", ""),
+                         ("P02/1", "dance-single", "Hard", ""),
+                         ("P03/1", "dance-single", "Hard", ""),
+                         ("P04/1", "dance-single", "Hard", ""))
+        table, tree = make_diff_table(rows=rows)
+        calls, counting = self.count_builds()
+        with patch.object(table_module, "_chart_key_tuple", counting):
+            with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+                table.refresh_table()
+        self.assertEqual(len(calls), len(rows))
+        self.assertEqual(tree.shown_rows(table), rows)
+
+
 class DiffSelectionTests(unittest.TestCase):
     """Selection is preserved by key across a diff (Proposal 0019, §6)."""
 

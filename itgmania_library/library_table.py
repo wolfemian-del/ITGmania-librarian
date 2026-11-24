@@ -52,19 +52,40 @@ ROW_INSERT_BUDGET_SECONDS = 0.012
 SET_CHILDREN_PLACEMENT_THRESHOLD = 50
 
 
-def _chart_key(row):
-    """The chart key that identifies a row across refreshes (Proposal 0019,
-    D3): the scores join key plus the chart description, which is what
-    distinguishes two Edit charts of the same type and difficulty in one
-    song. The loader builds fresh row dicts on every refresh, so identity
-    cannot be id(row). The engine does not guarantee this key is unique
-    (Song::AddSteps appends without dedup, and two Edits can share a
-    description), so a key that collides inside one song is never matched
-    — the diff re-inserts that song's rows as a block instead (see
-    _apply_diff)."""
+def _chart_key_tuple(row):
+    """The key tuple itself: the scores join key plus the chart
+    description, which is what distinguishes two Edit charts of the same
+    type and difficulty in one song. The loader builds fresh row dicts
+    on every refresh, so identity cannot be id(row). The engine does not
+    guarantee this key is unique (Song::AddSteps appends without dedup,
+    and two Edits can share a description), so a key that collides
+    inside one song is never matched — the diff re-inserts that song's
+    rows as a block instead (see _apply_diff)."""
 
     return (row.get("Course path", ""), row.get("Type", ""),
             row.get("Difficulty", ""), row.get("Chart", ""))
+
+
+def _chart_key(row, cache=None):
+    """The chart key that identifies a row across refreshes (Proposal 0019,
+    D3). When `cache` is given — one dict per refresh, keyed by id(row)
+    — the tuple is built once per row dict and the later lookups are
+    dict hits: the diff asks for the same row's key a dozen times per
+    refresh (§6 profile: 508,500 calls for 42,375 rows on a Title click,
+    a fifth of the click), and rebuilding the tuple each time is the
+    second cost in the refresh after the display tuples. The cache never
+    outlives its refresh, so a row dict freed and its id reused cannot
+    return a stale key: every dict it covers is alive for the refresh
+    (held by the filter and the table), and the cache is dropped when
+    the refresh ends."""
+
+    if cache is None:
+        return _chart_key_tuple(row)
+    key = cache.get(id(row))
+    if key is None:
+        key = _chart_key_tuple(row)
+        cache[id(row)] = key
+    return key
 
 
 def _display_tuple(row, selected=False):
@@ -455,13 +476,18 @@ class LibraryTable:
             self.tree.heading(column, text=heading)
 
     def refresh_table(self, preserve_selection=False):
+        # One key cache for the whole refresh (see _chart_key): the diff
+        # asks for the same row's key a dozen times, and the cache is
+        # what keeps that to one tuple build per row dict.
+        key_cache = {}
         # Selection is carried by chart key, not by item id (Proposal
         # 0019, step 3): the loader builds fresh row dicts on a load, so
         # id(row) cannot survive a refresh that replaces the list.
         selected_keys = set()
         if preserve_selection:
             selected_keys = {
-                _chart_key(row) for item in self.tree.selection()
+                _chart_key(row, key_cache)
+                for item in self.tree.selection()
                 if (row := self._tree_item_rows.get(item)) is not None
             }
         self._render_generation += 1
@@ -495,15 +521,17 @@ class LibraryTable:
             # back to the row ids the inserter keeps.
             selected_rows = {
                 id(row) for row in visible
-                if _chart_key(row) in selected_keys
+                if _chart_key(row, key_cache) in selected_keys
             }
             self._tree_tint.reset()
-            self._insert_batch(visible, 0, generation, selected_rows)
+            self._insert_batch(visible, 0, generation, selected_rows,
+                               key_cache)
         else:
-            self._apply_diff(visible, generation, selected_keys)
+            self._apply_diff(visible, generation, selected_keys, key_cache)
         self._show_rows(visible)
 
-    def _apply_diff(self, visible, generation, selected_keys):
+    def _apply_diff(self, visible, generation, selected_keys,
+                    key_cache=None):
         """Make the tree show `visible` by changing only what differs
         from what is already showing (Proposal 0019, step 2).
 
@@ -516,7 +544,7 @@ class LibraryTable:
         new_by_key = {}
         colliding_songs = set()
         for row in visible:
-            key = _chart_key(row)
+            key = _chart_key(row, key_cache)
             if key in new_keys:
                 # Two rows share one key in this song: never guess which
                 # is which — the song's rows are re-inserted as a block.
@@ -528,13 +556,13 @@ class LibraryTable:
         # its items share the key, and neither may be matched.
         seen_keys = set()
         for row in self._tree_item_rows.values():
-            key = _chart_key(row)
+            key = _chart_key(row, key_cache)
             if key in seen_keys:
                 colliding_songs.add(key[0])
             seen_keys.add(key)
         selected_items = set(self.tree.selection())
         for item, row in list(self._tree_item_rows.items()):
-            key = _chart_key(row)
+            key = _chart_key(row, key_cache)
             if key[0] in colliding_songs or key not in new_keys:
                 self.tree.delete(item)
                 del self._tree_item_rows[item]
@@ -548,14 +576,14 @@ class LibraryTable:
         # keep their relative order, and a key a deleted item shared
         # with a survivor cannot occur — a colliding song is deleted
         # as a block — so filtering on the survivor keys is exact.
-        survivor_keys = {_chart_key(row)
+        survivor_keys = {_chart_key(row, key_cache)
                          for row in self._tree_item_rows.values()}
         self._tree_item_order = [key for key in self._tree_item_order
                                  if key in survivor_keys]
         # Selection first, so the tags the update below writes already
         # agree with the selection the tree shows.
         for item, row in self._tree_item_rows.items():
-            key = _chart_key(row)
+            key = _chart_key(row, key_cache)
             if key in selected_keys and item not in selected_items:
                 self.tree.selection_add(item)
                 selected_items.add(item)
@@ -577,7 +605,7 @@ class LibraryTable:
         # the selection touches, even when its saved tuple matches.
         forced = set(self._tree_tint.items) | selected_items
         for item, row in list(self._tree_item_rows.items()):
-            key = _chart_key(row)
+            key = _chart_key(row, key_cache)
             row = new_by_key[key]
             self._tree_item_rows[item] = row
             shown = _display_tuple(row, key in selected_keys)
@@ -585,7 +613,7 @@ class LibraryTable:
                 self.tree.item(item, values=shown[0], tags=shown[1])
                 self._tree_item_display[item] = shown
         key_to_item = {
-            _chart_key(row): item
+            _chart_key(row, key_cache): item
             for item, row in self._tree_item_rows.items()
         }
         # The reorder plan (PR #271 Lane A, finding 2, and the §6
@@ -601,12 +629,12 @@ class LibraryTable:
         # know whether there is anything to place at all, so a refresh
         # with nothing to insert or move does not show a "Loading …"
         # progress count (the owner's smoke check).
-        target_order = [_chart_key(row) for row in visible
-                        if _chart_key(row) in survivor_keys]
+        target_order = [_chart_key(row, key_cache) for row in visible
+                        if _chart_key(row, key_cache) in survivor_keys]
         displaced = sum(1 for a, b in zip(self._tree_item_order,
                                           target_order) if a != b)
         inserts = sum(1 for row in visible
-                      if _chart_key(row) not in survivor_keys)
+                      if _chart_key(row, key_cache) not in survivor_keys)
         inserts_pending = inserts > 0
         large_reorder = (displaced + inserts
                          > SET_CHILDREN_PLACEMENT_THRESHOLD)
@@ -615,11 +643,12 @@ class LibraryTable:
         self._apply_diff_batch(visible, 0, generation, selected_keys,
                                key_to_item, selected_items,
                                colliding_songs, large_reorder, placed,
-                               show_progress)
+                               show_progress, key_cache)
 
     def _apply_diff_batch(self, visible, start, generation, selected_keys,
                           key_to_item, selected_items, colliding_songs,
-                          large_reorder, placed, show_progress):
+                          large_reorder, placed, show_progress,
+                          key_cache=None):
         """Insert the new rows and move the reordered ones, in time-boxed
         batches under the same deadline and rescheduling as _insert_batch.
         Deletes and in-place updates already ran synchronously in
@@ -644,7 +673,7 @@ class LibraryTable:
         index = start
         while index < len(visible):
             row = visible[index]
-            key = _chart_key(row)
+            key = _chart_key(row, key_cache)
             if key[0] in colliding_songs or key not in key_to_item:
                 values, tags = _display_tuple(row, key in selected_keys)
                 if large_reorder:
@@ -698,11 +727,12 @@ class LibraryTable:
             self._parent.after(1, lambda: self._apply_diff_batch(
                 visible, index, generation, selected_keys, key_to_item,
                 selected_items, colliding_songs, large_reorder, placed,
-                show_progress))
+                show_progress, key_cache))
         else:
             if large_reorder:
                 self.tree.set_children("", *placed)
-                self._tree_item_order = [_chart_key(row) for row in visible]
+                self._tree_item_order = [
+                    _chart_key(row, key_cache) for row in visible]
             self._set_final_count(visible)
             self._tree_tint.reset(selected_items)
 
@@ -715,7 +745,8 @@ class LibraryTable:
             count_text += f" — {hint}"
         self.count_label.set(count_text)
 
-    def _insert_batch(self, rows, start, generation, selected_rows=None):
+    def _insert_batch(self, rows, start, generation, selected_rows=None,
+                      key_cache=None):
         if generation != self._render_generation:
             return
         selected_rows = selected_rows or set()
@@ -730,7 +761,7 @@ class LibraryTable:
             values, tags = _display_tuple(row, keep_selected)
             item = self.tree.insert("", "end", values=values, tags=tags)
             self._tree_item_rows[item] = row
-            self._tree_item_order.append(_chart_key(row))
+            self._tree_item_order.append(_chart_key(row, key_cache))
             self._tree_item_display[item] = (values, tags)
             if keep_selected:
                 self.tree.selection_add(item)
@@ -740,7 +771,8 @@ class LibraryTable:
                 break
         if stop < len(rows):
             self.count_label.set(f"Loading {stop:,} of {len(rows):,} charts…")
-            self._parent.after(1, lambda: self._insert_batch(rows, stop, generation, selected_rows))
+            self._parent.after(1, lambda: self._insert_batch(
+                rows, stop, generation, selected_rows, key_cache))
         else:
             # The count label is set by _insert_batch: a progress count while rows
             # are still streaming in, the final totals once the last batch lands.
