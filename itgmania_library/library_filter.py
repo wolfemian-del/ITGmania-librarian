@@ -8,7 +8,7 @@ read them through here and there is no second copy to keep in step —
 and it holds the five filter variables (shared with the app, which
 builds the dropdowns that write them) and the search box. It decides
 which rows pass (filter_rows), and it tells its subscribers when
-something changed (the app's refresh_table), so the table refreshes:
+something changed (the app's refresh_on_filter_change), so the table refreshes:
 a dropdown or scored pick refreshes at once, a search keystroke
 refreshes after a short pause (the debounce), and a batch of changes
 refreshes once when the batch ends.

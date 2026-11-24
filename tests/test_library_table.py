@@ -1662,6 +1662,31 @@ class DiffTagTests(unittest.TestCase):
                              tree._items[item]["tags"])
         self.assertEqual(table._tree_tint.items, set())
 
+    def test_empty_set_refresh_clears_the_white_tag_after_deselect(self):
+        # Lane D pin 1 (and Claude's Lane A finding 3): the forced
+        # rewrite is what removes a stale white tag when nothing
+        # changed. A row selected, then deselected without the event
+        # firing, still carries the tag and the tracker still holds
+        # it — an empty-set refresh must clear the tag, asserted by
+        # the actual tags and not by a call count.
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = self.make_loaded_table(rows)
+        tree.selection_add(tree._order[0])
+        table._tree_tint.on_select()
+        self.assertIn(row_tints.SELECTED_ROW_TAG,
+                      tree._items[tree._order[0]]["tags"])
+        # Deselect without the event firing: the tag stays on the item
+        # and the tracker still holds it, as after a filter edit.
+        tree.selection_remove(tree._order[0])
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table(preserve_selection=True,
+                                changed_keys=set())
+
+        self.assertNotIn(row_tints.SELECTED_ROW_TAG,
+                         tree._items[tree._order[0]]["tags"])
+
 
 class DiffFilterTests(unittest.TestCase):
     """A filter narrowing keeps the surviving items (Proposal 0019, §6)."""

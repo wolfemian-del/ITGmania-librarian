@@ -781,6 +781,7 @@ class RefreshGenerationTests(unittest.TestCase):
     def test_loaded_and_load_failed_ignore_stale_generation(self):
         instance = object.__new__(loader.LibraryLoader)
         instance._load_generation = 5
+        instance.rows = []
         instance.progress = Mock()
         instance.status = Mock()
         instance.on_library_changed = Mock()
@@ -800,12 +801,17 @@ class RefreshGenerationTests(unittest.TestCase):
             instance.progress.stop.assert_not_called()
             instance.load_button.configure.assert_not_called()
             mock_mb.showerror.assert_not_called()
+            instance.on_library_changed.assert_not_called()
 
             # Current generation works
             instance._load_failed("Real error", generation=5)
             instance.progress.stop.assert_called_once()
             instance.load_button.configure.assert_called_once_with(state="normal")
             mock_mb.showerror.assert_called_once_with("Could not load library", "Real error")
+            # A dropped sync's merge may already have rewritten the rows
+            # in place: the table rebuilds everything.
+            instance.on_library_changed.assert_called_once_with(
+                [], preserve_selection=True, changed_keys=None)
 
     def test_load_worker_queues_results_instead_of_calling_tk(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1115,6 +1121,13 @@ class ScoresSyncTests(unittest.TestCase):
             self.assertEqual(len(synced), 1)
             kind, args, kwargs = synced[0]
             self.assertEqual(args[1], 1)  # one chart changed
+            # The delivery carries the exact changed set, not just the
+            # count: one changed row, one chart key (Lane D pin 2).
+            row = rows[0]
+            self.assertEqual(args[2], {(row.get("Course path", ""),
+                                        row.get("Type", ""),
+                                        row.get("Difficulty", ""),
+                                        row.get("Chart", ""))})
             self.assertEqual(kwargs["generation"], 1)
             self.assertTrue(kwargs["refreshed_at"])
 
@@ -1270,16 +1283,21 @@ class ScoresSyncTests(unittest.TestCase):
         instance.on_library_changed.assert_called_once_with(
             [{"Title": "Song"}], preserve_selection=True, changed_keys=None)
 
-    def test_scores_synced_handler_drops_stale_generation(self):
+    def test_scores_synced_handler_drops_stale_generation_but_rebuilds_the_table(self):
         instance = object.__new__(loader.LibraryLoader)
         instance._load_generation = 5
+        instance.rows = []
         instance.progress = Mock()
         instance.status = Mock()
         instance.on_library_changed = Mock()
         instance._scores_synced([], 1, generation=4)
         instance.progress.stop.assert_not_called()
         instance.status.set.assert_not_called()
-        instance.on_library_changed.assert_not_called()
+        # The dropped result's merge already rewrote the rows in place
+        # (Greptile P1 on PR #277): the table rebuilds everything, but
+        # the Load still owns the progress bar and status line.
+        instance.on_library_changed.assert_called_once_with(
+            [], preserve_selection=True, changed_keys=None)
 
     def test_sync_scores_refuses_while_a_scan_is_in_flight(self):
         instance = object.__new__(loader.LibraryLoader)
@@ -1361,18 +1379,42 @@ class ScoresSyncTests(unittest.TestCase):
         instance = object.__new__(loader.LibraryLoader)
         instance._load_generation = 1
         instance._sync_in_flight = True
+        instance.rows = [{"Title": "Song"}]
         instance.progress = Mock()
         instance.status = Mock()
+        instance.on_library_changed = Mock()
         instance.set_sync_menu_state = Mock()
         with patch.object(loader, "messagebox"):
             instance._scores_sync_failed("boom", generation=1)
         self.assertFalse(instance._sync_in_flight)
         instance.set_sync_menu_state.assert_called_once_with("normal")
+        # A merge that raised partway may already have rewritten some
+        # rows in place: the table rebuilds everything.
+        instance.on_library_changed.assert_called_once_with(
+            instance.rows, preserve_selection=True, changed_keys=None)
+
+    def test_stale_scores_sync_failed_refreshes_the_table_but_leaves_the_menu_to_the_scan(self):
+        instance = object.__new__(loader.LibraryLoader)
+        instance._load_generation = 5
+        instance._sync_in_flight = True
+        instance.rows = [{"Title": "Song"}]
+        instance.progress = Mock()
+        instance.status = Mock()
+        instance.on_library_changed = Mock()
+        instance.set_sync_menu_state = Mock()
+        instance._scores_sync_failed("boom", generation=4)
+        self.assertFalse(instance._sync_in_flight)
+        instance.set_sync_menu_state.assert_not_called()
+        instance.progress.stop.assert_not_called()
+        instance.status.set.assert_not_called()
+        instance.on_library_changed.assert_called_once_with(
+            instance.rows, preserve_selection=True, changed_keys=None)
 
     def test_stale_scores_synced_clears_the_flag_but_leaves_the_menu_to_the_scan(self):
         instance = object.__new__(loader.LibraryLoader)
         instance._load_generation = 5
         instance._sync_in_flight = True
+        instance.rows = []
         instance.progress = Mock()
         instance.status = Mock()
         instance.on_library_changed = Mock()
@@ -1382,7 +1424,8 @@ class ScoresSyncTests(unittest.TestCase):
         instance.set_sync_menu_state.assert_not_called()
         instance.progress.stop.assert_not_called()
         instance.status.set.assert_not_called()
-        instance.on_library_changed.assert_not_called()
+        instance.on_library_changed.assert_called_once_with(
+            [], preserve_selection=True, changed_keys=None)
 
     def test_sync_worker_unexpected_stats_error_fails_without_changes_or_save(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -1643,15 +1686,19 @@ class ScoresSyncTests(unittest.TestCase):
     def test_load_failed_clears_the_scan_flag_and_re_enables_the_sync_entry(self):
         instance = object.__new__(loader.LibraryLoader)
         instance._load_generation = 1
+        instance.rows = [{"Title": "Song"}]
         instance.load_button = Mock()
         instance.set_sync_menu_state = Mock()
         instance.progress = Mock()
         instance.status = Mock()
+        instance.on_library_changed = Mock()
         instance._scan_in_flight = True
         with patch.object(loader, "messagebox"):
             instance._load_failed("Some error", generation=1)
         self.assertFalse(instance._scan_in_flight)
         instance.set_sync_menu_state.assert_called_once_with("normal")
+        instance.on_library_changed.assert_called_once_with(
+            instance.rows, preserve_selection=True, changed_keys=None)
 
     def test_poll_load_results_delivers_scores_synced_and_failed(self):
         instance = object.__new__(loader.LibraryLoader)
@@ -1659,11 +1706,17 @@ class ScoresSyncTests(unittest.TestCase):
         instance._scores_synced = Mock()
         instance._scores_sync_failed = Mock()
         instance.root = Mock()
-        instance._load_results.put(("scores_synced", ([], 2), {"refreshed_at": "2026-02-02T10:00:00+00:00", "generation": 1}))
+        # The worker's delivery carries the three-element args
+        # (rows, changed, changed_keys), not the legacy two-element
+        # form (Lane D pin 3): the changed set must arrive intact.
+        instance._load_results.put(
+            ("scores_synced", ([], 2, {"K"}),
+             {"refreshed_at": "2026-02-02T10:00:00+00:00",
+              "generation": 1}))
         instance._load_results.put(("scores_sync_failed", "boom", 1))
         instance._poll_load_results()
         instance._scores_synced.assert_called_once_with(
-            [], 2, refreshed_at="2026-02-02T10:00:00+00:00", generation=1)
+            [], 2, {"K"}, refreshed_at="2026-02-02T10:00:00+00:00", generation=1)
         instance._scores_sync_failed.assert_called_once_with("boom", generation=1)
         instance.root.after.assert_called_once()
 

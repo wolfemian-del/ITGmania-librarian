@@ -716,6 +716,15 @@ class LibraryLoader:
             # A Load superseded this sync: the sync is over, so clear the
             # flag, but the Load owns the progress bar, status line and menu.
             self._sync_in_flight = False
+            # The merge already rewrote the rows in place: without this
+            # the table would keep showing the old scores, and the next
+            # sync would find nothing new to report (Greptile P1 on
+            # PR #277, confirmed live by Claude's Lane A). Rebuild
+            # everything from the current rows — self.rows, not the
+            # passed rows, since a finished Load may have replaced the
+            # list already. Only the table refreshes here.
+            self.on_library_changed(self.rows, preserve_selection=True,
+                                    changed_keys=None)
             return
         self._sync_in_flight = False
         self.set_sync_menu_state("normal")
@@ -754,12 +763,23 @@ class LibraryLoader:
             # A Load superseded this sync: the sync is over, so clear the
             # flag, but the Load owns the progress bar, status line and menu.
             self._sync_in_flight = False
+            # A merge that raised partway may already have rewritten some
+            # rows in place (Claude's Lane A on PR #277, injected fault):
+            # without this the table would keep showing the old scores,
+            # and the next sync would find nothing new for those rows.
+            # Rebuild everything from the current rows.
+            self.on_library_changed(self.rows, preserve_selection=True,
+                                    changed_keys=None)
             return
         self._sync_in_flight = False
         self.set_sync_menu_state("normal")
         self.progress.stop()
         self.progress.configure(mode="indeterminate", value=0)
         self.status.set("Could not sync scores.")
+        # Same hazard as the stale branch above: a merge that raised
+        # partway may already have rewritten some rows in place.
+        self.on_library_changed(self.rows, preserve_selection=True,
+                                changed_keys=None)
         messagebox.showerror("Could not sync scores", message)
 
     def _poll_load_results(self):
@@ -839,6 +859,13 @@ class LibraryLoader:
         # total to count against.
         self.progress.configure(mode="indeterminate", value=0)
         self.status.set("Could not load library.")
+        # A Load that started during a sync superseded it: the sync's
+        # merge already rewrote the rows in place, and the table never
+        # heard (Greptile P1 on PR #277, confirmed live by Claude's
+        # Lane A). Rebuild everything from the current rows, so the
+        # failed Load cannot strand the merged scores on screen.
+        self.on_library_changed(self.rows, preserve_selection=True,
+                                changed_keys=None)
         messagebox.showerror("Could not load library", message)
 
     def _loaded(self, rows, files, skipped_files=0, files_without_charts=0, skipped_blocks=0,
