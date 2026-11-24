@@ -24,6 +24,7 @@ print(f"{'step':<66}{'rows':>5} {'visible cells old==new':>23} {'rebuilds old/ne
       f" {'oracle fails old/new':>21}")
 for a, b in zip(old, new):
     diff_rows = sum(1 for x, y in zip(a["cells"], b["cells"]) if x != y)
+    diff_rows += abs(len(a["cells"]) - len(b["cells"]))  # zip stops at the shorter
     same = a["cells"] == b["cells"]
     flag = "identical" if same else f"DIFFER ({diff_rows} rows)"
     rebuilt = f"{a['rebuilds']:>8}/{b['rebuilds']:<8}"

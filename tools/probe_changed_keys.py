@@ -243,7 +243,9 @@ TRACE = []
 
 
 def trace(label, **extra):
+    """Settle, then record the tree. A callable extra is read after settling."""
     settled = settle()
+    extra = {k: v() if callable(v) else v for k, v in extra.items()}
     rebuilds = CALLS["n"]
     tree = table.tree
     sel = set(tree.selection())
@@ -438,7 +440,7 @@ def scenario_main():
             patch("itgmania_library.library_loader.messagebox.showerror",
                   lambda *a, **k: shown_errors.append(a)):
         loader.sync_scores()
-        trace("20a sync fails part-way", errors=len(shown_errors))
+        trace("20a sync fails part-way", errors=lambda: len(shown_errors))
     table.sort_by("Title")
     trace("20b sort Title afterwards")
 
@@ -465,7 +467,7 @@ def scenario_retry():
                   lambda *a, **k: shown.append(a)):
         loader.load_data()
         trace("R1 sync queued, Load started, sync result dropped, Load fails",
-              queued_before_load=queued, error_boxes=len(shown))
+              queued_before_load=queued, error_boxes=lambda: len(shown))
     loader.sync_scores()
     trace("R2 user retries the sync against the same Stats.xml")
     table.sort_by("Title")
