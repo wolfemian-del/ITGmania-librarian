@@ -2,7 +2,7 @@
 
 | | |
 |---|---|
-| **Status** | Draft — for review |
+| **Status** | Accepted - 2026-11-23 |
 | **Author** | Muse |
 | **Date** | 2026-11-23 |
 | **Base** | main `823e8ea` (PR #272 merged; PR #269 P1 merged; PR #270 Proposal 0019 merged; PR #271 P5 implementation in review) |
