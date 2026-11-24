@@ -27,26 +27,38 @@ queue delivery plus the table insert on the main thread. Pass 3 runs the
 real worker incrementally against the snapshot and manifest pass 2
 wrote, with nothing changed since: it re-parses nothing, so its worker
 total is the number proposal 0018 promises (~1 s at Ian's scale).
+Pass 4 runs the real worker's pool path (proposal 0020) at 4, 8 and 16
+workers over the same cache folder, warm; with --cold it runs pass 4
+only, after you have dropped the OS cache (a reboot is the reliable way
+on Windows) so the cold number is a cold read. Each worker count gets a
+fresh temp dir, so no manifest survives between runs to turn the full
+parse into a reuse.
 """
 
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 import os
+import pickle
 import queue
 import sys
 import tempfile
 import threading
 import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from itgmania_library.library_constants import HEADERS
 from itgmania_library.library_loader import LibraryLoader
 from itgmania_library.library_sources import (
+    _init_pool_worker,
     edit_fallback_index,
     parse_cache_file,
+    parse_cache_file_task,
     stats_index,
 )
 from itgmania_library.library_stores import ManifestStore, SnapshotStore
@@ -141,12 +153,126 @@ def run_incremental_pass(cache_dir, stats_file, tmp):
     return rows, files, counts, seconds, kwargs.get("reparsed_files")
 
 
+def _peak_rss_bytes():
+    """Peak RSS of this process in bytes, or None when it cannot be read.
+
+    resource covers Linux (ru_maxrss in KiB) and macOS (bytes); Windows
+    reads PeakWorkingSetSize through GetProcessMemoryInfo.
+    """
+    try:
+        import resource
+        factor = 1024 if sys.platform != "darwin" else 1
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * factor
+    except (ImportError, AttributeError, ValueError):
+        pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            from ctypes import wintypes
+
+            class _MemoryCounters(ctypes.Structure):
+                _fields_ = [
+                    ("cb", wintypes.DWORD),
+                    ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t),
+                    ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t),
+                    ("PeakPagefileUsage", ctypes.c_size_t),
+                ]
+
+            counters = _MemoryCounters()
+            counters.cb = ctypes.sizeof(counters)
+            handle = ctypes.windll.kernel32.GetCurrentProcess()
+            if ctypes.windll.psapi.GetProcessMemoryInfo(
+                    handle, ctypes.byref(counters), counters.cb):
+                return counters.PeakWorkingSetSize
+        except (ImportError, AttributeError, OSError):
+            pass
+    return None
+
+
+def _measure_pool_startup(cache_dir, scores, workers):
+    """Time one pool's spawn cost: create it, parse one file, shut it down.
+
+    The executor spawns its workers on the first submit, so creating it
+    alone measures nothing — the single file's parse (~4 ms at Ian's
+    scale) rides along and is negligible against the spawn.
+    """
+    files = [p for p in cache_dir.iterdir() if p.is_file()]
+    if not files:
+        return 0.0
+    start = time.perf_counter()
+    executor = ProcessPoolExecutor(
+        max_workers=workers,
+        mp_context=multiprocessing.get_context("spawn"),
+        initializer=_init_pool_worker, initargs=(scores,))
+    try:
+        future = executor.submit(parse_cache_file_task, 1, str(files[0]))
+        try:
+            future.result()
+        except Exception:
+            pass  # the file's parse is not what is timed here
+    finally:
+        executor.shutdown(wait=True)
+    return time.perf_counter() - start
+
+
+def run_pool_pass(cache_dir, stats_file, workers):
+    """One full parse through the real worker's pool path (proposal 0020).
+
+    Runs the real _load_worker on a bare loader instance with fresh
+    stores in its own temp dir (no manifest, so nothing is reused),
+    with POOL_WORKERS and POOL_MIN_FILES patched so the pool engages.
+    Returns (rows, files, counts, seconds, startup_seconds,
+    peak_rss_bytes, scores_entries, scores_pickle_bytes).
+    """
+    from itgmania_library import library_loader
+
+    scores = stats_index(stats_file)
+    startup = _measure_pool_startup(cache_dir, scores, workers)
+    with tempfile.TemporaryDirectory(prefix="refresh-pool-timing-") as tmp:
+        tmp = Path(tmp)
+        instance = object.__new__(LibraryLoader)
+        instance._load_generation = 1
+        instance._snapshot_lock = threading.Lock()
+        instance._load_results = queue.Queue()
+        instance.snapshot_store = SnapshotStore(tmp / "library_cache.json", HEADERS)
+        instance.manifest_store = ManifestStore(tmp / "library_cache_manifest.json")
+        start = time.perf_counter()
+        with patch.object(library_loader, "POOL_WORKERS", workers), \
+                patch.object(library_loader, "POOL_MIN_FILES", 1):
+            instance._load_worker(cache_dir, stats_file, generation=1)
+        seconds = time.perf_counter() - start
+        peak = _peak_rss_bytes()
+        items = []
+        while not instance._load_results.empty():
+            items.append(instance._load_results.get_nowait())
+    failed = [item for item in items if item[0] == "failed"]
+    if failed:
+        raise RuntimeError(f"pool pass failed: {failed[0][1]}")
+    loaded = [item for item in items if item[0] == "loaded"]
+    _kind, args, kwargs = loaded[0]
+    rows, files = args
+    counts = {key: kwargs[key] for key in
+              ("skipped_files", "files_without_charts", "skipped_blocks")}
+    return (rows, files, counts, seconds, startup, peak,
+            len(scores), len(pickle.dumps(scores)))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("cache_dir", type=Path,
                         help="Cache folder (one file per song, flat)")
     parser.add_argument("stats_xml", type=Path,
                         help="Player Stats.xml")
+    parser.add_argument("--cold", action="store_true",
+                        help="Run pass 4 only, as a cold read: drop the OS"
+                        " cache first (a reboot is the reliable way on"
+                        " Windows), so the number is a cold read")
     args = parser.parse_args(argv)
     if not args.cache_dir.is_dir():
         parser.error(f"cache dir is not a directory: {args.cache_dir}")
@@ -157,6 +283,11 @@ def main(argv=None):
           f"  CPUs (logical): {os.cpu_count()}")
     print(f"cache dir: {args.cache_dir}")
     print(f"stats file: {args.stats_xml}")
+    if args.cold:
+        print("\npass 4 (cold): the OS cache should already be dropped —"
+              " otherwise this is just another warm run.")
+        _run_pool_passes(args.cache_dir, args.stats_xml, cold=True)
+        return 0
     totals = []
     # One temp dir for all three passes: pass 2 leaves the snapshot and
     # manifest pass 3 reads, and everything is deleted at the end.
@@ -180,6 +311,7 @@ def main(argv=None):
                 print(f"  skipped files: {counts['skipped_files']},"
                       f" files without charts: {counts['files_without_charts']},"
                       f" skipped blocks: {counts['skipped_blocks']}")
+        _run_pool_passes(args.cache_dir, args.stats_xml)
         rows, files, counts, seconds, reparsed = run_incremental_pass(
             args.cache_dir, args.stats_xml, tmp)
         print(f"\npass 3 (incremental, nothing changed): {files:,} files,"
@@ -197,6 +329,36 @@ def main(argv=None):
     print("The app's warm Load / refresh total minus the pass 2 worker"
           " total is queue delivery plus the table insert.")
     return 0
+
+
+def _run_pool_passes(cache_dir, stats_file, cold=False):
+    """Pass 4 (proposal 0020, §4.5): the pool path at 4, 8 and 16 workers.
+
+    Each worker count gets a fresh temp dir inside run_pool_pass, so no
+    manifest survives between runs. The numbers that settle the module
+    constants are the worker total (against pass 2's serial parse) and
+    the pool startup: the break-even file count is about
+    startup / (3.9 ms x (1 - 1/workers)).
+    """
+    label = "cold" if cold else "warm"
+    for workers in (4, 8, 16):
+        rows, files, counts, seconds, startup, peak, entries, pickled = (
+            run_pool_pass(cache_dir, stats_file, workers))
+        print(f"\npass 4 ({label}, {workers} workers): {files:,} files,"
+              f" {len(rows):,} chart rows")
+        print(f"  {'pool startup':<15} {startup:7.2f} s")
+        print(f"  {'worker total':<15} {seconds:7.2f} s"
+              f"  (parse: {files / max(seconds, 1e-9):,.0f} files/s)")
+        if peak is None:
+            print("  peak RSS (parent): unreadable on this platform")
+        else:
+            print(f"  peak RSS (parent): {peak / (1024 * 1024):,.0f} MB")
+        print(f"  scores: {entries:,} entries, {pickled:,} bytes pickled")
+        if (counts["skipped_files"] or counts["files_without_charts"]
+                or counts["skipped_blocks"]):
+            print(f"  skipped files: {counts['skipped_files']},"
+                  f" files without charts: {counts['files_without_charts']},"
+                  f" skipped blocks: {counts['skipped_blocks']}")
 
 
 if __name__ == "__main__":

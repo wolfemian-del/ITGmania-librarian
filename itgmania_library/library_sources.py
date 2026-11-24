@@ -360,6 +360,45 @@ def parse_cache_file(path: Path, scores: dict,
     return rows, skipped_blocks
 
 
+# The process-pool parse (proposal 0020, §4.1): the scores travel once
+# per worker, through the pool initializer, into these module globals.
+# They are worker-process-only — the parent never reads them — and are
+# set exactly once per worker, before any task runs.
+_worker_scores = None
+_worker_edit_index = None
+
+
+def _init_pool_worker(scores):
+    """Pool initializer (proposal 0020, D2): hand one worker its scores.
+
+    Runs once per worker process when the pool starts, so the scores
+    dict is pickled once per worker instead of once per file. The Edit
+    fallback index is built here too, once per worker, for the same
+    reason it is built once per scan on the parent.
+    """
+    global _worker_scores, _worker_edit_index
+    _worker_scores = scores
+    _worker_edit_index = edit_fallback_index(scores)
+
+
+def parse_cache_file_task(index, path):
+    """Parse one cache file in a pool worker (proposal 0020, §4.1).
+
+    Takes the file's position in the scanned list and its path as a
+    string (cheap and unambiguous across processes) and returns
+    (index, rows, skipped_blocks). The index is what the parent sorts
+    on, so results can arrive in any order (proposal 0020, D3). A
+    malformed file raises exactly as parse_cache_file does, and the
+    parent counts it as a skipped file. Module-level because only
+    module-level functions cross the spawn boundary.
+    """
+    if _worker_scores is None:
+        raise RuntimeError("pool worker was not initialised with scores")
+    rows, blocks = parse_cache_file(Path(path), _worker_scores,
+                                    _worker_edit_index)
+    return index, rows, blocks
+
+
 # The media fields whose image extensions stage 1 counts (Proposal
 # 0011): the Pillow call is made with these numbers.
 MEDIA_IMAGE_FIELDS = ("Banner", "Background", "Jacket")
@@ -456,5 +495,6 @@ __all__ = [
     "looks_like_song_tree",
     "merge_scores",
     "parse_cache_file",
+    "parse_cache_file_task",
     "stats_index",
 ]
