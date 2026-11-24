@@ -213,16 +213,23 @@ def any_scores_match(rows: list[dict], scores: dict, edit_index: dict | None = N
     return any("PercentDP" in _score_for_row(scores, row, edit_index) for row in rows)
 
 
-def merge_scores(rows: list[dict], scores: dict, edit_index: dict | None = None) -> int:
+def merge_scores(rows: list[dict], scores: dict, edit_index: dict | None = None
+               ) -> tuple[int, set[tuple[str, str, str, str]]]:
     """Re-derive the score fields of already-parsed rows, in place.
 
     The score key is re-derived from each row: the base key
     (Course path, Type, Difficulty), all casefolded, plus the scoring
     description the parse carried in the row ("Score description"),
     falling back to the row's Chart field for a row that lacks it.
-    Returns the number of rows whose score fields changed. Rows are
-    never added or removed -- a song added to the cache has no row to
-    merge into and still needs a full refresh (issue #147).
+    Returns (changed, changed_keys): the number of rows whose score
+    fields changed, and the set of their chart keys. The count is not
+    len(changed_keys) — two changed rows can share one chart key
+    (Proposal 0019 Q1: the key is not guaranteed unique), so the set
+    can be smaller than the count. The keys are the chart keys the
+    table's diff uses (the same four fields as _chart_key_tuple in
+    library_table), so no new identity is introduced. Rows are never
+    added or removed -- a song added to the cache has no row to merge
+    into and still needs a full refresh (issue #147).
 
     The parse carries the scoring description in the row, so the merge
     looks up the same entry the parse did -- including for an Edit chart
@@ -236,13 +243,18 @@ def merge_scores(rows: list[dict], scores: dict, edit_index: dict | None = None)
     if edit_index is None:
         edit_index = edit_fallback_index(scores)
     changed = 0
+    changed_keys = set()
     for row in rows:
         before = tuple(row.get(field) for field in _SCORE_FIELDS)
         score = _score_for_row(scores, row, edit_index)
         _apply_score_fields(row, score)
         if tuple(row.get(field) for field in _SCORE_FIELDS) != before:
             changed += 1
-    return changed
+            changed_keys.add((row.get("Course path", ""),
+                              row.get("Type", ""),
+                              row.get("Difficulty", ""),
+                              row.get("Chart", "")))
+    return changed, changed_keys
 
 
 def parse_cache_file(path: Path, scores: dict,

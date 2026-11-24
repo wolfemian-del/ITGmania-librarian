@@ -158,9 +158,9 @@ class LibraryTable:
     PR #168 review): a load sets the filter's rows, a sync re-scores
     them in place, and the table displays what the filter returns.
 
-    The table subscribes its own refresh_table to the filter's change
+    The table subscribes its own refresh to the filter's change
     notification: subscribe it once, after construction, with
-    filter.subscribe(table.refresh_table).
+    filter.subscribe(table.refresh_on_filter_change).
     """
 
     def __init__(self, parent, filter, dpi_scale, column_visibility,
@@ -459,7 +459,9 @@ class LibraryTable:
             else:
                 keys = [(column, False)]
         self._sort_keys = keys
-        self.refresh_table(preserve_selection=True)
+        # A sort changes order, not data, so no tuple is rebuilt
+        # except the forced ones (Proposal 0022).
+        self.refresh_table(preserve_selection=True, changed_keys=set())
         self._save_settings()
 
     def _update_sort_headings(self):
@@ -475,7 +477,19 @@ class LibraryTable:
                 heading = column
             self.tree.heading(column, text=heading)
 
-    def refresh_table(self, preserve_selection=False):
+    def refresh_table(self, preserve_selection=False, changed_keys=None):
+        """Rebuild the tree from the filter's rows, by diff (Proposal 0019).
+
+        changed_keys says which chart keys changed since the last
+        refresh (Proposal 0022): the update loop rebuilds a display
+        tuple only for those keys, plus the forced set. None means
+        unknown — rebuild every tuple, exactly as before — and is the
+        safe default for any caller that cannot say what changed. An
+        empty set means nothing changed. Callers that know: a sync
+        passes the set merge_scores reports; a sort passes an empty
+        set; the filter subscription decides from rows_replaced (see
+        refresh_on_filter_change).
+        """
         # One key cache for the whole refresh (see _chart_key): the diff
         # asks for the same row's key a dozen times, and the cache is
         # what keeps that to one tuple build per row dict.
@@ -527,11 +541,27 @@ class LibraryTable:
             self._insert_batch(visible, 0, generation, selected_rows,
                                key_cache)
         else:
-            self._apply_diff(visible, generation, selected_keys, key_cache)
+            self._apply_diff(visible, generation, selected_keys, key_cache,
+                             changed_keys)
         self._show_rows(visible)
 
+    def refresh_on_filter_change(self):
+        """The filter's subscribed refresh (Proposal 0022, §4.4).
+
+        The subscription carries both filter edits and loads, so it
+        cannot always pass the empty set: a load replaces the rows
+        (set_rows), and its fresh dicts may carry new values for
+        unchanged keys, so that refresh rebuilds every tuple
+        (changed_keys=None); a filter edit only changes visibility,
+        so nothing is rebuilt except the forced items.
+        """
+        if self._filter.rows_replaced():
+            self.refresh_table(changed_keys=None)
+        else:
+            self.refresh_table(changed_keys=set())
+
     def _apply_diff(self, visible, generation, selected_keys,
-                    key_cache=None):
+                    key_cache=None, changed_keys=None):
         """Make the tree show `visible` by changing only what differs
         from what is already showing (Proposal 0019, step 2).
 
@@ -591,11 +621,13 @@ class LibraryTable:
             elif key not in selected_keys and item in selected_items:
                 self.tree.selection_remove(item)
                 selected_items.discard(item)
-        # A content change is detected from the saved display tuple,
-        # never by comparing row dicts: merge_scores re-derives score
-        # fields in place, so on a sync the old and new dicts are the
-        # same objects and a dict comparison would see no change. The
-        # surviving item also takes the new row dict: on a load the
+        # What changed comes from the caller, not from a comparison
+        # (Proposal 0022): merge_scores re-derives score fields in
+        # place, so on a sync the old and new dicts are the same objects
+        # and a dict comparison would see no change — and rebuilding
+        # every tuple to compare is the cost this removes. changed_keys
+        # says which keys changed (None: unknown, rebuild all). The
+        # surviving item still takes the new row dict: on a load the
         # filter's rows are fresh dicts, and the song page and the
         # course builder read their row back through _tree_item_rows.
         # The saved tuple does not know about the white tag on_select
@@ -608,10 +640,12 @@ class LibraryTable:
             key = _chart_key(row, key_cache)
             row = new_by_key[key]
             self._tree_item_rows[item] = row
-            shown = _display_tuple(row, key in selected_keys)
-            if shown != self._tree_item_display.get(item) or item in forced:
-                self.tree.item(item, values=shown[0], tags=shown[1])
-                self._tree_item_display[item] = shown
+            if (changed_keys is None or key in changed_keys
+                    or item in forced):
+                shown = _display_tuple(row, key in selected_keys)
+                if shown != self._tree_item_display.get(item) or item in forced:
+                    self.tree.item(item, values=shown[0], tags=shown[1])
+                    self._tree_item_display[item] = shown
         key_to_item = {
             _chart_key(row, key_cache): item
             for item, row in self._tree_item_rows.items()

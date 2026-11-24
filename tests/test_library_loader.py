@@ -1157,7 +1157,7 @@ class ScoresSyncTests(unittest.TestCase):
             instance.scored_var.set(True)
             self.assertEqual(instance._filter.filter_rows(), [])
             # The real merge, then the real sync branch of the handoff.
-            changed = sources.merge_scores(
+            changed, _ = sources.merge_scores(
                 rows, sources.stats_index(stats_file))
             self.assertEqual(changed, 1)
             instance._on_library_changed(rows, True)
@@ -1211,7 +1211,26 @@ class ScoresSyncTests(unittest.TestCase):
         self.assertEqual(instance.last_refreshed_at, "2026-02-02T10:00:00+00:00")
         status = instance.status.set.call_args.args[0]
         self.assertIn("Scores synced · 2 charts updated", status)
-        instance.on_library_changed.assert_called_once_with(rows, preserve_selection=True)
+        instance.on_library_changed.assert_called_once_with(
+            rows, preserve_selection=True, changed_keys=None)
+
+    def test_scores_synced_handler_passes_the_changed_set_through(self):
+        # Proposal 0022: the set merge_scores reports travels with the
+        # sync, so the table rebuilds only the changed tuples.
+        instance = object.__new__(loader.LibraryLoader)
+        instance._load_generation = 1
+        instance.progress = Mock()
+        instance.status = Mock()
+        instance.on_library_changed = Mock()
+        instance.set_sync_menu_state = Mock()
+        rows = [{"Title": "Song"}]
+        key = ("A/1", "dance-single", "Hard", "")
+        instance._scores_synced(
+            rows, 1, {key}, refreshed_at="2026-02-02T10:00:00+00:00",
+            generation=1)
+
+        instance.on_library_changed.assert_called_once_with(
+            rows, preserve_selection=True, changed_keys={key})
 
     def test_scores_synced_handler_reports_up_to_date_when_nothing_changed(self):
         instance = object.__new__(loader.LibraryLoader)
@@ -1223,7 +1242,8 @@ class ScoresSyncTests(unittest.TestCase):
         instance._scores_synced([], 0, refreshed_at="2026-02-02T10:00:00+00:00", generation=1)
         status = instance.status.set.call_args.args[0]
         self.assertIn("Scores are already up to date", status)
-        instance.on_library_changed.assert_called_once_with([], preserve_selection=True)
+        instance.on_library_changed.assert_called_once_with(
+            [], preserve_selection=True, changed_keys=None)
 
     def test_scores_synced_handler_with_cache_error_keeps_old_refresh_stamp(self):
         # A sync whose snapshot was skipped (Stats.xml changed mid-sync)
@@ -1248,7 +1268,7 @@ class ScoresSyncTests(unittest.TestCase):
             "Local snapshot not saved: Stats.xml changed during the sync", status)
         self.assertIn("Sync again for current scores", status)
         instance.on_library_changed.assert_called_once_with(
-            [{"Title": "Song"}], preserve_selection=True)
+            [{"Title": "Song"}], preserve_selection=True, changed_keys=None)
 
     def test_scores_synced_handler_drops_stale_generation(self):
         instance = object.__new__(loader.LibraryLoader)

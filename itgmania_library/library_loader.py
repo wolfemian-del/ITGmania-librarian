@@ -69,9 +69,12 @@ class LibraryLoader:
       load_button:          the Load button widget, disabled during a load.
       set_sync_menu_state:  callable, enabling/disabling File -> Sync scores.
     What the loader tells the shell:
-      on_library_changed:   callback (rows, preserve_selection), delivered when
-                            a load or a sync finishes, for the table/filter/
-                            Course Builder part only (Q2).
+      on_library_changed:   callback (rows, preserve_selection,
+                            changed_keys=None), delivered when a load
+                            or a sync finishes, for the table/filter/
+                            Course Builder part only (Q2). A sync
+                            passes the set merge_scores reports; a load
+                            passes nothing, so the table rebuilds all.
       on_nothing_loaded:    callback, delivered when load_cached_data finds no
                             snapshot, so the shell repaints the empty table.
       report_discarded_settings: callback, for the discarded-settings note the
@@ -659,7 +662,7 @@ class LibraryLoader:
                                     generation))
             return
         try:
-            changed = merge_scores(rows, scores, edit_index)
+            changed, changed_keys = merge_scores(rows, scores, edit_index)
         except Exception as exc:
             # A row with a non-text Course path / Type / Difficulty
             # would otherwise end the thread silently; deliver the
@@ -701,13 +704,14 @@ class LibraryLoader:
                 except (OSError, TypeError, ValueError) as exc:
                     refreshed_at = ""
                     cache_error = str(exc)
-        self._load_results.put(("scores_synced", (rows, changed), {
+        self._load_results.put(("scores_synced", (rows, changed, changed_keys), {
             "refreshed_at": refreshed_at,
             "cache_error": cache_error,
             "generation": generation,
         }))
 
-    def _scores_synced(self, rows, changed, refreshed_at="", cache_error="", generation=None):
+    def _scores_synced(self, rows, changed, changed_keys=None, refreshed_at="",
+                       cache_error="", generation=None):
         if generation is not None and self._load_is_stale(generation):
             # A Load superseded this sync: the sync is over, so clear the
             # flag, but the Load owns the progress bar, status line and menu.
@@ -740,7 +744,10 @@ class LibraryLoader:
         # selection, which a full reload currently drops.
         # The table refresh (preserving the selection) arrives through
         # the callback. [CODE] Q2: the handlers' engine half moves in.
-        self.on_library_changed(rows, preserve_selection=True)
+        # The changed set travels with it (Proposal 0022), so the table
+        # rebuilds only the changed tuples.
+        self.on_library_changed(rows, preserve_selection=True,
+                                changed_keys=changed_keys)
 
     def _scores_sync_failed(self, message, generation=None):
         if generation is not None and self._load_is_stale(generation):

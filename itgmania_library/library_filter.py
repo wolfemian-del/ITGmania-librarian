@@ -50,8 +50,8 @@ class LibraryFilter:
     root: for after() scheduling of the search debounce.
 
     The filter holds the rows it filters (set via set_rows(rows)). It
-    exposes set_rows(rows), library_rows(), set_choices(rows),
-    filter_rows(ignore_metric=None),
+    exposes set_rows(rows), library_rows(), rows_replaced(),
+    set_choices(rows), filter_rows(ignore_metric=None),
     search_hint(), batch(), apply_chart_filter, focus_search, clear_search,
     and subscribe(callback) — the callback is invoked when something changed,
     so the table refreshes. The filter installs the variable traces
@@ -75,6 +75,11 @@ class LibraryFilter:
         self._rows: list[dict] = []
         self._subscribers = []
         self._batch_depth = 0
+        # Whether set_rows replaced the rows since the last
+        # notification (Proposal 0022): the table's subscribed refresh
+        # reads it to tell a load (replaced rows, rebuild every tuple)
+        # from a filter edit (visibility only, rebuild none).
+        self._rows_replaced = False
         self._search_refresh_after_id = None
         # The variable traces: a dropdown or scored pick refreshes at
         # once, a search keystroke refreshes after a short pause.
@@ -91,7 +96,18 @@ class LibraryFilter:
         forgotten call cannot leave the table silently empty.
         """
         self._rows = rows
+        self._rows_replaced = True
         self._refresh_unless_batching()
+
+    def rows_replaced(self):
+        """Whether set_rows replaced the rows since the last notification.
+
+        The table's subscribed refresh reads this (Proposal 0022): a
+        load replaces the rows, and its fresh dicts may carry new values
+        for unchanged keys, so the table rebuilds every tuple; a filter
+        edit leaves the rows alone, so the table rebuilds none.
+        """
+        return self._rows_replaced
 
     def library_rows(self):
         """Every chart row in the loaded library.
@@ -150,6 +166,11 @@ class LibraryFilter:
             except Exception as failure:
                 if first_failure is None:
                     first_failure = failure
+        # The flag is read by the callbacks above, so it clears once
+        # they have run — even when one raised, so a failure cannot
+        # leave every later refresh rebuilding all tuples. A flag stuck
+        # set would only cost a slow refresh, never a stale cell.
+        self._rows_replaced = False
         if first_failure is not None:
             raise first_failure
 

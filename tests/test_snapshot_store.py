@@ -119,7 +119,7 @@ class SnapshotStoreTests(unittest.TestCase):
                 "</Song></SongScores></Stats>",
                 encoding="utf-8",
             )
-            changed = library_sources.merge_scores(
+            changed, _ = library_sources.merge_scores(
                 restored, library_sources.stats_index(stats_file))
             self.assertEqual(changed, 1)
             self.assertEqual(restored[0]["Score"], 970000)
