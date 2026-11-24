@@ -124,10 +124,10 @@ def make_table(column_order=None, column_widths=None, sort_keys=None,
             save_settings if save_settings is not None else Mock(),
             show_rows if show_rows is not None else Mock(),
             on_open_row=on_open_row)
-    # The app subscribes the table's refresh to the filter once the table
-    # exists; the filter's rows were set before that, so the setup itself
-    # does not refresh.
-    filt.subscribe(table.refresh_table)
+    # The app subscribes the table's filter-change refresh to the
+    # filter once the table exists; the filter's rows were set before
+    # that, so the setup itself does not refresh.
+    filt.subscribe(table.refresh_on_filter_change)
     return table, tree
 
 
@@ -841,7 +841,7 @@ class RebindingHazardTests(unittest.TestCase):
             table.sort_by("Title")
 
             table.refresh_table.assert_called_once_with(
-                preserve_selection=True)
+                preserve_selection=True, changed_keys=set())
             self.assertEqual(self.saved(settings_path)["sort_keys"],
                              [["Title", False]])
 
@@ -911,7 +911,8 @@ class TableWiringGuardTests(unittest.TestCase):
         title_command()
 
         self.assertEqual(table.layout_state()["sort_keys"], [["Title", False]])
-        table.refresh_table.assert_called_once_with(preserve_selection=True)
+        table.refresh_table.assert_called_once_with(
+            preserve_selection=True, changed_keys=set())
 
     def test_tree_bindings_land_on_the_table(self):
         table, tree = make_table()
@@ -1661,6 +1662,31 @@ class DiffTagTests(unittest.TestCase):
                              tree._items[item]["tags"])
         self.assertEqual(table._tree_tint.items, set())
 
+    def test_empty_set_refresh_clears_the_white_tag_after_deselect(self):
+        # Lane D pin 1 (and Claude's Lane A finding 3): the forced
+        # rewrite is what removes a stale white tag when nothing
+        # changed. A row selected, then deselected without the event
+        # firing, still carries the tag and the tracker still holds
+        # it — an empty-set refresh must clear the tag, asserted by
+        # the actual tags and not by a call count.
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = self.make_loaded_table(rows)
+        tree.selection_add(tree._order[0])
+        table._tree_tint.on_select()
+        self.assertIn(row_tints.SELECTED_ROW_TAG,
+                      tree._items[tree._order[0]]["tags"])
+        # Deselect without the event firing: the tag stays on the item
+        # and the tracker still holds it, as after a filter edit.
+        tree.selection_remove(tree._order[0])
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table(preserve_selection=True,
+                                changed_keys=set())
+
+        self.assertNotIn(row_tints.SELECTED_ROW_TAG,
+                         tree._items[tree._order[0]]["tags"])
+
 
 class DiffFilterTests(unittest.TestCase):
     """A filter narrowing keeps the surviving items (Proposal 0019, §6)."""
@@ -1717,6 +1743,214 @@ class DiffSyncTests(unittest.TestCase):
         self.assertEqual(values[grade_index], "★★★")
         self.assertEqual(values[best_index], "95")
         self.assertEqual(tree._items[before[1]]["values"][grade_index], "")
+
+
+class DiffChangedKeysTests(unittest.TestCase):
+    """A refresh rebuilds display tuples only for rows the loader says
+    changed (Proposal 0022, §6): the table trusts the changed-keys
+    input instead of detecting changes itself by rebuilding every
+    tuple. None means unknown (rebuild all); an empty set means
+    nothing changed; a set rebuilds only its keys, plus the forced
+    set (the #273 tag fix)."""
+
+    @staticmethod
+    def make_loaded_table(rows):
+        table, tree = make_diff_table(rows=rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table.refresh_table()
+        return table, tree
+
+    @staticmethod
+    def _counting_display_tuple(calls):
+        real = table_module._display_tuple
+
+        def counting(row, selected=False):
+            calls.append(1)
+            return real(row, selected)
+
+        return counting
+
+    @staticmethod
+    def _blank_score_fields(rows):
+        """Give fixture rows the blank score fields a parse writes for
+        an unscored chart: without them the merge counts the blanking
+        itself as a change (a missing field reads as None, the blank
+        writes "" — except Plays, which the merge always numbers to
+        0.0)."""
+        for row in rows:
+            row.update({"Score": "", "Best %": "", "Plays": 0.0,
+                        "Last played": "", "Max combo": ""})
+            for field in TAP_FIELDS:
+                row[field] = ""
+
+    def test_none_rebuilds_all_tuples(self):
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = self.make_loaded_table(rows)
+        calls = []
+        with patch.object(table_module, "_display_tuple",
+                         self._counting_display_tuple(calls)):
+            with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+                table.refresh_table()
+        self.assertEqual(len(calls), 2)
+
+    def test_empty_set_rebuilds_no_tuples_except_forced(self):
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = self.make_loaded_table(rows)
+        tree.selection_add(tree._order[0])
+        calls = []
+        with patch.object(table_module, "_display_tuple",
+                         self._counting_display_tuple(calls)):
+            with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+                table.refresh_table(preserve_selection=True,
+                                    changed_keys=set())
+        # Only the selected row — the forced rewrite — is rebuilt.
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(table._tree_tint.items, {tree._order[0]})
+
+    def test_set_with_one_key_rebuilds_only_that_row(self):
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = self.make_loaded_table(rows)
+        # Both titles change in place, as a sync re-scores in place;
+        # only the first row's key is reported changed.
+        rows[0]["Title"] = "New A"
+        rows[1]["Title"] = "New B"
+        key = table_module._chart_key(rows[0])
+        calls = []
+        with patch.object(table_module, "_display_tuple",
+                         self._counting_display_tuple(calls)):
+            with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+                table.refresh_table(changed_keys={key})
+        self.assertEqual(len(calls), 1)
+        title_index = list(app.HEADERS).index("Title")
+        self.assertEqual(
+            tree._items[tree._order[0]]["values"][title_index], "New A")
+        # The other row keeps its old cells: it was not reported.
+        self.assertEqual(
+            tree._items[tree._order[1]]["values"][title_index], "2")
+
+    def test_sort_rebuilds_no_tuples(self):
+        rows = diff_rows(("B/2", "dance-single", "Hard", ""),
+                         ("A/1", "dance-single", "Hard", ""))
+        table, tree = self.make_loaded_table(rows)
+        # The table defaults to Pack ascending, so B loads after A.
+        self.assertEqual(tree.shown_rows(table), [rows[1], rows[0]])
+        before = list(tree._order)
+        calls = []
+        with patch.object(table_module, "_display_tuple",
+                         self._counting_display_tuple(calls)):
+            table.sort_by("Pack")  # toggles Pack to descending
+        self.assertEqual(len(calls), 0)
+        # The sort itself still lands: B first now.
+        self.assertNotEqual(tree._order, before)
+        self.assertEqual(tree.shown_rows(table), [rows[0], rows[1]])
+
+    def test_sync_updates_only_the_changed_cells(self):
+        # The changed set flows from merge_scores to the table through
+        # the loader path (§6): only the changed row's tuple is rebuilt.
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""))
+        self._blank_score_fields(rows)
+        table, tree = self.make_loaded_table(rows)
+        before = list(tree._order)
+        scores = {("a/1", "dance-single", "hard"): {
+            "PercentDP": 0.95, "Grade": "Tier02", "Score": 1000000,
+            "plays": 3, "last_played": "2026-01-01", "MaxCombo": 500}}
+        changed, changed_keys = merge_scores(rows, scores)
+        self.assertEqual(changed, 1)
+        self.assertEqual(changed_keys,
+                         {table_module._chart_key(rows[0])})
+        instance = object.__new__(app.LibraryApp)
+        instance._table = table
+        instance._filter = table._filter
+        instance.course_builder = None
+        calls = []
+        with patch.object(table_module, "_display_tuple",
+                         self._counting_display_tuple(calls)):
+            with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+                instance._on_library_changed(
+                    rows, preserve_selection=True, changed_keys=changed_keys)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(tree._order, before)
+        grade_index = list(app.HEADERS).index("Grade")
+        best_index = list(app.HEADERS).index("Best %")
+        values = tree._items[before[0]]["values"]
+        self.assertEqual(values[grade_index], "★★★")
+        self.assertEqual(values[best_index], "95")
+        self.assertEqual(tree._items[before[1]]["values"][grade_index], "")
+
+    def test_two_changed_rows_sharing_a_key_count_two_with_a_one_key_set(self):
+        # Greptile P2 on PR #275: two changed rows can share one chart
+        # key, so the count is not len() of the set — and the set the
+        # merge reports is the key the table's diff uses.
+        rows = diff_rows(("A/1", "dance-single", "Edit", "My edit"),
+                         ("A/1", "dance-single", "Edit", "My edit"),
+                         ("B/2", "dance-single", "Hard", ""))
+        self._blank_score_fields(rows)
+        table, tree = self.make_loaded_table(rows)
+        scores = {("a/1", "dance-single", "edit", "my edit"): {
+            "PercentDP": 0.9, "Grade": "Tier03", "Score": 900000,
+            "plays": 2, "last_played": "2026-01-02", "MaxCombo": 400}}
+        changed, changed_keys = merge_scores(rows, scores)
+        self.assertEqual(changed, 2)
+        self.assertEqual(len(changed_keys), 1)
+        self.assertEqual(changed_keys,
+                         {table_module._chart_key(rows[0])})
+        # Both cells update through the sync path: the colliding song
+        # is re-inserted as a block, so both items take new tuples.
+        instance = object.__new__(app.LibraryApp)
+        instance._table = table
+        instance._filter = table._filter
+        instance.course_builder = None
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            instance._on_library_changed(
+                rows, preserve_selection=True, changed_keys=changed_keys)
+        best_index = list(app.HEADERS).index("Best %")
+        bests = [tree._items[item]["values"][best_index]
+                 for item in tree._order]
+        self.assertEqual(bests.count("90"), 2)
+        self.assertIn("", bests)
+
+    def test_reload_through_the_subscription_rebuilds_changed_cells(self):
+        # Greptile P1 on PR #275: a reload refreshes only through the
+        # subscription, so the subscription must carry None (fresh
+        # dicts, unchanged keys, new values) instead of the empty set.
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = self.make_loaded_table(rows)
+        before = list(tree._order)
+        new_rows = [dict(row) for row in rows]
+        new_rows[0]["Title"] = "Renamed"
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.set_rows(new_rows)
+        # Same items, none re-inserted — but the first row's cells show
+        # the new title.
+        self.assertEqual(tree._order, before)
+        title_index = list(app.HEADERS).index("Title")
+        self.assertEqual(
+            tree._items[before[0]]["values"][title_index], "Renamed")
+        self.assertEqual(
+            tree._items[before[1]]["values"][title_index], "2")
+
+    def test_filter_edit_through_the_subscription_rebuilds_nothing(self):
+        # The other side of the subscription: a filter edit changes
+        # visibility, not data, so no tuple is rebuilt — a title
+        # mutated in place without the loader saying so stays hidden
+        # until a refresh that reports it.
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Hard", ""))
+        table, tree = self.make_loaded_table(rows)
+        rows[0]["Title"] = "Mutated"
+        calls = []
+        with patch.object(table_module, "_display_tuple",
+                         self._counting_display_tuple(calls)):
+            table._filter.pack_var.set("All packs")
+        self.assertEqual(len(calls), 0)
+        title_index = list(app.HEADERS).index("Title")
+        self.assertEqual(
+            tree._items[tree._order[0]]["values"][title_index], "1")
 
 
 class DiffGenerationTests(unittest.TestCase):

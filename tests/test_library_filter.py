@@ -172,6 +172,52 @@ class FilterWiringGuardTests(unittest.TestCase):
         instance.refresh_table.assert_called_once_with()
         self.assertEqual(filt.filter_rows(), list(ROWS))
 
+    def test_set_rows_marks_the_rows_replaced_for_the_notification(self):
+        # Proposal 0022: the table's subscribed refresh reads the flag
+        # to tell a load from a filter edit.
+        instance = self.make_app_and_filter()
+        filt = instance._filter
+        seen = []
+        filt.subscribe(lambda: seen.append(filt.rows_replaced()))
+        filt.set_rows(list(ROWS))
+        self.assertEqual(seen, [True])
+        self.assertFalse(filt.rows_replaced())
+
+    def test_a_filter_edit_leaves_the_rows_replaced_flag_clear(self):
+        instance = self.make_app_and_filter()
+        filt = instance._filter
+        filt.set_rows(list(ROWS))
+        seen = []
+        filt.subscribe(lambda: seen.append(filt.rows_replaced()))
+        instance.pack_var.set("Pack1")
+        self.assertEqual(seen, [False])
+
+    def test_set_rows_inside_a_batch_keeps_the_flag_until_the_batch_ends(self):
+        # The load path: set_rows inside batch(), so the flag is still
+        # set when the batch exit notifies.
+        instance = self.make_app_and_filter()
+        filt = instance._filter
+        seen = []
+        filt.subscribe(lambda: seen.append(filt.rows_replaced()))
+        with filt.batch():
+            filt.set_rows(list(ROWS))
+            self.assertTrue(filt.rows_replaced())
+            self.assertEqual(seen, [])
+        self.assertEqual(seen, [True])
+        self.assertFalse(filt.rows_replaced())
+
+    def test_a_raising_subscriber_still_clears_the_rows_replaced_flag(self):
+        instance = self.make_app_and_filter()
+        filt = instance._filter
+
+        def failing():
+            raise RuntimeError("boom")
+
+        filt.subscribe(failing)
+        with self.assertRaises(RuntimeError):
+            filt.set_rows(list(ROWS))
+        self.assertFalse(filt.rows_replaced())
+
     def test_a_dropdown_pick_refreshes_through_the_filter(self):
         instance = self.make_app_and_filter()
         instance._filter.set_rows(list(ROWS))

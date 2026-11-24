@@ -446,7 +446,7 @@ class LibraryApp:
             self.count_label, self._save_settings,
             self.distribution_panel.show_rows,
             on_open_row=self._open_song_page)
-        self._filter.subscribe(self._table.refresh_table)
+        self._filter.subscribe(self._table.refresh_on_filter_change)
         self.progress = ttk.Progressbar(self.root, mode="indeterminate", style="Horizontal.TProgressbar")
         self.progress.pack(fill="x", padx=scale_pixels(18, self._dpi_scale), pady=(0, scale_pixels(4, self._dpi_scale)))
         footer = tk.Frame(self.root, bg=theme.BG_WINDOW, padx=scale_pixels(18, self._dpi_scale), pady=scale_pixels(7, self._dpi_scale))
@@ -765,7 +765,7 @@ class LibraryApp:
         """Start a scores-only sync (thin delegation to the loader)."""
         self._loader.sync_scores()
 
-    def _on_library_changed(self, rows, preserve_selection):
+    def _on_library_changed(self, rows, preserve_selection, changed_keys=None):
         """The app-side part of a finished load or sync (Q2).
 
         preserve_selection distinguishes a sync from a load: a sync
@@ -773,7 +773,9 @@ class LibraryApp:
         the selection); a load brings fresh rows, so the filter takes
         them and the dropdowns reset (batched, so the table refreshes
         exactly once) and the Course Builder is told the library
-        changed.
+        changed. changed_keys is the set merge_scores reports on a
+        sync (Proposal 0022); a load passes nothing, so the table
+        rebuilds every tuple.
         """
         # A reload or a sync replaces the rows the page shows; close it so
         # a stale page never shows old scores (proposal 0011). A bare
@@ -789,7 +791,8 @@ class LibraryApp:
             # replaces it), so there is nothing to re-set — only the
             # refresh, keeping the selection. If the sync ever built a
             # fresh list, the filter would keep showing the old scores.
-            self._table.refresh_table(preserve_selection=True)
+            self._table.refresh_table(preserve_selection=True,
+                                      changed_keys=changed_keys)
             return
         with self._filter.batch():
             self._filter.set_rows(rows)

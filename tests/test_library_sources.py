@@ -907,7 +907,7 @@ class MergeScoresTests(unittest.TestCase):
             )
             rows_a, _ = data.parse_cache_file(cache_file, data.stats_index(stats_a))
             rows_b, _ = data.parse_cache_file(cache_file, data.stats_index(stats_b))
-            changed = data.merge_scores(rows_a, data.stats_index(stats_b))
+            changed, _ = data.merge_scores(rows_a, data.stats_index(stats_b))
 
         # The merge must be exactly a re-parse with the fresh scores: the
         # Hard score bumped, the Challenge gained its first score, and the
@@ -931,7 +931,7 @@ class MergeScoresTests(unittest.TestCase):
             scores = data.stats_index(stats_file)
             rows, _ = data.parse_cache_file(cache_file, scores)
             before = [dict(row) for row in rows]
-            changed = data.merge_scores(rows, scores)
+            changed, _ = data.merge_scores(rows, scores)
 
         self.assertEqual(changed, 0)
         self.assertEqual(rows, before)
@@ -977,7 +977,7 @@ class MergeScoresTests(unittest.TestCase):
         self.assertEqual(rows[0]["Chart"], "Other Name")
         self.assertEqual(rows[0]["Score"], 950000)
         self.assertEqual(rows[0]["Score description"], "Real Desc")
-        changed = data.merge_scores(rows, scores)
+        changed, _ = data.merge_scores(rows, scores)
 
         # The merge reads the carried description and keeps the described
         # score, even though an undescribed sibling entry exists.
@@ -1024,7 +1024,7 @@ class MergeScoresTests(unittest.TestCase):
             rows, _ = data.parse_cache_file(cache_file, {})
 
         self.assertEqual(len(rows), 3)
-        changed = data.merge_scores(rows, scores)
+        changed, _ = data.merge_scores(rows, scores)
 
         self.assertEqual(changed, 3)
         for row in rows:
@@ -1049,7 +1049,7 @@ class MergeScoresTests(unittest.TestCase):
                 encoding="utf-8",
             )
             rows, _ = data.parse_cache_file(cache_file, data.stats_index(stats_file))
-            changed = data.merge_scores(rows, {})
+            changed, _ = data.merge_scores(rows, {})
 
         hard_row = next(r for r in rows if r["Difficulty"] == "Hard")
         self.assertEqual(changed, 1)
@@ -1086,7 +1086,7 @@ class MergeScoresTests(unittest.TestCase):
                 encoding="utf-8",
             )
             rows, _ = data.parse_cache_file(cache_file, data.stats_index(stats_a))
-            changed = data.merge_scores(rows, data.stats_index(stats_b))
+            changed, _ = data.merge_scores(rows, data.stats_index(stats_b))
 
         hard_row = next(r for r in rows if r["Difficulty"] == "Hard")
         self.assertEqual(changed, 1)
@@ -1122,7 +1122,7 @@ class MergeScoresTests(unittest.TestCase):
                 encoding="utf-8",
             )
             rows, _ = data.parse_cache_file(cache_file, data.stats_index(stats_a))
-            changed = data.merge_scores(rows, data.stats_index(stats_b))
+            changed, _ = data.merge_scores(rows, data.stats_index(stats_b))
 
         hard_row = next(r for r in rows if r["Difficulty"] == "Hard")
         self.assertEqual(changed, 1)
@@ -1159,7 +1159,7 @@ class MergeScoresTests(unittest.TestCase):
             rows, _ = data.parse_cache_file(cache_file, scores)
             self.assertEqual(rows[0]["Type"], "Dance-Single")
             self.assertEqual(rows[0]["Score"], 900000)
-            changed = data.merge_scores(rows, scores)
+            changed, _ = data.merge_scores(rows, scores)
 
         self.assertEqual(changed, 0)
         self.assertEqual(rows[0]["Score"], 900000)
@@ -1194,7 +1194,7 @@ class MergeScoresTests(unittest.TestCase):
             scores = data.stats_index(stats_file)
             rows, _ = data.parse_cache_file(cache_file, scores)
             self.assertEqual(rows[0]["Score"], 950000)
-            changed = data.merge_scores(rows, scores)
+            changed, _ = data.merge_scores(rows, scores)
 
         self.assertEqual(changed, 0)
         self.assertEqual(rows[0]["Score"], 950000)
@@ -1235,7 +1235,7 @@ class MergeScoresTests(unittest.TestCase):
             scores = data.stats_index(stats_file)
             rows, _ = data.parse_cache_file(cache_file, scores)
             self.assertEqual(rows[0]["Score"], 950000)
-            changed = data.merge_scores(rows, scores)
+            changed, _ = data.merge_scores(rows, scores)
 
         self.assertEqual(changed, 0)
         self.assertEqual(rows[0]["Score"], 950000)
@@ -1278,7 +1278,7 @@ class MergeScoresTests(unittest.TestCase):
             # Simulate a row without the field: drop the carried description.
             del rows[0]["Score description"]
             self.assertEqual(rows[0]["Score"], 950000)
-            changed = data.merge_scores(rows, scores)
+            changed, _ = data.merge_scores(rows, scores)
 
         # Without the field the merge keys on the Chart field and falls
         # back to the shared-key score, as in v1.
@@ -1323,7 +1323,7 @@ class MergeScoresTests(unittest.TestCase):
             # Simulate a hand-edited snapshot row: a non-string value.
             rows[0]["Score description"] = 5
             self.assertEqual(rows[0]["Score"], 950000)
-            changed = data.merge_scores(rows, scores)
+            changed, _ = data.merge_scores(rows, scores)
 
         # The bad field is treated as absent, so the merge keys on the
         # Chart field and falls back to the shared-key score, as in v1.
@@ -1373,7 +1373,7 @@ class MergeScoresTests(unittest.TestCase):
             # Simulate a hand-edited snapshot row: a non-string value.
             rows[0]["Score description"] = 5
             self.assertEqual(rows[0]["Score"], 950000)
-            changed = data.merge_scores(rows, scores)
+            changed, _ = data.merge_scores(rows, scores)
 
         # The bad field is treated as absent, so the merge keys on the
         # Chart field ("Other Name") and selects that entry's score.
@@ -1420,7 +1420,7 @@ class MergeScoresTests(unittest.TestCase):
             del rows[0]["Score description"]
             rows[0]["Chart"] = 5
             self.assertEqual(rows[0]["Score"], 950000)
-            changed = data.merge_scores(rows, scores)
+            changed, _ = data.merge_scores(rows, scores)
 
         # The bad Chart is treated as absent, so the merge keys on no
         # description and falls back to the merged Edit score (the best
@@ -1459,7 +1459,7 @@ class MergeScoresTests(unittest.TestCase):
             # Simulate a hand-edited snapshot row: a non-string Chart.
             rows[0]["Chart"] = 5
             self.assertEqual(rows[0]["Score"], 900000)
-            changed = data.merge_scores(rows, scores)
+            changed, _ = data.merge_scores(rows, scores)
 
         # The sync completes and the row keeps its base score.
         self.assertEqual(changed, 0)
