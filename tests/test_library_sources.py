@@ -1,4 +1,5 @@
 import os
+import pickle
 import sys
 import tempfile
 import unittest
@@ -1880,7 +1881,15 @@ class PoolTaskTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             data.parse_cache_file_task(1, str(fixture))
 
-    def test_task_propagates_a_read_failure(self):
+    def test_task_wraps_a_parse_failure(self):
+        # A malformed file raises PoolParseError, not the raw parse
+        # error, so the parent can tell a bad file apart from a
+        # future that failed for an infrastructure reason (Lane D
+        # P1, Revision 1). The wrapped error is picklable: a worker
+        # raises it and the pool carries it back to the parent.
         data._init_pool_worker({})
-        with self.assertRaises(ValueError):
+        with self.assertRaises(data.PoolParseError):
             data.parse_cache_file_task(1, "no\0such\0file")
+        err = data.PoolParseError("x.cache")
+        self.assertEqual(pickle.loads(pickle.dumps(err)).args, ("x.cache",))
+        self.assertIn("PoolParseError", data.__all__)

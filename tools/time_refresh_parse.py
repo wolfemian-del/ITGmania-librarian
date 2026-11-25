@@ -29,15 +29,18 @@ wrote, with nothing changed since: it re-parses nothing, so its worker
 total is the number proposal 0018 promises (~1 s at Ian's scale).
 Pass 4 runs the real worker's pool path (proposal 0020) at 4, 8 and 16
 workers over the same cache folder, warm; with --cold it runs pass 4
-only, after you have dropped the OS cache (a reboot is the reliable way
-on Windows) so the cold number is a cold read. Each worker count gets a
-fresh temp dir, so no manifest survives between runs to turn the full
-parse into a reuse.
+only, one worker count per invocation (pass --workers 4, 8 or 16), after
+you have dropped the OS cache (a reboot is the reliable way on
+Windows) so the cold number is a cold read — a second count in the same
+invocation would read warmed file contents and still be labeled cold
+(Revision 1). Each worker count gets a fresh temp dir, so no manifest
+survives between runs to turn the full parse into a reuse.
 """
 
 from __future__ import annotations
 
 import argparse
+import ctypes
 import multiprocessing
 import os
 import pickle
@@ -53,7 +56,6 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from itgmania_library.library_constants import HEADERS
-from itgmania_library.library_loader import LibraryLoader
 from itgmania_library.library_sources import (
     _init_pool_worker,
     edit_fallback_index,
@@ -130,6 +132,12 @@ def run_incremental_pass(cache_dir, stats_file, tmp):
     is the worker's own, not a re-implementation. Returns (rows, files,
     counts, seconds, reparsed_files).
     """
+    # Imported here, not at module top, so a spawn child re-importing
+    # this file as __mp_main__ does not pull in the loader module (and
+    # its guarded Tkinter import) — the child only needs the data
+    # modules (ChatGPT-6 follow-up 1, Revision 1).
+    from itgmania_library.library_loader import LibraryLoader
+
     instance = object.__new__(LibraryLoader)
     instance._load_generation = 1
     instance._snapshot_lock = threading.Lock()
@@ -167,24 +175,7 @@ def _peak_rss_bytes():
         pass
     if sys.platform == "win32":
         try:
-            import ctypes
-            from ctypes import wintypes
-
-            class _MemoryCounters(ctypes.Structure):
-                _fields_ = [
-                    ("cb", wintypes.DWORD),
-                    ("PageFaultCount", wintypes.DWORD),
-                    ("PeakWorkingSetSize", ctypes.c_size_t),
-                    ("WorkingSetSize", ctypes.c_size_t),
-                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                    ("PagefileUsage", ctypes.c_size_t),
-                    ("PeakPagefileUsage", ctypes.c_size_t),
-                ]
-
-            counters = _MemoryCounters()
+            counters = _WindowsMemoryCounters()
             counters.cb = ctypes.sizeof(counters)
             handle = ctypes.windll.kernel32.GetCurrentProcess()
             if ctypes.windll.psapi.GetProcessMemoryInfo(
@@ -195,12 +186,198 @@ def _peak_rss_bytes():
     return None
 
 
-def _measure_pool_startup(cache_dir, scores, workers):
-    """Time one pool's spawn cost: create it, parse one file, shut it down.
+class _WindowsMemoryCounters(ctypes.Structure):
+    """PROCESS_MEMORY_COUNTERS, for GetProcessMemoryInfo (Windows only).
 
-    The executor spawns its workers on the first submit, so creating it
-    alone measures nothing — the single file's parse (~4 ms at Ian's
-    scale) rides along and is negligible against the spawn.
+    Defined at module level so both the parent-peak reader and the
+    process-tree sampler below share it; it is only instantiated on
+    Windows. ctypes itself imports on every platform.
+    """
+
+    _fields_ = [
+        ("cb", ctypes.c_ulong),
+        ("PageFaultCount", ctypes.c_ulong),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+        ("PagefileUsage", ctypes.c_size_t),
+        ("PeakPagefileUsage", ctypes.c_size_t),
+    ]
+
+
+def _current_rss_bytes(pid):
+    """Current RSS of one process in bytes, or None when unreadable.
+
+    Linux reads /proc/<pid>/status; Windows opens the process and
+    reads WorkingSetSize through GetProcessMemoryInfo. A process
+    that exited between listing and reading returns None.
+    """
+    if sys.platform.startswith("linux"):
+        try:
+            with open(f"/proc/{pid}/status", encoding="utf-8") as handle:
+                for line in handle:
+                    if line.startswith("VmRSS:"):
+                        return int(line.split()[1]) * 1024
+        except (OSError, ValueError, IndexError):
+            return None
+        return None
+    if sys.platform == "win32":
+        try:
+            from ctypes import wintypes
+
+            kernel32 = ctypes.windll.kernel32
+            handle = kernel32.OpenProcess(0x0400 | 0x0010, False, pid)
+            if not handle:
+                return None
+            try:
+                counters = _WindowsMemoryCounters()
+                counters.cb = ctypes.sizeof(counters)
+                if ctypes.windll.psapi.GetProcessMemoryInfo(
+                        handle, ctypes.byref(counters), counters.cb):
+                    return counters.WorkingSetSize
+            finally:
+                kernel32.CloseHandle(handle)
+        except (ImportError, AttributeError, OSError):
+            return None
+    return None
+
+
+def _child_pids():
+    """PIDs of this process's children, or None when unlistable.
+
+    Linux scans /proc for entries whose PPid is this process;
+    Windows walks a Toolhelp32Snapshot. Other platforms return
+    None: the aggregate RSS is then unavailable, not zero.
+    """
+    if sys.platform.startswith("linux"):
+        children = []
+        try:
+            entries = os.listdir("/proc")
+        except OSError:
+            return None
+        for entry in entries:
+            if not entry.isdigit():
+                continue
+            try:
+                with open(f"/proc/{entry}/status",
+                          encoding="utf-8") as handle:
+                    ppid = None
+                    for line in handle:
+                        if line.startswith("PPid:"):
+                            ppid = int(line.split()[1])
+                            break
+            except (OSError, ValueError, IndexError):
+                continue
+            if ppid == os.getpid():
+                children.append(int(entry))
+        return children
+    if sys.platform == "win32":
+        try:
+            from ctypes import wintypes
+
+            class _ProcessEntry(ctypes.Structure):
+                _fields_ = [
+                    ("dwSize", wintypes.DWORD),
+                    ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD),
+                    ("th32DefaultHeapID", ctypes.c_void_p),
+                    ("th32ModuleID", wintypes.DWORD),
+                    ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD),
+                    ("pcPriClassBase", wintypes.LONG),
+                    ("dwFlags", wintypes.DWORD),
+                    ("szExeFile", wintypes.WCHAR * 260),
+                ]
+
+            kernel32 = ctypes.windll.kernel32
+            snapshot = kernel32.CreateToolhelp32Snapshot(0x00000002, 0)
+            if snapshot == -1:
+                return None
+            try:
+                entry = _ProcessEntry()
+                entry.dwSize = ctypes.sizeof(entry)
+                children = []
+                ok = kernel32.Process32FirstW(snapshot,
+                                              ctypes.byref(entry))
+                while ok:
+                    if entry.th32ParentProcessID == os.getpid():
+                        children.append(entry.th32ProcessID)
+                    ok = kernel32.Process32NextW(snapshot,
+                                                 ctypes.byref(entry))
+                return children
+            finally:
+                kernel32.CloseHandle(snapshot)
+        except (ImportError, AttributeError, OSError):
+            return None
+    return None
+
+
+class _TreeRssSampler(threading.Thread):
+    """Sample parent + children RSS during a pool run (Revision 1).
+
+    The pool's workers are child processes, so the parent's peak RSS
+    alone cannot answer proposal 0020's Q5 (the total transient
+    footprint of the pool). A daemon thread polls the process tree
+    while the run is in progress and keeps the highest parent +
+    children sum it sees. Start before the run, stop after; read
+    .peak, which is None when child enumeration is unavailable on
+    this platform, so the aggregate is reported as unavailable
+    rather than as the parent-only number. Never raises: a failed
+    sample is skipped, and the thread stops on its event.
+    """
+
+    def __init__(self, interval=0.1):
+        super().__init__(daemon=True)
+        self.interval = interval
+        self.peak = None
+        # Named _stop_event, not _stop: threading.Thread already has
+        # a _stop() method the join machinery calls.
+        self._stop_event = threading.Event()
+
+    def run(self):
+        # Sample once at once, so even a run shorter than the
+        # interval leaves a reading; then poll until stopped.
+        # _sample returns False when child enumeration is
+        # unavailable on this platform: stop polling then, and
+        # leave the peak unset (unavailable, not zero).
+        if not self._sample():
+            return
+        while not self._stop_event.wait(self.interval):
+            if not self._sample():
+                return
+
+    def _sample(self):
+        """One sample; False when enumeration is unavailable."""
+        try:
+            children = _child_pids()
+            if children is None:
+                return False
+            total = _current_rss_bytes(os.getpid()) or 0
+            for pid in children:
+                total += _current_rss_bytes(pid) or 0
+            if self.peak is None or total > self.peak:
+                self.peak = total
+            return True
+        except Exception:
+            return True
+
+    def stop(self):
+        self._stop_event.set()
+        self.join()
+
+
+def _measure_pool_startup(cache_dir, scores, workers):
+    """Time one pool's spawn cost: create it, start every worker, shut it down.
+
+    The executor spawns its workers lazily, one per submitted task, so
+    a single submit only times one worker. Submit one file per worker
+    and wait for all of them, so the measured cost is the whole pool's
+    startup — the number the break-even threshold is computed from
+    (Greptile finding 2, Revision 1). The files' parses (~4 ms each
+    at Ian's scale) ride along and are negligible against the spawn.
     """
     files = [p for p in cache_dir.iterdir() if p.is_file()]
     if not files:
@@ -211,11 +388,13 @@ def _measure_pool_startup(cache_dir, scores, workers):
         mp_context=multiprocessing.get_context("spawn"),
         initializer=_init_pool_worker, initargs=(scores,))
     try:
-        future = executor.submit(parse_cache_file_task, 1, str(files[0]))
-        try:
-            future.result()
-        except Exception:
-            pass  # the file's parse is not what is timed here
+        futures = [executor.submit(parse_cache_file_task, 1, str(files[0]))
+                   for _ in range(workers)]
+        for future in futures:
+            try:
+                future.result()
+            except Exception:
+                pass  # a file's parse is not what is timed here
     finally:
         executor.shutdown(wait=True)
     return time.perf_counter() - start
@@ -228,9 +407,16 @@ def run_pool_pass(cache_dir, stats_file, workers):
     stores in its own temp dir (no manifest, so nothing is reused),
     with POOL_WORKERS and POOL_MIN_FILES patched so the pool engages.
     Returns (rows, files, counts, seconds, startup_seconds,
-    peak_rss_bytes, scores_entries, scores_pickle_bytes).
+    peak_rss_bytes, aggregate_rss_bytes, scores_entries,
+    scores_pickle_bytes). The aggregate is the highest parent +
+    workers RSS the sampler saw during the run (Revision 1): the
+    parent peak alone cannot answer Q5's total transient footprint.
+    It is None when child enumeration is unavailable on this
+    platform. The brief startup pool's RSS is not included: it is
+    transient and small against the full run.
     """
     from itgmania_library import library_loader
+    from itgmania_library.library_loader import LibraryLoader
 
     scores = stats_index(stats_file)
     startup = _measure_pool_startup(cache_dir, scores, workers)
@@ -242,12 +428,16 @@ def run_pool_pass(cache_dir, stats_file, workers):
         instance._load_results = queue.Queue()
         instance.snapshot_store = SnapshotStore(tmp / "library_cache.json", HEADERS)
         instance.manifest_store = ManifestStore(tmp / "library_cache_manifest.json")
+        sampler = _TreeRssSampler()
+        sampler.start()
         start = time.perf_counter()
         with patch.object(library_loader, "POOL_WORKERS", workers), \
                 patch.object(library_loader, "POOL_MIN_FILES", 1):
             instance._load_worker(cache_dir, stats_file, generation=1)
         seconds = time.perf_counter() - start
+        sampler.stop()
         peak = _peak_rss_bytes()
+        aggregate = sampler.peak
         items = []
         while not instance._load_results.empty():
             items.append(instance._load_results.get_nowait())
@@ -259,7 +449,7 @@ def run_pool_pass(cache_dir, stats_file, workers):
     rows, files = args
     counts = {key: kwargs[key] for key in
               ("skipped_files", "files_without_charts", "skipped_blocks")}
-    return (rows, files, counts, seconds, startup, peak,
+    return (rows, files, counts, seconds, startup, peak, aggregate,
             len(scores), len(pickle.dumps(scores)))
 
 
@@ -273,11 +463,26 @@ def main(argv=None):
                         help="Run pass 4 only, as a cold read: drop the OS"
                         " cache first (a reboot is the reliable way on"
                         " Windows), so the number is a cold read")
+    parser.add_argument("--workers", type=int, choices=(4, 8, 16),
+                        default=None,
+                        help="Run pass 4 for one worker count only"
+                        " (default: 4, 8 and 16)")
     args = parser.parse_args(argv)
     if not args.cache_dir.is_dir():
         parser.error(f"cache dir is not a directory: {args.cache_dir}")
     if not args.stats_xml.is_file():
         parser.error(f"stats file is not a file: {args.stats_xml}")
+    worker_counts = ([args.workers] if args.workers is not None
+                     else [4, 8, 16])
+    if args.cold and len(worker_counts) > 1:
+        # A cold run reads the library from disk; the first count's
+        # read warms the OS cache, so a second count in the same
+        # invocation would be warm while still labeled cold
+        # (Greptile finding 3, Revision 1). One count per cold
+        # invocation, with a fresh cache drop before each.
+        parser.error("--cold runs one worker count per invocation:"
+                     " pass --workers 4, 8 or 16 and drop the OS cache"
+                     " before each run")
 
     print(f"Python {sys.version.split()[0]}"
           f"  CPUs (logical): {os.cpu_count()}")
@@ -286,7 +491,8 @@ def main(argv=None):
     if args.cold:
         print("\npass 4 (cold): the OS cache should already be dropped —"
               " otherwise this is just another warm run.")
-        _run_pool_passes(args.cache_dir, args.stats_xml, cold=True)
+        _run_pool_passes(args.cache_dir, args.stats_xml, cold=True,
+                         worker_counts=worker_counts)
         return 0
     totals = []
     # One temp dir for all three passes: pass 2 leaves the snapshot and
@@ -311,7 +517,8 @@ def main(argv=None):
                 print(f"  skipped files: {counts['skipped_files']},"
                       f" files without charts: {counts['files_without_charts']},"
                       f" skipped blocks: {counts['skipped_blocks']}")
-        _run_pool_passes(args.cache_dir, args.stats_xml)
+        _run_pool_passes(args.cache_dir, args.stats_xml,
+                         worker_counts=worker_counts)
         rows, files, counts, seconds, reparsed = run_incremental_pass(
             args.cache_dir, args.stats_xml, tmp)
         print(f"\npass 3 (incremental, nothing changed): {files:,} files,"
@@ -331,18 +538,22 @@ def main(argv=None):
     return 0
 
 
-def _run_pool_passes(cache_dir, stats_file, cold=False):
+def _run_pool_passes(cache_dir, stats_file, cold=False, worker_counts=(4, 8, 16)):
     """Pass 4 (proposal 0020, §4.5): the pool path at 4, 8 and 16 workers.
 
     Each worker count gets a fresh temp dir inside run_pool_pass, so no
     manifest survives between runs. The numbers that settle the module
     constants are the worker total (against pass 2's serial parse) and
     the pool startup: the break-even file count is about
-    startup / (3.9 ms x (1 - 1/workers)).
+    startup / (3.9 ms x (1 - 1/workers)). The aggregate RSS is the
+    parent + workers peak the sampler saw (Revision 1): the ~1 GB
+    figure from proposal 0020's Q5 is a pre-merge tuning gate, not
+    an enforced runtime ceiling — nothing in this commit stops the
+    pool from engaging above it.
     """
     label = "cold" if cold else "warm"
-    for workers in (4, 8, 16):
-        rows, files, counts, seconds, startup, peak, entries, pickled = (
+    for workers in worker_counts:
+        rows, files, counts, seconds, startup, peak, aggregate, entries, pickled = (
             run_pool_pass(cache_dir, stats_file, workers))
         print(f"\npass 4 ({label}, {workers} workers): {files:,} files,"
               f" {len(rows):,} chart rows")
@@ -353,6 +564,10 @@ def _run_pool_passes(cache_dir, stats_file, cold=False):
             print("  peak RSS (parent): unreadable on this platform")
         else:
             print(f"  peak RSS (parent): {peak / (1024 * 1024):,.0f} MB")
+        if aggregate is None:
+            print("  peak RSS (aggregate): unavailable on this platform")
+        else:
+            print(f"  peak RSS (aggregate): {aggregate / (1024 * 1024):,.0f} MB")
         print(f"  scores: {entries:,} entries, {pickled:,} bytes pickled")
         if (counts["skipped_files"] or counts["files_without_charts"]
                 or counts["skipped_blocks"]):

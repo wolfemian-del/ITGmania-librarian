@@ -2133,17 +2133,31 @@ class LoadBatchesFilterChangesTests(unittest.TestCase):
 
 
 class _FakeFuture:
-    """A done future that runs its task in-process when result() is called."""
+    """A done future that runs its task in-process when result() is called.
+
+    cancel() mirrors concurrent.futures.Future: it succeeds only while
+    the task has not run yet, and records the call so tests can assert
+    which futures a cancellation reached (Revision 1).
+    """
 
     def __init__(self, fn, args, error=None):
         self._fn = fn
         self._args = args
         self._error = error
+        self.ran = False
+        self.cancelled = False
 
     def result(self):
         if self._error is not None:
             raise self._error
+        self.ran = True
         return self._fn(*self._args)
+
+    def cancel(self):
+        if self.ran or self.cancelled:
+            return False
+        self.cancelled = True
+        return True
 
 
 class _FakeExecutor:
@@ -2296,10 +2310,24 @@ class PoolParsingTests(unittest.TestCase):
         serial_lib, pool_lib = self._fresh_library(), self._fresh_library()
         for lib in (serial_lib, pool_lib):
             self._write_library(lib)
-        # Round 1: a full parse over identical libraries.
-        self._assert_same_delivery(
-            self._run_worker(pool_lib, pool=True),
-            self._run_worker(serial_lib))
+        # The pool side must not fall back to serial: a pool that
+        # always failed would still deliver identical rows, so the
+        # comparison alone cannot tell the workers did the work
+        # (Greptile finding 4, Revision 1). The spy records any
+        # serial call during the pool runs and the test fails on it.
+        serial_calls = []
+        real_serial = loader.LibraryLoader._parse_files_serial
+
+        def recording_serial(self, *args, **kwargs):
+            serial_calls.append(1)
+            return real_serial(self, *args, **kwargs)
+
+        with patch.object(loader.LibraryLoader, "_parse_files_serial",
+                          recording_serial):
+            # Round 1: a full parse over identical libraries.
+            pool = self._run_worker(pool_lib, pool=True)
+        self.assertEqual(serial_calls, [])
+        self._assert_same_delivery(pool, self._run_worker(serial_lib))
         self.assertEqual(self._manifest_summary(pool_lib),
                          self._manifest_summary(serial_lib))
         # Round 2: change one file, add one, delete one — the pool now
@@ -2312,7 +2340,10 @@ class PoolParsingTests(unittest.TestCase):
                 encoding="utf-8")
             self._write(lib, "f.cache", "Pack/F")
             (lib.cache_dir / "e.cache").unlink()
-        pool = self._run_worker(pool_lib, pool=True)
+        with patch.object(loader.LibraryLoader, "_parse_files_serial",
+                          recording_serial):
+            pool = self._run_worker(pool_lib, pool=True)
+        self.assertEqual(serial_calls, [])
         serial = self._run_worker(serial_lib)
         self._assert_same_delivery(pool, serial)
         self.assertEqual(pool[1]["reparsed_files"],
@@ -2394,9 +2425,127 @@ class PoolParsingTests(unittest.TestCase):
         self.assertNotIn("loaded", kinds)
         self.assertNotIn("failed", kinds)
         self.assertEqual(len(_FakeExecutor.instances), 1)
-        # Stale: cancel the pending futures and do not wait for them.
-        self.assertEqual(_FakeExecutor.instances[0].shutdown_calls,
-                         [(False, True)])
+        # Stale: the pending futures are cancelled explicitly and the
+        # pool is shut down without waiting (Revision 1). The first
+        # future ran before the bump; the rest never did.
+        executor = _FakeExecutor.instances[0]
+        self.assertEqual(executor.shutdown_calls, [(False, False)])
+        self.assertFalse(executor.submitted[0].cancelled)
+        self.assertTrue(all(f.cancelled for f in executor.submitted[1:]))
+
+    def test_cancel_scan_during_a_pool_parse_cancels_the_futures(self):
+        # cancel_scan() (Revision 1, Claude option A): the main thread
+        # closing the app mid-parse bumps the generation and cancels
+        # the live pool's futures, so the workers stop instead of
+        # draining the queued list. The scan delivers nothing.
+        lib = self._fresh_library()
+        self._write_library(lib)
+        instance = self._make_instance(lib)
+        self._save_worker_globals()
+
+        def cancelling_as_completed(futures):
+            futures = list(futures)
+            yield futures[0]
+            instance.cancel_scan()
+            yield from futures[1:]
+
+        with patch.object(loader, "POOL_MIN_FILES", 1), \
+                patch.object(loader, "ProcessPoolExecutor", _FakeExecutor), \
+                patch.object(loader, "as_completed", cancelling_as_completed):
+            instance._load_worker(lib.cache_dir, lib.stats_file, generation=1)
+        kinds = []
+        while not instance._load_results.empty():
+            kinds.append(instance._load_results.get_nowait()[0])
+        self.assertNotIn("loaded", kinds)
+        self.assertNotIn("failed", kinds)
+        executor = _FakeExecutor.instances[0]
+        self.assertFalse(executor.submitted[0].cancelled)
+        self.assertTrue(all(f.cancelled for f in executor.submitted[1:]))
+        self.assertEqual(executor.shutdown_calls, [(False, False)])
+
+    def test_cancel_scan_with_no_scan_running_is_a_no_op(self):
+        instance = self._make_instance(self._fresh_library())
+        instance.cancel_scan()  # must not raise, and leaves no pool behind
+        self.assertIsNone(instance._live_pool)
+        self.assertIsNone(instance._live_futures)
+
+    def test_pool_retries_a_file_whose_future_fails_outside_the_parse(self):
+        # A future that raises for an infrastructure reason — not a
+        # parse failure — must be retried serially, not counted as an
+        # unreadable file (Lane D P1, Revision 1): only the dedicated
+        # PoolParseError means the file itself is bad.
+        lib = self._fresh_library()
+        self._write_library(lib)
+        instance = self._make_instance(lib)
+        self._save_worker_globals()
+
+        class FailingFutureExecutor(_FakeExecutor):
+            def submit(self, fn, *args):
+                if str(args[1]).endswith("b.cache"):
+                    return _FakeFuture(
+                        fn, args, error=RuntimeError("transport failed"))
+                return super().submit(fn, args)
+
+        with patch.object(loader, "POOL_MIN_FILES", 1), \
+                patch.object(loader, "ProcessPoolExecutor",
+                             FailingFutureExecutor), \
+                patch.object(loader, "as_completed",
+                             lambda fs: iter(list(fs))):
+            instance._load_worker(lib.cache_dir, lib.stats_file, generation=1)
+        args, kwargs = self._drain(instance)
+        self.assertEqual(len(args[0]), 6)  # b.cache's row is present
+        self.assertEqual(kwargs["skipped_files"], 0)
+        self.assertIn("b.cache", self._manifest_summary(lib))
+
+    def test_parse_files_does_not_spawn_a_pool_for_a_stale_scan(self):
+        # Superseded during phase 1: _parse_files must not pay the
+        # spawn cost for a scan that will deliver nothing (Revision 1).
+        lib = self._fresh_library()
+        self._write_library(lib)
+        instance = self._make_instance(lib)
+        created = []
+
+        class RecordingExecutor:
+            def __init__(self, *args, **kwargs):
+                created.append(1)
+
+            def submit(self, *args, **kwargs):
+                raise AssertionError("a stale scan must not submit")
+
+            def shutdown(self, *args, **kwargs):
+                raise AssertionError("a stale scan must not shut down")
+
+        instance._load_generation = 2  # a newer Load superseded this scan
+        with patch.object(loader, "POOL_MIN_FILES", 1), \
+                patch.object(loader, "ProcessPoolExecutor", RecordingExecutor):
+            result = instance._parse_files(
+                [(1, "a.cache", None)], lib.cache_dir, {}, {},
+                generation=1, done_base=0, total=1)
+        self.assertIsNone(result)
+        self.assertEqual(created, [])
+
+    def test_all_reused_refresh_reports_the_final_total(self):
+        # An all-reused refresh parses nothing, so no parse report
+        # ever covers total — the bar would sit at the initial zero
+        # until the snapshot phase (Greptile finding 5 / Claude
+        # finding 3, Revision 1). The final total is reported here.
+        lib = self._fresh_library()
+        self._write(lib, "a.cache", "Pack/A")
+        self._write(lib, "b.cache", "Pack/B")
+        self._write(lib, "e.cache", "Pack/E", charts=2)
+        self._run_worker(lib)  # first load builds snapshot + manifest
+        instance = self._make_instance(lib)
+        instance._load_worker(lib.cache_dir, lib.stats_file, generation=1)
+        kinds = []
+        while not instance._load_results.empty():
+            kinds.append(instance._load_results.get_nowait())
+        progress = [item for item in kinds if item[0] == "progress"]
+        self.assertEqual(progress, [("progress", 0, 3, 1),
+                                    ("progress", 3, 3, 1)])
+        loaded = [item for item in kinds if item[0] == "loaded"]
+        self.assertEqual(len(loaded), 1)
+        self.assertEqual(len(loaded[0][1][0]), 4)  # a, b, plus e's two charts
+        self.assertEqual(loaded[0][2]["skipped_files"], 0)
 
     def test_pool_creation_failure_falls_back_to_serial(self):
         lib = self._fresh_library()
@@ -2483,6 +2632,10 @@ class PoolParsingTests(unittest.TestCase):
     def test_pool_constants_exist_and_the_threshold_is_honoured(self):
         self.assertIsInstance(loader.POOL_WORKERS, int)
         self.assertGreaterEqual(loader.POOL_WORKERS, 1)
+        # Capped at the physical core count until pass 4 justifies
+        # another value (Lane D, Revision 1): os.cpu_count() reports
+        # 16 logical CPUs on the owner's 8-core machine.
+        self.assertLessEqual(loader.POOL_WORKERS, 8)
         self.assertIsInstance(loader.POOL_MIN_FILES, int)
         self.assertGreater(loader.POOL_MIN_FILES, 1)
         # The constants are module level, not settings or constructor

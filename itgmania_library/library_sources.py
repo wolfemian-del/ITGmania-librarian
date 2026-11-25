@@ -381,6 +381,17 @@ def _init_pool_worker(scores):
     _worker_edit_index = edit_fallback_index(scores)
 
 
+class PoolParseError(Exception):
+    """A cache file failed to parse inside a pool worker.
+
+    Module-level so it pickles: a worker raises it, the pool carries
+    it back to the parent, and the parent counts that one file as
+    skipped. Any other exception from a future is an infrastructure
+    failure, not evidence the file is bad, and the parent retries
+    those files serially instead (proposal 0020, D6, Revision 1).
+    """
+
+
 def parse_cache_file_task(index, path):
     """Parse one cache file in a pool worker (proposal 0020, §4.1).
 
@@ -388,14 +399,21 @@ def parse_cache_file_task(index, path):
     string (cheap and unambiguous across processes) and returns
     (index, rows, skipped_blocks). The index is what the parent sorts
     on, so results can arrive in any order (proposal 0020, D3). A
-    malformed file raises exactly as parse_cache_file does, and the
-    parent counts it as a skipped file. Module-level because only
-    module-level functions cross the spawn boundary.
+    malformed file raises PoolParseError, which the parent counts as
+    a skipped file; any other failure is an infrastructure failure
+    and must not be mistaken for one (Revision 1). Module-level
+    because only module-level functions cross the spawn boundary.
     """
     if _worker_scores is None:
         raise RuntimeError("pool worker was not initialised with scores")
-    rows, blocks = parse_cache_file(Path(path), _worker_scores,
-                                    _worker_edit_index)
+    try:
+        rows, blocks = parse_cache_file(Path(path), _worker_scores,
+                                        _worker_edit_index)
+    except Exception as exc:
+        # A parse failure is a fact about this file; wrap it so the
+        # parent can tell it apart from a future that failed for an
+        # infrastructure reason (proposal 0020, D6, Revision 1).
+        raise PoolParseError(str(path)) from exc
     return index, rows, blocks
 
 
@@ -488,6 +506,7 @@ def _normalized_source_path(path):
 
 
 __all__ = [
+    "PoolParseError",
     "any_scores_match",
     "cache_dir_candidates",
     "first_existing_directory",

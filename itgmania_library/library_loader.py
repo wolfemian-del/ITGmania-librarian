@@ -31,6 +31,7 @@ from pathlib import Path
 
 from itgmania_library.library_format import format_refresh_time
 from itgmania_library.library_sources import (
+    PoolParseError,
     _init_pool_worker,
     _normalized_source_path,
     any_scores_match,
@@ -50,11 +51,15 @@ from itgmania_library.library_sources import (
 # is untouched. Both values are provisional — pass 4 on the owner's
 # machine (Ryzen 9 4900HS, 8 cores / 16 threads) settles the worker
 # count over 4/8/16 and the threshold from the measured spawn cost
-# before any PR lands. There is no chunksize constant: D3's
-# submit-plus-as_completed submits one future per file, so the
-# 32-file chunks §4.2 sketches have no role — per-file submission
-# gives finer balance and per-file progress (see _parse_files_pool).
-POOL_WORKERS = os.cpu_count() or 1
+# before any PR lands. The worker count is capped at the physical
+# core count (8) until pass 4 justifies another value: os.cpu_count()
+# reports 16 logical CPUs on the owner's machine, and the workload is
+# CPU-bound pure Python, so hyperthreading may add little (Lane D).
+# There is no chunksize constant: D3's submit-plus-as_completed
+# submits one future per file, so the 32-file chunks §4.2 sketches
+# have no role — per-file submission gives finer balance and per-file
+# progress (see _parse_files_pool).
+POOL_WORKERS = min(os.cpu_count() or 1, 8)
 POOL_MIN_FILES = 300
 
 
@@ -143,6 +148,14 @@ class LibraryLoader:
         self._snapshot_lock = threading.Lock()  # one scan at a time may check its generation and write the snapshot
         self._load_results = queue.Queue()  # finished scans wait here; only the main thread delivers them (_poll_load_results)
         self._load_started_at = None
+        # The pool of the scan now parsing, if any, and its futures:
+        # cancel_scan() (Revision 1, Claude option A) cancels them
+        # when the app closes, so the process does not outlive the
+        # window waiting for queued pool work. Set by _parse_files_pool
+        # and cleared by its finally; cancel_scan() reads them with
+        # getattr, because bare test instances skip __init__.
+        self._live_pool = None
+        self._live_futures = None
         # The snapshot summary _loaded records for the scores sync to write
         # back (proposal 0014 declares them here; the reads keep their
         # getattr defaults for bare test instances).
@@ -354,6 +367,44 @@ class LibraryLoader:
         self._load_started_at = time.monotonic()
         threading.Thread(target=self._load_worker, args=(cache, stats, generation), daemon=True).start()
 
+    def _cancel_live_pool(self):
+        """Cancel the live pool's futures and shut it down, not waiting.
+
+        The shared cancellation routine for the stale branch of
+        _parse_files_pool and for cancel_scan() (Revision 1, Claude
+        option A). The futures are cancelled explicitly, so neither
+        path relies on the shutdown flag to stop queued work; the
+        shutdown itself is safe to call again from the finally.
+        Clearing the references first makes a second call a no-op.
+        No lock: the references are plain attributes, and the worst
+        a race can do is a redundant shutdown call, which is safe.
+        A no-op when no pool is live.
+        """
+        executor = getattr(self, "_live_pool", None)
+        futures = getattr(self, "_live_futures", None) or []
+        self._live_pool = None
+        self._live_futures = None
+        for future in futures:
+            future.cancel()
+        if executor is not None:
+            executor.shutdown(wait=False)
+
+    def cancel_scan(self):
+        """Stop the scan now parsing, if any (Revision 1, Claude A).
+
+        Called from the main thread when the app closes: bumps the
+        generation so the worker thread notices at its next check,
+        and cancels the live pool's futures so the workers stop
+        instead of draining the whole queued list while the process
+        waits to exit. Safe to call when no scan is running (the
+        generation bump is harmless then) and safe to call twice:
+        the second call finds no live pool. The loader thread's
+        finally also shuts the pool down, so the pool is closed
+        exactly once however the two calls interleave.
+        """
+        self._load_generation += 1
+        self._cancel_live_pool()
+
     def _load_is_stale(self, generation):
         return self._load_generation != generation
 
@@ -493,6 +544,12 @@ class LibraryLoader:
                                        generation, reused_files, total)
             if parsed is None:
                 return
+            if not to_parse and total:
+                # Nothing to parse: no parse report ever covers total,
+                # so the bar would sit at the initial zero until the
+                # snapshot phase (Greptile finding 5 / Claude
+                # finding 3). Report the final total here.
+                self._report_parse_progress(total, total, generation)
             parsed_rows, skipped_files = parsed
             reparsed_files = len(to_parse)
             # Phase 3 — assemble in walk order (proposal 0020, D3): the
@@ -621,6 +678,10 @@ class LibraryLoader:
         if len(to_parse) < POOL_MIN_FILES:
             return self._parse_files_serial(to_parse, cache, scores, edit_index,
                                             generation, done_base, total)
+        if self._load_is_stale(generation):
+            # Superseded during phase 1: do not pay the spawn cost
+            # for a scan that will deliver nothing (Revision 1).
+            return None
         return self._parse_files_pool(to_parse, cache, scores, edit_index,
                                       generation, done_base, total)
 
@@ -663,9 +724,10 @@ class LibraryLoader:
         or a worker that dies mid-parse, falls back to the serial loop
         for the files still outstanding (D6): a pool problem never
         loses the library or fails the load. The pool is shut down in
-        the finally on every exit path (D4) — a parent that exits
-        without shutting its pool down waits for the longest running
-        task, which the sandbox measured at 10.2 s.
+        the finally on every exit path (D4). The executor and its
+        futures are also kept as the live pool, so cancel_scan() can
+        stop them when the app closes instead of waiting for the
+        queued work to drain (Revision 1, Claude option A).
         """
         parsed = {}
         skipped = 0
@@ -678,11 +740,13 @@ class LibraryLoader:
                 max_workers=POOL_WORKERS,
                 mp_context=multiprocessing.get_context("spawn"),
                 initializer=_init_pool_worker, initargs=(scores,))
+            self._live_pool = executor
             futures = {
                 executor.submit(parse_cache_file_task, index, str(cache / name)):
                     (index, name, stat)
                 for index, name, stat in to_parse
             }
+            self._live_futures = list(futures)
             done = 0
             for future in as_completed(futures):
                 if self._load_is_stale(generation):
@@ -699,10 +763,17 @@ class LibraryLoader:
                     # unknown, not necessarily failed.
                     pool_failed = True
                     break
-                except Exception:
+                except PoolParseError:
                     # A per-file parse failure: counted and skipped,
                     # exactly as the serial loop counts it (issue #205).
                     skipped += 1
+                except Exception:
+                    # An infrastructure failure, not evidence the file
+                    # is bad: leave the item in remaining so the
+                    # serial fallback re-parses it (proposal 0020, D6,
+                    # Revision 1) instead of dropping its rows.
+                    pool_failed = True
+                    break
                 else:
                     parsed[index] = (rows, blocks)
                 remaining.remove(item)
@@ -714,8 +785,15 @@ class LibraryLoader:
             # outstanding list goes serial, so the load still delivers.
             pool_failed = True
         finally:
-            if executor is not None:
-                executor.shutdown(wait=not stale, cancel_futures=stale)
+            if stale:
+                # Cancel the pending futures explicitly, so the stale
+                # path does not rely on the shutdown flag to stop
+                # queued work, and do not wait for the pool.
+                self._cancel_live_pool()
+            elif executor is not None:
+                executor.shutdown(wait=True)
+            self._live_pool = None
+            self._live_futures = None
         if stale:
             return None
         if pool_failed:
