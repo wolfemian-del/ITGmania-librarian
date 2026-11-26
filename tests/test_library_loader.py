@@ -2461,13 +2461,146 @@ class PoolParsingTests(unittest.TestCase):
         executor = _FakeExecutor.instances[0]
         self.assertFalse(executor.submitted[0].cancelled)
         self.assertTrue(all(f.cancelled for f in executor.submitted[1:]))
-        self.assertEqual(executor.shutdown_calls, [(False, False)])
+        # Two shutdowns, both without waiting (Revision 4):
+        # cancel_scan() closes the pool, and the stale finally closes
+        # its own pool again because it cannot know cancel_scan
+        # already did — shutdown is idempotent.
+        self.assertEqual(executor.shutdown_calls,
+                         [(False, False), (False, False)])
 
     def test_cancel_scan_with_no_scan_running_is_a_no_op(self):
         instance = self._make_instance(self._fresh_library())
         instance.cancel_scan()  # must not raise, and leaves no pool behind
         self.assertIsNone(instance._live_pool)
         self.assertIsNone(instance._live_futures)
+
+    def test_stale_scan_never_cancels_the_newer_scans_pool(self):
+        # Greptile re-run P1 (Revision 4): the File menu starts a
+        # newer refresh while one is running, and the newer scan
+        # supersedes by generation. The stale scan's finally must
+        # close its OWN pool and leave the newer scan's pool alone:
+        # the old code cancelled whatever the shared live refs named.
+        lib = self._fresh_library()
+        self._write_library(lib)
+        instance = self._make_instance(lib)
+        self._save_worker_globals()
+        newer = []
+
+        def superseding_as_completed(futures):
+            futures = list(futures)
+            yield futures[0]
+            # A newer Load starts mid-parse and stores its pool in
+            # the shared refs before the older scan notices it is
+            # stale.
+            newer_executor = _FakeExecutor()
+            newer_futures = [_FakeFuture(lambda: None, ())
+                             for _ in range(2)]
+            newer.append((newer_executor, newer_futures))
+            instance._live_pool = newer_executor
+            instance._live_futures = newer_futures
+            instance._load_generation = 2
+            yield from futures[1:]
+
+        with patch.object(loader, "POOL_MIN_FILES", 1), \
+                patch.object(loader, "ProcessPoolExecutor", _FakeExecutor), \
+                patch.object(loader, "as_completed",
+                             superseding_as_completed):
+            instance._load_worker(lib.cache_dir, lib.stats_file, generation=1)
+        kinds = []
+        while not instance._load_results.empty():
+            kinds.append(instance._load_results.get_nowait()[0])
+        self.assertNotIn("loaded", kinds)
+        self.assertNotIn("failed", kinds)
+        older = _FakeExecutor.instances[0]
+        newer_executor, newer_futures = newer[0]
+        # The stale scan cancelled its own pending futures and shut
+        # its own pool down without waiting.
+        self.assertFalse(older.submitted[0].cancelled)
+        self.assertTrue(all(f.cancelled for f in older.submitted[1:]))
+        self.assertEqual(older.shutdown_calls, [(False, False)])
+        # The newer scan's pool was never touched, and the shared
+        # refs still name it.
+        self.assertEqual(newer_executor.shutdown_calls, [])
+        self.assertFalse(any(f.cancelled for f in newer_futures))
+        self.assertIs(instance._live_pool, newer_executor)
+        self.assertIs(instance._live_futures, newer_futures)
+
+    def test_pool_failure_cancels_the_remaining_futures_instead_of_draining_them(self):
+        # Claude finding 1 (Revision 4): a future that fails for an
+        # infrastructure reason must not make the pool drain the whole
+        # queued list before the serial fallback re-parses it — the
+        # failed path cancels this scan's remaining futures and shuts
+        # the pool down without waiting.
+        lib = self._fresh_library()
+        self._write_library(lib)
+        instance = self._make_instance(lib)
+        self._save_worker_globals()
+
+        class FailingFutureExecutor(_FakeExecutor):
+            def submit(self, fn, *args):
+                if str(args[1]).endswith("b.cache"):
+                    return _FakeFuture(
+                        fn, args, error=RuntimeError("transport failed"))
+                return super().submit(fn, args)
+
+        with patch.object(loader, "POOL_MIN_FILES", 1), \
+                patch.object(loader, "ProcessPoolExecutor",
+                             FailingFutureExecutor), \
+                patch.object(loader, "as_completed",
+                             lambda fs: iter(list(fs))):
+            instance._load_worker(lib.cache_dir, lib.stats_file, generation=1)
+        args, kwargs = self._drain(instance)
+        self.assertEqual(len(args[0]), 6)  # b.cache's row is present
+        self.assertEqual(kwargs["skipped_files"], 0)
+        executor = _FakeExecutor.instances[0]
+        # The first future ran; the failing one and the rest were
+        # cancelled instead of draining.
+        self.assertFalse(executor.submitted[0].cancelled)
+        self.assertTrue(all(f.cancelled for f in executor.submitted[1:]))
+        self.assertEqual(executor.shutdown_calls, [(False, False)])
+
+    def test_cancel_scan_during_submission_cancels_the_queued_futures(self):
+        # Claude finding 3 (Revision 4): _live_futures is shared
+        # with cancel_scan() before the first submit and grows as
+        # futures are submitted, so a close mid-submission cancels
+        # what is already queued. The old code assigned the list
+        # only after the whole submit loop, so cancel_scan() found
+        # nothing to cancel.
+        lib = self._fresh_library()
+        self._write_library(lib)
+        instance = self._make_instance(lib)
+        self._save_worker_globals()
+        seen = []
+
+        class CancellingSubmitExecutor(_FakeExecutor):
+            def submit(self, fn, *args):
+                future = super().submit(fn, args)
+                if len(self.submitted) == 2:
+                    # The main thread closes the app mid-submission.
+                    visible = list(
+                        getattr(instance, "_live_futures", None) or [])
+                    instance.cancel_scan()
+                    seen.append((visible, self.submitted[0].cancelled))
+                return future
+
+        with patch.object(loader, "POOL_MIN_FILES", 1), \
+                patch.object(loader, "ProcessPoolExecutor",
+                             CancellingSubmitExecutor), \
+                patch.object(loader, "as_completed",
+                             lambda fs: iter(list(fs))):
+            instance._load_worker(lib.cache_dir, lib.stats_file, generation=1)
+        kinds = []
+        while not instance._load_results.empty():
+            kinds.append(instance._load_results.get_nowait()[0])
+        self.assertNotIn("loaded", kinds)
+        self.assertNotIn("failed", kinds)
+        # At the moment cancel_scan() ran, the first future was
+        # already visible in the live list and already cancelled.
+        self.assertEqual(len(seen), 1)
+        visible, first_cancelled = seen[0]
+        executor = _FakeExecutor.instances[0]
+        self.assertEqual(visible, [executor.submitted[0]])
+        self.assertTrue(first_cancelled)
 
     def test_pool_retries_a_file_whose_future_fails_outside_the_parse(self):
         # A future that raises for an infrastructure reason — not a

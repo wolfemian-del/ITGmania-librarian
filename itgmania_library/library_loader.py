@@ -159,8 +159,9 @@ class LibraryLoader:
         # cancel_scan() (Revision 1, Claude option A) cancels them
         # when the app closes, so the process does not outlive the
         # window waiting for queued pool work. Set by _parse_files_pool
-        # and cleared by its finally; cancel_scan() reads them with
-        # getattr, because bare test instances skip __init__.
+        # and cleared by its finally when they still name that scan's
+        # pool (Revision 4); cancel_scan() reads them with getattr,
+        # because bare test instances skip __init__.
         self._live_pool = None
         self._live_futures = None
         # The snapshot summary _loaded records for the scores sync to write
@@ -377,15 +378,18 @@ class LibraryLoader:
     def _cancel_live_pool(self):
         """Cancel the live pool's futures and shut it down, not waiting.
 
-        The shared cancellation routine for the stale branch of
-        _parse_files_pool and for cancel_scan() (Revision 1, Claude
-        option A). The futures are cancelled explicitly, so neither
-        path relies on the shutdown flag to stop queued work; the
-        shutdown itself is safe to call again from the finally.
-        Clearing the references first makes a second call a no-op.
-        No lock: the references are plain attributes, and the worst
-        a race can do is a redundant shutdown call, which is safe.
-        A no-op when no pool is live.
+        The shared cancellation routine for cancel_scan() (Revision 1,
+        Claude option A). The futures are cancelled explicitly,
+        because whether queued work runs depends on whether the
+        executor is still referenced when shutdown is called — the
+        old code released it on return, so the pool drained (Claude
+        follow-up, Revision 4). executor.shutdown is idempotent, so
+        the owning scan's finally closing the same pool again is
+        harmless. Clearing the references first makes a second call
+        a no-op. A no-op when no pool is live. Only cancel_scan()
+        uses this: a scan's own finally cancels its local pool
+        instead, so a stale scan can never kill a newer scan's work
+        through these shared refs (Greptile re-run P1, Revision 4).
         """
         executor = getattr(self, "_live_pool", None)
         futures = getattr(self, "_live_futures", None) or []
@@ -407,7 +411,9 @@ class LibraryLoader:
         generation bump is harmless then) and safe to call twice:
         the second call finds no live pool. The loader thread's
         finally also shuts the pool down, so the pool is closed
-        exactly once however the two calls interleave.
+        however the two calls interleave (shutdown is idempotent,
+        so the finally closing a pool cancel_scan already closed
+        is harmless).
         """
         self._load_generation += 1
         self._cancel_live_pool()
@@ -734,7 +740,10 @@ class LibraryLoader:
         the finally on every exit path (D4). The executor and its
         futures are also kept as the live pool, so cancel_scan() can
         stop them when the app closes instead of waiting for the
-        queued work to drain (Revision 1, Claude option A).
+        queued work to drain (Revision 1, Claude option A). The
+        scan's finally closes its own pool and clears the live refs
+        only when they still name it, so a stale scan never cancels
+        a newer scan's work (Revision 4).
         """
         parsed = {}
         skipped = 0
@@ -742,18 +751,24 @@ class LibraryLoader:
         stale = False
         pool_failed = False
         executor = None
+        futures = {}
+        live_futures = []
         try:
             executor = ProcessPoolExecutor(
                 max_workers=POOL_WORKERS,
                 mp_context=multiprocessing.get_context("spawn"),
                 initializer=_init_pool_worker, initargs=(scores,))
             self._live_pool = executor
-            futures = {
-                executor.submit(parse_cache_file_task, index, str(cache / name)):
-                    (index, name, stat)
-                for index, name, stat in to_parse
-            }
-            self._live_futures = list(futures)
+            # The live list is shared with cancel_scan() before the
+            # first submit and grows as futures are submitted, so a
+            # close mid-submission cancels what is already queued
+            # (Claude finding 3, Revision 4).
+            self._live_futures = live_futures
+            for index, name, stat in to_parse:
+                future = executor.submit(
+                    parse_cache_file_task, index, str(cache / name))
+                futures[future] = (index, name, stat)
+                live_futures.append(future)
             done = 0
             for future in as_completed(futures):
                 if self._load_is_stale(generation):
@@ -788,19 +803,31 @@ class LibraryLoader:
                 self._report_parse_progress(done_base + done, total, generation)
         except Exception:
             # The pool could not start at all (a spawn error, or a
-            # frozen executable without freeze_support): the whole
-            # outstanding list goes serial, so the load still delivers.
+            # frozen executable without freeze_support), or a submit
+            # failed part-way through: the whole outstanding list
+            # goes serial, so the load still delivers.
             pool_failed = True
         finally:
-            if stale:
-                # Cancel the pending futures explicitly, so the stale
-                # path does not rely on the shutdown flag to stop
-                # queued work, and do not wait for the pool.
-                self._cancel_live_pool()
+            # Revision 4: this scan closes its OWN pool. The stale
+            # and failed paths cancel this scan's local futures
+            # first, so they never wait for queued work to drain
+            # (Claude finding 1); the shared live refs are cleared
+            # only when they still name this scan's pool, because a
+            # newer scan may already have claimed them (Greptile
+            # re-run P1) — clearing them unconditionally would hide
+            # the newer scan's pool from cancel_scan, and cancelling
+            # through them would kill the newer scan's work.
+            if stale or pool_failed:
+                for future in futures:
+                    future.cancel()
+                if executor is not None:
+                    executor.shutdown(wait=False)
             elif executor is not None:
                 executor.shutdown(wait=True)
-            self._live_pool = None
-            self._live_futures = None
+            if getattr(self, "_live_pool", None) is executor:
+                self._live_pool = None
+            if getattr(self, "_live_futures", None) is live_futures:
+                self._live_futures = None
         if stale:
             return None
         if pool_failed:

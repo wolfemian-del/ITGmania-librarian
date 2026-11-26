@@ -1942,6 +1942,33 @@ class LibraryAppExitTests(unittest.TestCase):
         instance._close_app()
         instance.root.destroy.assert_not_called()
 
+    def test_approved_exit_calls_cancel_scan_on_the_loader(self):
+        # Claude finding 2 (Revision 4): _close_app must stop a scan
+        # still parsing (Revision 1, Claude option A). Deleting the
+        # call leaves the suite green, so this pins the wiring: an
+        # approved exit calls cancel_scan exactly once, before the
+        # root is destroyed.
+        instance = self.make_app(builder_answer=True)
+        instance._loader = Mock()
+        manager = Mock()
+        manager.attach_mock(instance._loader, "loader")
+        manager.attach_mock(instance.root, "root")
+        instance._close_app()
+        names = [call[0] for call in manager.mock_calls]
+        self.assertEqual(names.count("loader.cancel_scan"), 1)
+        self.assertLess(names.index("loader.cancel_scan"),
+                        names.index("root.destroy"))
+        instance.root.destroy.assert_called_once_with()
+
+    def test_cancelled_exit_calls_neither_cancel_scan_nor_destroy(self):
+        # A declined course-discard prompt leaves the app exactly as
+        # it was: no cancel_scan, no destroy.
+        instance = self.make_app(builder_answer=False)
+        instance._loader = Mock()
+        instance._close_app()
+        instance._loader.cancel_scan.assert_not_called()
+        instance.root.destroy.assert_not_called()
+
     def test_exit_saves_the_advanced_search_geometry(self):
         instance = self.make_app()
         instance.advanced_search = Mock()
