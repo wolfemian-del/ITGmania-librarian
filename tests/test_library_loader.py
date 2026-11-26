@@ -2632,10 +2632,11 @@ class PoolParsingTests(unittest.TestCase):
     def test_pool_constants_exist_and_the_threshold_is_honoured(self):
         self.assertIsInstance(loader.POOL_WORKERS, int)
         self.assertGreaterEqual(loader.POOL_WORKERS, 1)
-        # Capped at 4: warm pass 4 on the owner's machine (Revision 2)
-        # timed 4 workers fastest (13.65 s), then 8 (14.06 s), then
-        # 16 (16.01 s), against a 26.66 s serial parse.
-        self.assertLessEqual(loader.POOL_WORKERS, 4)
+        # Capped at 8: warm pass 4 favoured 4 workers, but cold pass 4
+        # (Revision 3) reversed it — 37.32 s at 4, 23.63 s at 8 and
+        # 25.33 s at 16, against a 124.93 s cold serial parse — and 8
+        # costs only ~0.3 s warm, so 8 is the cap.
+        self.assertLessEqual(loader.POOL_WORKERS, 8)
         self.assertIsInstance(loader.POOL_MIN_FILES, int)
         self.assertGreater(loader.POOL_MIN_FILES, 1)
         # The constants are module level, not settings or constructor

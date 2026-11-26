@@ -48,23 +48,25 @@ from itgmania_library.library_sources import (
 # The process-pool parse (proposal 0020, §4.4): module constants, set
 # from the pass-4 measurement in tools/time_refresh_parse.py. Neither
 # is a settings key or a constructor input, so the loader's constructor
-# is untouched. The worker count is capped at 4: pass 4 on the owner's
-# machine (Ryzen 9 4900HS, 8 cores / 16 threads, warm, 2026-11-25)
-# timed 13.65 s at 4 workers, 14.06 s at 8 and 16.01 s at 16, against
-# a 26.66 s serial parse — 4 workers is fastest and 16 is clearly
-# worse, so the cap is 4 rather than the physical core count (8).
+# is untouched. The worker count is capped at 8, the physical core
+# count: warm pass 4 on the owner's machine (Ryzen 9 4900HS, 8 cores /
+# 16 threads, 2026-11-25) favoured 4 workers — 11.45 s at 4, 11.79 s
+# at 8, 14.61 s at 16 on the repeat, against a 24.55 s serial parse —
+# but cold pass 4 the same day reversed it: 37.32 s at 4, 23.63 s at
+# 8 and 25.33 s at 16, against a 124.93 s cold serial parse. Cold is
+# disk-bound, so more workers hide read latency; 8 wins cold by ~14 s
+# and costs ~0.3 s warm, so 8 is the cap. Sixteen is worst in both
+# regimes and crosses the ~1 GB aggregate RSS line when warm.
 # os.cpu_count() reports 16 logical CPUs there, and the workload is
 # CPU-bound pure Python, so hyperthreading adds little (Lane D).
-# POOL_MIN_FILES stays 300: pool startup measured 0.36–0.56 s and the
-# saving is ~1.7 ms per file at 4 workers, so the break-even is
-# ~210 files and 300 stays a conservative threshold. The cold pass-4
-# runs are still outstanding; they measure through --workers, so the
-# cap does not bias them, and a cold verdict the other way reopens it.
+# POOL_MIN_FILES stays 300: the warm break-even is ~210 files and
+# the cold break-even is ~60, so 300 stays a conservative threshold
+# in both regimes.
 # There is no chunksize constant: D3's submit-plus-as_completed
 # submits one future per file, so the 32-file chunks §4.2 sketches
 # have no role — per-file submission gives finer balance and per-file
 # progress (see _parse_files_pool).
-POOL_WORKERS = min(os.cpu_count() or 1, 4)
+POOL_WORKERS = min(os.cpu_count() or 1, 8)
 POOL_MIN_FILES = 300
 
 
