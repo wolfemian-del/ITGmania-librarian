@@ -474,6 +474,13 @@ class LibraryApp:
             self.advanced_search.save_window_geometry()
         if self.song_page is not None:
             self.song_page.save_window_geometry()
+        if getattr(self, "_loader", None) is not None:
+            # Stop a scan still parsing: without this the window is
+            # gone but the process waits for the queued pool work to
+            # drain (Revision 1, Claude option A). The loader is
+            # None only before _init_loader has built it; getattr
+            # because bare test instances skip __init__.
+            self._loader.cancel_scan()
         self.root.destroy()
 
     def _course_geometry_changed(self, geometry):

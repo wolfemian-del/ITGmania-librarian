@@ -12,6 +12,7 @@ Tests: tests/test_library_loader.py.
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import queue
 import threading
@@ -23,11 +24,15 @@ except ImportError:
     tk = None
     messagebox = None
 import xml.etree.ElementTree as ET
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from datetime import datetime
 from pathlib import Path
 
 from itgmania_library.library_format import format_refresh_time
 from itgmania_library.library_sources import (
+    PoolParseError,
+    _init_pool_worker,
     _normalized_source_path,
     any_scores_match,
     edit_fallback_index,
@@ -35,8 +40,34 @@ from itgmania_library.library_sources import (
     looks_like_song_tree,
     merge_scores,
     parse_cache_file,
+    parse_cache_file_task,
     stats_index,
 )
+
+
+# The process-pool parse (proposal 0020, §4.4): module constants, set
+# from the pass-4 measurement in tools/time_refresh_parse.py. Neither
+# is a settings key or a constructor input, so the loader's constructor
+# is untouched. The worker count is capped at 8, the physical core
+# count: warm pass 4 on the owner's machine (Ryzen 9 4900HS, 8 cores /
+# 16 threads, 2026-11-25) favoured 4 workers — 11.45 s at 4, 11.79 s
+# at 8, 14.61 s at 16 on the repeat, against a 24.55 s serial parse —
+# but cold pass 4 the same day reversed it: 37.32 s at 4, 23.63 s at
+# 8 and 25.33 s at 16, against a 124.93 s cold serial parse. Cold is
+# disk-bound, so more workers hide read latency; 8 wins cold by ~14 s
+# and costs ~0.3 s warm, so 8 is the cap. Sixteen is worst in both
+# regimes and crosses the ~1 GB aggregate RSS line when warm.
+# os.cpu_count() reports 16 logical CPUs there, and the workload is
+# CPU-bound pure Python, so hyperthreading adds little (Lane D).
+# POOL_MIN_FILES stays 300: the warm break-even is ~210 files and
+# the cold break-even is ~60, so 300 stays a conservative threshold
+# in both regimes.
+# There is no chunksize constant: D3's submit-plus-as_completed
+# submits one future per file, so the 32-file chunks §4.2 sketches
+# have no role — per-file submission gives finer balance and per-file
+# progress (see _parse_files_pool).
+POOL_WORKERS = min(os.cpu_count() or 1, 8)
+POOL_MIN_FILES = 300
 
 
 def _manifest_covers_snapshot(entries, rows):
@@ -124,6 +155,15 @@ class LibraryLoader:
         self._snapshot_lock = threading.Lock()  # one scan at a time may check its generation and write the snapshot
         self._load_results = queue.Queue()  # finished scans wait here; only the main thread delivers them (_poll_load_results)
         self._load_started_at = None
+        # The pool of the scan now parsing, if any, and its futures:
+        # cancel_scan() (Revision 1, Claude option A) cancels them
+        # when the app closes, so the process does not outlive the
+        # window waiting for queued pool work. Set by _parse_files_pool
+        # and cleared by its finally when they still name that scan's
+        # pool (Revision 4); cancel_scan() reads them with getattr,
+        # because bare test instances skip __init__.
+        self._live_pool = None
+        self._live_futures = None
         # The snapshot summary _loaded records for the scores sync to write
         # back (proposal 0014 declares them here; the reads keep their
         # getattr defaults for bare test instances).
@@ -335,6 +375,49 @@ class LibraryLoader:
         self._load_started_at = time.monotonic()
         threading.Thread(target=self._load_worker, args=(cache, stats, generation), daemon=True).start()
 
+    def _cancel_live_pool(self):
+        """Cancel the live pool's futures and shut it down, not waiting.
+
+        The shared cancellation routine for cancel_scan() (Revision 1,
+        Claude option A). The futures are cancelled explicitly,
+        because whether queued work runs depends on whether the
+        executor is still referenced when shutdown is called — the
+        old code released it on return, so the pool drained (Claude
+        follow-up, Revision 4). executor.shutdown is idempotent, so
+        the owning scan's finally closing the same pool again is
+        harmless. Clearing the references first makes a second call
+        a no-op. A no-op when no pool is live. Only cancel_scan()
+        uses this: a scan's own finally cancels its local pool
+        instead, so a stale scan can never kill a newer scan's work
+        through these shared refs (Greptile re-run P1, Revision 4).
+        """
+        executor = getattr(self, "_live_pool", None)
+        futures = getattr(self, "_live_futures", None) or []
+        self._live_pool = None
+        self._live_futures = None
+        for future in futures:
+            future.cancel()
+        if executor is not None:
+            executor.shutdown(wait=False)
+
+    def cancel_scan(self):
+        """Stop the scan now parsing, if any (Revision 1, Claude A).
+
+        Called from the main thread when the app closes: bumps the
+        generation so the worker thread notices at its next check,
+        and cancels the live pool's futures so the workers stop
+        instead of draining the whole queued list while the process
+        waits to exit. Safe to call when no scan is running (the
+        generation bump is harmless then) and safe to call twice:
+        the second call finds no live pool. The loader thread's
+        finally also shuts the pool down, so the pool is closed
+        however the two calls interleave (shutdown is idempotent,
+        so the finally closing a pool cancel_scan already closed
+        is harmless).
+        """
+        self._load_generation += 1
+        self._cancel_live_pool()
+
     def _load_is_stale(self, generation):
         return self._load_generation != generation
 
@@ -418,6 +501,15 @@ class LibraryLoader:
             reparsed_files = 0
             reused_files = 0
             new_entries = {}
+            # Phase 1 — decide (proposal 0020, §4.2): the reuse-or-parse
+            # decision for every scanned file, in walk order. Reused
+            # files hand their snapshot rows over at once; the rest
+            # join the parse list with their scan index, which is what
+            # the pool results are sorted back into. The parse itself
+            # moves to phase 2, so the pool path never interleaves
+            # parsing with deciding.
+            reused_rows = {}
+            to_parse = []
             for index, (name, stat) in enumerate(scanned, start=1):
                 if self._load_is_stale(generation):
                     return
@@ -448,47 +540,53 @@ class LibraryLoader:
                     # file with no #SONGFILENAME), which reusing here
                     # would duplicate.
                     if entry["rows"] > 0:
-                        rows.extend(groups.get(entry["song_dir"], []))
+                        reused_rows[index] = groups.get(entry["song_dir"], [])
                     if entry["rows"] == 0:
                         files_without_charts += 1
                     skipped_blocks += entry["skipped_blocks"]
                     reused_files += 1
                     new_entries[name] = entry
                 else:
-                    try:
-                        reparsed_files += 1
-                        chart_rows, blocks = parse_cache_file(
-                            cache / name, scores, edit_index)
-                        skipped_blocks += blocks
-                        if not chart_rows:
-                            files_without_charts += 1
-                        rows.extend(chart_rows)
-                        # The song directory the file's rows carry, or ""
-                        # when the file produced no rows (proposal 0018,
-                        # §4.1): a zero-row record claims nothing.
-                        song_dir = chart_rows[0]["Course path"] if chart_rows else ""
-                        new_entries[name] = {
-                            "name": name, "mtime_ns": stat.st_mtime_ns,
-                            "size": stat.st_size, "song_dir": song_dir,
-                            "rows": len(chart_rows), "skipped_blocks": blocks,
-                        }
-                    except Exception:
-                        # Any failure parsing one file skips that file: a
-                        # malformed cache must not kill the whole load
-                        # (issue #205). The count reaches the load summary
-                        # the way unreadable files already do. The catch is
-                        # deliberately broad — the parse touches the file,
-                        # the tag regex and the scores index, and no single
-                        # file's failure mode should sink the scan. A
-                        # failed file is not recorded in the manifest, so
-                        # it is re-parsed on every refresh until it
-                        # succeeds (proposal 0018, §4.2).
-                        skipped_files += 1
-                # Every 25 files, and on the last one: often enough for the
-                # bar to move smoothly, rarely enough to churn the queue.
-                # A scan superseded mid-loop stops reporting with it.
-                if (index % 25 == 0 or index == total) and not self._load_is_stale(generation):
-                    self._load_results.put(("progress", index, total, generation))
+                    to_parse.append((index, name, stat))
+            # Phase 2 — parse the list, serially or through the pool
+            # (proposal 0020, §4.2). A superseded scan returns here
+            # without delivering, the way the old loop returned
+            # mid-loop. reparsed_files counts every file the parse was
+            # attempted on, failed or not, as the old loop did.
+            parsed = self._parse_files(to_parse, cache, scores, edit_index,
+                                       generation, reused_files, total)
+            if parsed is None:
+                return
+            if not to_parse and total:
+                # Nothing to parse: no parse report ever covers total,
+                # so the bar would sit at the initial zero until the
+                # snapshot phase (Greptile finding 5 / Claude
+                # finding 3). Report the final total here.
+                self._report_parse_progress(total, total, generation)
+            parsed_rows, skipped_files = parsed
+            reparsed_files = len(to_parse)
+            # Phase 3 — assemble in walk order (proposal 0020, D3): the
+            # pool's results arrive unordered, so the merge reads them
+            # back by scan index — reused rows and parsed rows
+            # interleave exactly as the old single loop extended them.
+            for index, (name, stat) in enumerate(scanned, start=1):
+                if index in reused_rows:
+                    rows.extend(reused_rows[index])
+                elif index in parsed_rows:
+                    chart_rows, blocks = parsed_rows[index]
+                    skipped_blocks += blocks
+                    if not chart_rows:
+                        files_without_charts += 1
+                    rows.extend(chart_rows)
+                    # The song directory the file's rows carry, or ""
+                    # when the file produced no rows (proposal 0018,
+                    # §4.1): a zero-row record claims nothing.
+                    song_dir = chart_rows[0]["Course path"] if chart_rows else ""
+                    new_entries[name] = {
+                        "name": name, "mtime_ns": stat.st_mtime_ns,
+                        "size": stat.st_size, "song_dir": song_dir,
+                        "rows": len(chart_rows), "skipped_blocks": blocks,
+                    }
 
             # A changed Stats.xml re-derives scores over all rows instead
             # of forcing a re-parse (proposal 0018, D3): Stats.xml changes
@@ -563,6 +661,188 @@ class LibraryLoader:
                                     generation))
         except Exception as exc:
             self._load_results.put(("failed", str(exc), generation))
+
+    def _report_parse_progress(self, done, total, generation):
+        """Report parse progress on the old loop's cadence.
+
+        Every 25 files, and on the last one: often enough for the bar
+        to move smoothly, rarely enough to churn the queue. A scan
+        superseded mid-parse stops reporting with it. `done` counts the
+        files whose rows are in hand, reused files included.
+        """
+        if (done % 25 == 0 or done == total) and not self._load_is_stale(generation):
+            self._load_results.put(("progress", done, total, generation))
+
+    def _parse_files(self, to_parse, cache, scores, edit_index, generation,
+                     done_base, total):
+        """Parse the files the decision loop marked for parsing.
+
+        Returns (parsed, skipped): parsed maps each file's scan index
+        to (rows, skipped_blocks); skipped counts the files whose parse
+        raised. Returns None when a newer Load superseded this scan
+        mid-parse — the caller returns without delivering, the way the
+        old loop returned mid-loop.
+
+        The pool engages only when the list reaches POOL_MIN_FILES
+        (proposal 0020, D5): below that the serial loop runs exactly
+        as before, so a warm refresh that re-parses a handful of files
+        never pays the spawn cost.
+        """
+        if len(to_parse) < POOL_MIN_FILES:
+            return self._parse_files_serial(to_parse, cache, scores, edit_index,
+                                            generation, done_base, total)
+        if self._load_is_stale(generation):
+            # Superseded during phase 1: do not pay the spawn cost
+            # for a scan that will deliver nothing (Revision 1).
+            return None
+        return self._parse_files_pool(to_parse, cache, scores, edit_index,
+                                      generation, done_base, total)
+
+    def _parse_files_serial(self, to_parse, cache, scores, edit_index,
+                            generation, done_base, total):
+        """Parse the list one file at a time, exactly as the old loop did.
+
+        The per-file try/except is the same: any failure parsing one
+        file skips that file — a malformed cache must not kill the
+        whole load (issue #205). The count reaches the load summary
+        the way unreadable files already do. The catch is deliberately
+        broad — the parse touches the file, the tag regex and the
+        scores index, and no single file's failure mode should sink
+        the scan. A failed file is not recorded in the manifest, so it
+        is re-parsed on every refresh until it succeeds (proposal
+        0018, §4.2). Calls the module-level parse_cache_file, so the
+        counting wrappers in the manifest tests still see every parse.
+        """
+        parsed = {}
+        skipped = 0
+        for done, (index, name, stat) in enumerate(to_parse, start=1):
+            if self._load_is_stale(generation):
+                return None
+            try:
+                parsed[index] = parse_cache_file(cache / name, scores, edit_index)
+            except Exception:
+                skipped += 1
+            self._report_parse_progress(done_base + done, total, generation)
+        return parsed, skipped
+
+    def _parse_files_pool(self, to_parse, cache, scores, edit_index,
+                          generation, done_base, total):
+        """Parse the list across a process pool (proposal 0020, §4.2).
+
+        One future per file, collected with as_completed (D3): a slow
+        file cannot stall the stream behind it, and the results are
+        collected by scan index, so the merge in _load_worker reads
+        them back in walk order. The scores travel once per worker
+        through the pool initializer (D2). A pool that cannot start,
+        or a worker that dies mid-parse, falls back to the serial loop
+        for the files still outstanding (D6): a pool problem never
+        loses the library or fails the load. The pool is shut down in
+        the finally on every exit path (D4). The executor and its
+        futures are also kept as the live pool, so cancel_scan() can
+        stop them when the app closes instead of waiting for the
+        queued work to drain (Revision 1, Claude option A). The
+        scan's finally closes its own pool and clears the live refs
+        only when they still name it, so a stale scan never cancels
+        a newer scan's work (Revision 4).
+        """
+        parsed = {}
+        skipped = 0
+        remaining = list(to_parse)
+        stale = False
+        pool_failed = False
+        executor = None
+        futures = {}
+        live_futures = []
+        try:
+            executor = ProcessPoolExecutor(
+                max_workers=POOL_WORKERS,
+                mp_context=multiprocessing.get_context("spawn"),
+                initializer=_init_pool_worker, initargs=(scores,))
+            self._live_pool = executor
+            # The live list is shared with cancel_scan() before the
+            # first submit and grows as futures are submitted, so a
+            # close mid-submission cancels what is already queued
+            # (Claude finding 3, Revision 4).
+            self._live_futures = live_futures
+            for index, name, stat in to_parse:
+                future = executor.submit(
+                    parse_cache_file_task, index, str(cache / name))
+                futures[future] = (index, name, stat)
+                live_futures.append(future)
+            done = 0
+            for future in as_completed(futures):
+                if self._load_is_stale(generation):
+                    stale = True
+                    break
+                item = futures[future]
+                index, _name, _stat = item
+                try:
+                    _index, rows, blocks = future.result()
+                except BrokenProcessPool:
+                    # A worker died: stop collecting, shut the pool
+                    # down, and re-parse the files still outstanding
+                    # serially — including this one, whose result is
+                    # unknown, not necessarily failed.
+                    pool_failed = True
+                    break
+                except PoolParseError:
+                    # A per-file parse failure: counted and skipped,
+                    # exactly as the serial loop counts it (issue #205).
+                    skipped += 1
+                except Exception:
+                    # An infrastructure failure, not evidence the file
+                    # is bad: leave the item in remaining so the
+                    # serial fallback re-parses it (proposal 0020, D6,
+                    # Revision 1) instead of dropping its rows.
+                    pool_failed = True
+                    break
+                else:
+                    parsed[index] = (rows, blocks)
+                remaining.remove(item)
+                done += 1
+                self._report_parse_progress(done_base + done, total, generation)
+        except Exception:
+            # The pool could not start at all (a spawn error, or a
+            # frozen executable without freeze_support), or a submit
+            # failed part-way through: the whole outstanding list
+            # goes serial, so the load still delivers.
+            pool_failed = True
+        finally:
+            # Revision 4: this scan closes its OWN pool. The stale
+            # and failed paths cancel this scan's local futures
+            # first, so they never wait for queued work to drain
+            # (Claude finding 1); the shared live refs are cleared
+            # only when they still name this scan's pool, because a
+            # newer scan may already have claimed them (Greptile
+            # re-run P1) — clearing them unconditionally would hide
+            # the newer scan's pool from cancel_scan, and cancelling
+            # through them would kill the newer scan's work.
+            if stale or pool_failed:
+                for future in futures:
+                    future.cancel()
+                if executor is not None:
+                    executor.shutdown(wait=False)
+            elif executor is not None:
+                executor.shutdown(wait=True)
+            if getattr(self, "_live_pool", None) is executor:
+                self._live_pool = None
+            if getattr(self, "_live_futures", None) is live_futures:
+                self._live_futures = None
+        if stale:
+            return None
+        if pool_failed:
+            # The files the pool already resolved count as done, so the
+            # fallback's progress continues from where the pool left off.
+            resolved = len(parsed) + skipped
+            serial = self._parse_files_serial(remaining, cache, scores,
+                                              edit_index, generation,
+                                              done_base + resolved, total)
+            if serial is None:
+                return None
+            serial_parsed, serial_skipped = serial
+            parsed.update(serial_parsed)
+            skipped += serial_skipped
+        return parsed, skipped
 
     def sync_scores(self):
         """Re-read Stats.xml and refresh the score fields of the loaded rows (issue #147).

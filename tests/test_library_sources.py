@@ -1,4 +1,5 @@
 import os
+import pickle
 import sys
 import tempfile
 import unittest
@@ -1826,3 +1827,69 @@ class InvalidPathsNoteTests(unittest.TestCase):
             note = data.invalid_paths_note(root / "Cache" / "Songs", root / "Stats.xml")
             self.assertIn("cache folder", note)
             self.assertIn("Stats.xml", note)
+
+
+class PoolTaskTests(unittest.TestCase):
+    """The pool task function and initializer (proposal 0020, §4.1).
+
+    The task is the only function that runs in a worker process, so
+    these tests pin its contract directly: it parses one file with the
+    scores the initializer handed its worker, returns the file's index
+    with the rows, and propagates a parse failure instead of swallowing
+    it. The initializer's globals are worker-process-only state, so
+    each test restores them afterwards.
+    """
+
+    def setUp(self):
+        self._saved_scores = data._worker_scores
+        self._saved_index = data._worker_edit_index
+        self.addCleanup(self._restore_globals)
+
+    def _restore_globals(self):
+        data._worker_scores = self._saved_scores
+        data._worker_edit_index = self._saved_index
+
+    def test_task_parses_one_file_with_initializer_scores(self):
+        fixture = Path(__file__).parent / "fixtures" / "plain_tune.cache"
+        scores = {
+            ("fixture pack/plain tune", "dance-single", "beginner"): {
+                "Score": "123456", "Grade": "Tier05", "PercentDP": "0.98",
+                "plays": "2",
+            }
+        }
+        data._init_pool_worker(scores)
+        index, rows, blocks = data.parse_cache_file_task(3, str(fixture))
+        expected_rows, expected_blocks = data.parse_cache_file(fixture, scores)
+        self.assertEqual(index, 3)
+        self.assertEqual(rows, expected_rows)
+        self.assertEqual(blocks, expected_blocks)
+        beginner = [row for row in rows if row["Difficulty"] == "Beginner"][0]
+        self.assertEqual(beginner["Score"], 123456)
+        self.assertEqual(beginner["Best %"], 98.0)
+
+    def test_initializer_builds_the_edit_index(self):
+        scores = {("pack/song", "dance-single", "edit", "mine"): {"plays": "1"}}
+        data._init_pool_worker(scores)
+        self.assertIs(data._worker_scores, scores)
+        self.assertEqual(data._worker_edit_index,
+                         data.edit_fallback_index(scores))
+
+    def test_task_raises_without_initializer(self):
+        data._worker_scores = None
+        data._worker_edit_index = None
+        fixture = Path(__file__).parent / "fixtures" / "plain_tune.cache"
+        with self.assertRaises(RuntimeError):
+            data.parse_cache_file_task(1, str(fixture))
+
+    def test_task_wraps_a_parse_failure(self):
+        # A malformed file raises PoolParseError, not the raw parse
+        # error, so the parent can tell a bad file apart from a
+        # future that failed for an infrastructure reason (Lane D
+        # P1, Revision 1). The wrapped error is picklable: a worker
+        # raises it and the pool carries it back to the parent.
+        data._init_pool_worker({})
+        with self.assertRaises(data.PoolParseError):
+            data.parse_cache_file_task(1, "no\0such\0file")
+        err = data.PoolParseError("x.cache")
+        self.assertEqual(pickle.loads(pickle.dumps(err)).args, ("x.cache",))
+        self.assertIn("PoolParseError", data.__all__)

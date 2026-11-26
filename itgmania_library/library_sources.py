@@ -360,6 +360,63 @@ def parse_cache_file(path: Path, scores: dict,
     return rows, skipped_blocks
 
 
+# The process-pool parse (proposal 0020, §4.1): the scores travel once
+# per worker, through the pool initializer, into these module globals.
+# They are worker-process-only — the parent never reads them — and are
+# set exactly once per worker, before any task runs.
+_worker_scores = None
+_worker_edit_index = None
+
+
+def _init_pool_worker(scores):
+    """Pool initializer (proposal 0020, D2): hand one worker its scores.
+
+    Runs once per worker process when the pool starts, so the scores
+    dict is pickled once per worker instead of once per file. The Edit
+    fallback index is built here too, once per worker, for the same
+    reason it is built once per scan on the parent.
+    """
+    global _worker_scores, _worker_edit_index
+    _worker_scores = scores
+    _worker_edit_index = edit_fallback_index(scores)
+
+
+class PoolParseError(Exception):
+    """A cache file failed to parse inside a pool worker.
+
+    Module-level so it pickles: a worker raises it, the pool carries
+    it back to the parent, and the parent counts that one file as
+    skipped. Any other exception from a future is an infrastructure
+    failure, not evidence the file is bad, and the parent retries
+    those files serially instead (proposal 0020, D6, Revision 1).
+    """
+
+
+def parse_cache_file_task(index, path):
+    """Parse one cache file in a pool worker (proposal 0020, §4.1).
+
+    Takes the file's position in the scanned list and its path as a
+    string (cheap and unambiguous across processes) and returns
+    (index, rows, skipped_blocks). The index is what the parent sorts
+    on, so results can arrive in any order (proposal 0020, D3). A
+    malformed file raises PoolParseError, which the parent counts as
+    a skipped file; any other failure is an infrastructure failure
+    and must not be mistaken for one (Revision 1). Module-level
+    because only module-level functions cross the spawn boundary.
+    """
+    if _worker_scores is None:
+        raise RuntimeError("pool worker was not initialised with scores")
+    try:
+        rows, blocks = parse_cache_file(Path(path), _worker_scores,
+                                        _worker_edit_index)
+    except Exception as exc:
+        # A parse failure is a fact about this file; wrap it so the
+        # parent can tell it apart from a future that failed for an
+        # infrastructure reason (proposal 0020, D6, Revision 1).
+        raise PoolParseError(str(path)) from exc
+    return index, rows, blocks
+
+
 # The media fields whose image extensions stage 1 counts (Proposal
 # 0011): the Pillow call is made with these numbers.
 MEDIA_IMAGE_FIELDS = ("Banner", "Background", "Jacket")
@@ -449,6 +506,7 @@ def _normalized_source_path(path):
 
 
 __all__ = [
+    "PoolParseError",
     "any_scores_match",
     "cache_dir_candidates",
     "first_existing_directory",
@@ -456,5 +514,6 @@ __all__ = [
     "looks_like_song_tree",
     "merge_scores",
     "parse_cache_file",
+    "parse_cache_file_task",
     "stats_index",
 ]
