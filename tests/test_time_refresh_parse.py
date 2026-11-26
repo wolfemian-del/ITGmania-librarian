@@ -4,7 +4,8 @@ The tool is loaded from its file (it is a developer tool, not a
 shipped module): the tests pin the Revision 1 behaviours — the
 startup measurement starts every worker, --cold runs one worker
 count per invocation, and the aggregate RSS covers the pool's
-workers, not just the parent.
+workers, not just the parent — and the Revision 2 parent-RSS fix,
+which opens a real handle on Windows instead of the pseudo-handle.
 """
 
 import importlib.util
@@ -177,6 +178,73 @@ class AggregateRssTests(unittest.TestCase):
             self.assertIsNotNone(aggregate)
             self.assertGreater(aggregate, 0)
             self.assertIsNotNone(peak)
+
+
+class _FakeKernel32:
+    """Records handle calls; OpenProcess answers for one PID only."""
+
+    def __init__(self):
+        self.get_current_process_calls = 0
+        self.opened = []
+        self.closed = []
+
+    def GetCurrentProcessId(self):
+        return 1234
+
+    def GetCurrentProcess(self):
+        self.get_current_process_calls += 1
+        return -1
+
+    def OpenProcess(self, access, inherit, pid):
+        self.opened.append((access, inherit, pid))
+        return 5678 if pid == 1234 else 0
+
+    def CloseHandle(self, handle):
+        self.closed.append(handle)
+        return True
+
+
+class _FakePsapi:
+    """Fails the -1 pseudo-handle; answers a real handle with a peak."""
+
+    def __init__(self):
+        self.seen_handles = []
+
+    def GetProcessMemoryInfo(self, handle, counters, cb):
+        self.seen_handles.append(handle)
+        if handle == -1:
+            return 0
+        # counters arrives as a byref pointer; _obj is the struct.
+        counters._obj.PeakWorkingSetSize = 42424224
+        return 1
+
+
+class _FakeWindll:
+    def __init__(self, kernel32, psapi):
+        self.kernel32 = kernel32
+        self.psapi = psapi
+
+
+class ParentRssWindowsTests(unittest.TestCase):
+    def test_parent_peak_opens_a_real_handle_not_the_pseudo_handle(self):
+        # GetCurrentProcess() returns the -1 pseudo-handle, which an
+        # untyped ctypes call truncates to 32 bits on 64-bit Windows,
+        # so GetProcessMemoryInfo fails and the parent peak reads as
+        # unavailable (owner's warm pass 4, Revision 2). The reader
+        # must open a real handle on its own PID instead. The fake
+        # windll runs on Linux: resource is hidden so the function
+        # takes the Windows branch, and the platform is faked.
+        kernel32 = _FakeKernel32()
+        psapi = _FakePsapi()
+        windll = _FakeWindll(kernel32, psapi)
+        with patch.object(sys, "platform", "win32"), \
+                patch.dict(sys.modules, {"resource": None}), \
+                patch.object(tool.ctypes, "windll", windll, create=True):
+            self.assertEqual(tool._peak_rss_bytes(), 42424224)
+        self.assertEqual(kernel32.get_current_process_calls, 0)
+        self.assertEqual(kernel32.opened, [(0x0400 | 0x0010, False, 1234)])
+        self.assertEqual(kernel32.closed, [5678])
+        self.assertEqual(psapi.seen_handles, [5678])
 
 
 if __name__ == "__main__":

@@ -175,12 +175,25 @@ def _peak_rss_bytes():
         pass
     if sys.platform == "win32":
         try:
-            counters = _WindowsMemoryCounters()
-            counters.cb = ctypes.sizeof(counters)
-            handle = ctypes.windll.kernel32.GetCurrentProcess()
-            if ctypes.windll.psapi.GetProcessMemoryInfo(
-                    handle, ctypes.byref(counters), counters.cb):
-                return counters.PeakWorkingSetSize
+            # Open a real handle on this process: GetCurrentProcess()
+            # returns the -1 pseudo-handle, which an untyped ctypes
+            # call truncates to 32 bits on 64-bit Windows, so
+            # GetProcessMemoryInfo fails and the parent peak reads as
+            # unavailable (owner's warm pass 4, Revision 2). The
+            # sibling _current_rss_bytes already opens real handles.
+            kernel32 = ctypes.windll.kernel32
+            pid = kernel32.GetCurrentProcessId()
+            handle = kernel32.OpenProcess(0x0400 | 0x0010, False, pid)
+            if not handle:
+                return None
+            try:
+                counters = _WindowsMemoryCounters()
+                counters.cb = ctypes.sizeof(counters)
+                if ctypes.windll.psapi.GetProcessMemoryInfo(
+                        handle, ctypes.byref(counters), counters.cb):
+                    return counters.PeakWorkingSetSize
+            finally:
+                kernel32.CloseHandle(handle)
         except (ImportError, AttributeError, OSError):
             pass
     return None

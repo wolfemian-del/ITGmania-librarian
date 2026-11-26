@@ -2632,10 +2632,10 @@ class PoolParsingTests(unittest.TestCase):
     def test_pool_constants_exist_and_the_threshold_is_honoured(self):
         self.assertIsInstance(loader.POOL_WORKERS, int)
         self.assertGreaterEqual(loader.POOL_WORKERS, 1)
-        # Capped at the physical core count until pass 4 justifies
-        # another value (Lane D, Revision 1): os.cpu_count() reports
-        # 16 logical CPUs on the owner's 8-core machine.
-        self.assertLessEqual(loader.POOL_WORKERS, 8)
+        # Capped at 4: warm pass 4 on the owner's machine (Revision 2)
+        # timed 4 workers fastest (13.65 s), then 8 (14.06 s), then
+        # 16 (16.01 s), against a 26.66 s serial parse.
+        self.assertLessEqual(loader.POOL_WORKERS, 4)
         self.assertIsInstance(loader.POOL_MIN_FILES, int)
         self.assertGreater(loader.POOL_MIN_FILES, 1)
         # The constants are module level, not settings or constructor
