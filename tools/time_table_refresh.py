@@ -22,6 +22,7 @@ contradicts it. If the redraw or the batch scheduling dominates instead,
 
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
 
@@ -56,19 +57,14 @@ def wait_for_settled(root, table, visible_count, timeout=180):
 
 
 def reset_table_state(table):
-    """Empty the tree and clear the table's saved diff state together
-    (Greptile P1 #1): deleting the items without clearing
-    _tree_item_rows/_tree_item_order/_tree_item_display leaves the diff
-    thinking every row is already showing, so the next refresh skips
-    every insert and the trial waits the full deadline. The tint tracker
-    and the focus go with them, so no stale tag or focused row survives
-    the reset."""
-    table.tree.delete(*table.tree.get_children())
-    table._tree_item_rows.clear()
-    table._tree_item_order.clear()
-    table._tree_item_display.clear()
-    table._tree_tint.reset()
-    table.tree.focus("")
+    """Empty the tree and clear the table's saved diff state together.
+
+    Delegates to LibraryTable.reset_table_state (Proposal 0021,
+    §4.4): the table owns the maps, so it owns the reset — and a
+    reset through get_children() alone would leave detached items
+    orphaned in the widget while the maps are cleared.
+    """
+    table.reset_table_state()
 
 
 def time_full_insert(root, table, visible_count, budget_ms):
@@ -135,6 +131,72 @@ def time_filter_toggle(root, table, filt, visible_count, rows):
     wait_for_settled(root, table, visible_count)
     widen_s = time.perf_counter() - started
     return narrow_s, widen_s, narrowed, pick
+
+
+def time_raw_arm(root, row_count, deferred, budget_ms=12):
+    """Time one raw reattach arm in a disposable Treeview (Proposal
+    0021, D7): detach every row, then reattach them the way the arm
+    does — the deferred arm with one set_children call, the
+    self-contained arm with a move to "end" per item plus one
+    set_children. The moves run in budget-sized batches with the event
+    loop pumped between them, the way _apply_diff_batch yields, so a
+    small budget pays the between-batch cost the arm's batches incur;
+    the deferred arm takes one batch whatever the budget. No
+    LibraryTable bookkeeping exists here, so no saved state can be
+    corrupted — the comparison is bare Tk only. Returns (seconds,
+    batches)."""
+    tree = tk.ttk.Treeview(root)
+    for _ in range(row_count):
+        tree.insert("", "end")
+    root.update()
+    children = list(tree.get_children())
+    for item in children:
+        tree.detach(item)
+    root.update()
+    batches = 0
+    started = time.perf_counter()
+    if deferred:
+        tree.set_children("", *children)
+        batches = 1
+    else:
+        budget = budget_ms / 1000
+        index = 0
+        while index < len(children):
+            batches += 1
+            deadline = time.perf_counter() + budget
+            while index < len(children) and time.perf_counter() < deadline:
+                tree.move(children[index], "", "end")
+                index += 1
+            root.update()
+        tree.set_children("", *children)
+    root.update()
+    total = time.perf_counter() - started
+    tree.destroy()
+    return total, batches
+
+
+def time_raw_small_reattach(root, row_count, count):
+    """Time a small restore in a disposable Treeview (Proposal 0021,
+    §6): detach `count` rows near the end of the tree, then move each
+    back to its index — the per-item arm the walk takes under the
+    placement threshold, at the high indices where move-to-index costs
+    most. Returns seconds."""
+    tree = tk.ttk.Treeview(root)
+    for _ in range(row_count):
+        tree.insert("", "end")
+    root.update()
+    children = list(tree.get_children())
+    targets = children[-count:] if count else []
+    for item in targets:
+        tree.detach(item)
+    root.update()
+    started = time.perf_counter()
+    for index, item in enumerate(targets, start=len(children) - count):
+        tree.move(item, "", index)
+    root.update()
+    total = time.perf_counter() - started
+    tree.destroy()
+    return total
 
 
 def time_raw_detach_reattach(root, row_count):
@@ -285,6 +347,38 @@ def main():
           f"reattach {reattach_s:.2f} s); delete+insert: "
           f"{raw_delete_total:.2f} s (delete {raw_delete_s:.2f} s, "
           f"insert {raw_insert_s:.2f} s); ratio {ratio:.1f}x")
+
+    # The raw variants for both reattach arms (Proposal 0021, D7):
+    # the deferred arm (one set_children) against the self-contained
+    # fallback (a move to "end" per item, then one set_children),
+    # the fallback at both the app's 12 ms budget and a larger one —
+    # the comparison measures an arm, not a budget. The deferred arm
+    # stays unless a variant shows the fallback faster, or the
+    # cancellation test fails against it.
+    deferred_s, deferred_batches = time_raw_arm(
+        root, len(visible), deferred=True)
+    fallback_12_s, fallback_12_batches = time_raw_arm(
+        root, len(visible), deferred=False, budget_ms=12)
+    fallback_200_s, fallback_200_batches = time_raw_arm(
+        root, len(visible), deferred=False, budget_ms=200)
+    print(f"raw deferred reattach at {len(visible):,} rows: "
+          f"{deferred_s:.2f} s ({deferred_batches} batch)")
+    print(f"raw self-contained reattach at {len(visible):,} rows: "
+          f"{fallback_12_s:.2f} s at 12 ms "
+          f"({fallback_12_batches} batches), {fallback_200_s:.2f} s "
+          f"at 200 ms ({fallback_200_batches} batches)")
+    for count in (1, 10, 50):
+        small_s = time_raw_small_reattach(root, len(visible), count)
+        print(f"raw small reattach, {count} rows near the end: "
+              f"{small_s:.3f} s")
+    # Colliding songs and rows (Proposal 0021, Q8): whether the
+    # delete-and-reinsert fallback for colliding songs is worth
+    # extending to detach is settled on this count.
+    key_counts = Counter(table_module._chart_key(row) for row in rows)
+    colliding_songs = {key[0] for key, n in key_counts.items() if n > 1}
+    colliding_rows = sum(n for n in key_counts.values() if n > 1)
+    print(f"colliding songs: {len(colliding_songs)} "
+          f"({colliding_rows} rows)")
 
     print()
     # refresh_s already includes one redraw (refresh_table pushes the

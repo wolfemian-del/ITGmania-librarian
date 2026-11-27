@@ -98,6 +98,37 @@ class SelectedRowTintTests(unittest.TestCase):
         tint.on_select()  # no tree to read a selection from: a no-op, not a crash
         self.assertEqual(tint.items, {"b", "c"})
 
+    def test_forget_takes_the_white_tag_off_and_drops_the_tracking(self):
+        tint, tree, store = self._tint_with_store()
+        tree.selection.return_value = ("1",)
+        tint.on_select()
+        self.assertEqual(tint.items, {"1"})
+        self.assertIn(row_tints.SELECTED_ROW_TAG, store["1"])
+
+        tint.forget("1")
+
+        self.assertEqual(store["1"], ("diff_Hard",))
+        self.assertEqual(tint.items, set())
+
+    def test_forget_of_an_untracked_row_is_a_no_op(self):
+        tint, tree, store = self._tint_with_store()
+
+        tint.forget("0")
+
+        self.assertEqual(store["0"], ("diff_Hard",))
+        self.assertEqual(tint.items, set())
+        tree.item.assert_not_called()
+
+    def test_forget_of_a_removed_row_drops_the_tracking_only(self):
+        tint, tree, _store = self._tint_with_store()
+        tree.exists.return_value = False
+        tint.items = {"gone"}
+
+        tint.forget("gone")
+
+        tree.item.assert_not_called()
+        self.assertEqual(tint.items, set())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -15,7 +15,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from itgmania_library.library_constants import TAP_FIELDS
+from itgmania_library.library_constants import HEADERS, TAP_FIELDS
 from itgmania_library.library_geometry import scale_pixels
 from itgmania_library.library_sources import merge_scores
 from itgmania_library.library_stores import SettingsStore
@@ -151,14 +151,20 @@ class FakeTreeview:
         self._items = {}
         self._order = []
         self._selection = set()
+        self._focus = ""
         self._counter = 0
         # How the table reordered rows: a test reads these to pin the
         # move arm (per-item moves for a small reorder, one set_children
         # for a large one) and the insert arm (at-index for a small
-        # placement, at "end" for a large one).
+        # placement, at "end" for a large one). move_calls records
+        # (item, index) so a test can pin that a fallback reattach moves
+        # to "end" only, never to an index.
         self.move_calls = []
         self.set_children_calls = []
         self.insert_calls = []
+        self.detach_calls = []
+        self.delete_calls = []
+        self.index_calls = []
 
     def insert(self, parent, index, values=(), tags=()):
         item = f"item{self._counter}"
@@ -174,13 +180,29 @@ class FakeTreeview:
     def delete(self, *items):
         for item in items:
             self._items.pop(item, None)
+            self.delete_calls.append(item)
             if item in self._order:
                 self._order.remove(item)
             self._selection.discard(item)
+            if item == self._focus:
+                self._focus = ""
+
+    def detach(self, item):
+        """Remove the item from display but keep it, like the real
+        Treeview: its values and tags stay addressable by id, and it
+        keeps no place in the children list. Detaching a selected row
+        drops it from the selection, as the probe establishes."""
+        self.detach_calls.append(item)
+        if item in self._order:
+            self._order.remove(item)
+        self._selection.discard(item)
 
     def move(self, item, parent, index):
-        self.move_calls.append(item)
-        self._order.remove(item)
+        # A move reattaches a detached item (Proposal 0021, §6): it has
+        # no place in the children list to remove first.
+        self.move_calls.append((item, index))
+        if item in self._order:
+            self._order.remove(item)
         if index == "end" or index >= len(self._order):
             self._order.append(item)
         else:
@@ -194,7 +216,12 @@ class FakeTreeview:
         self._order = list(items)
 
     def index(self, item):
-        return self._order.index(item)
+        # A detached item has no visible position: the real Treeview
+        # returns a misleading 0, not an error (Proposal 0021, §6) —
+        # returning 0 here is what lets the fake catch a move branch
+        # that pops the wrong key for a detached item.
+        self.index_calls.append(item)
+        return self._order.index(item) if item in self._order else 0
 
     def get_children(self, item=None):
         return tuple(self._order)
@@ -226,8 +253,14 @@ class FakeTreeview:
     def exists(self, item):
         return item in self._items
 
-    def focus(self):
-        return ""
+    def focus(self, item=None):
+        # With an item, set the focus (as the table's detach step does
+        # when it relocates focus); without one, return the focused
+        # item, "" when none is focused.
+        if item is None:
+            return self._focus
+        self._focus = item
+        return self._focus
 
     # The constructor and the column/heading helpers call these; they do
     # nothing here.
@@ -1689,7 +1722,9 @@ class DiffTagTests(unittest.TestCase):
 
 
 class DiffFilterTests(unittest.TestCase):
-    """A filter narrowing keeps the surviving items (Proposal 0019, §6)."""
+    """A filter narrowing keeps the surviving items (Proposal 0019, §6)
+    and detaches the hidden ones instead of deleting them (Proposal
+    0021): the hidden rows stay owned and addressable, invisible."""
 
     def test_filter_narrowing_keeps_the_surviving_items(self):
         rows = diff_rows(("A/1", "dance-single", "Hard", ""),
@@ -1705,7 +1740,12 @@ class DiffFilterTests(unittest.TestCase):
 
         self.assertEqual(tree.shown_rows(table), [rows[1]])
         self.assertEqual(tree._order, [before[1]])
-        self.assertEqual(len(tree._items), 1)
+        # The hidden rows are detached, not deleted: still owned, still
+        # addressable by id, but out of the children list.
+        self.assertEqual(len(tree._items), 3)
+        self.assertEqual(table._tree_item_detached,
+                         {before[0], before[2]})
+        self.assertEqual(len(table._tree_item_rows), 3)
         table.count_label.set.assert_called_with("1 charts shown · 3 total")
 
 
@@ -2065,3 +2105,746 @@ class DiffEquivalenceTests(unittest.TestCase):
         self.assertEqual(tree_a.shown_rows(table_a),
                          tree_b.shown_rows(table_b))
         self.assertEqual(tree_a.shown_values(), tree_b.shown_values())
+
+def detach_spec_rows(count, easy_indices=()):
+    """Chart rows P000.. in Pack order, Easy at the given indices and
+    Hard elsewhere — a deterministic fixture for the detach tests,
+    where the narrow is always to Easy. The packs are zero-padded to
+    three digits so the Pack sort orders them numerically even past
+    99 rows."""
+    specs = []
+    for i in range(count):
+        difficulty = "Easy" if i in easy_indices else "Hard"
+        specs.append((f"P{i:03d}/1", "dance-single", difficulty, ""))
+    return diff_rows(*specs)
+
+
+def load_detach_table(rows):
+    """Load `rows` into a fresh diff table with a budget that runs the
+    whole walk in one batch, so the table starts settled."""
+    table, tree = make_diff_table(rows=rows)
+    with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+        table.refresh_table()
+    return table, tree
+
+
+def assert_detach_invariants(test, table, tree):
+    """The §4.1 invariants, after a refresh has settled: the owned
+    maps agree, the detached set is a subset of the owned items, the
+    tree's children are exactly the visible owned items, the order
+    list holds the visible keys in tree order, and the selection and
+    the tint agree on visible items only. Only valid on fixtures with
+    no colliding songs, where one key maps to one item."""
+    test.assertEqual(set(table._tree_item_rows),
+                     set(table._tree_item_display))
+    test.assertTrue(table._tree_item_detached
+                    <= set(table._tree_item_rows))
+    test.assertEqual(set(tree.get_children()),
+                     set(table._tree_item_rows) - table._tree_item_detached)
+    test.assertEqual(table._tree_item_order,
+                     [table_module._chart_key(row)
+                      for row in tree.shown_rows(table)])
+    test.assertTrue(set(tree.selection()) <= set(tree.get_children()))
+    test.assertEqual(table._tree_tint.items, set(tree.selection()))
+
+
+class DetachFakeTests(unittest.TestCase):
+    """The FakeTreeview models detach and reattach the way the real
+    Treeview does (Proposal 0021, §6): detach removes the item from
+    display but keeps it addressable, move reattaches it, and index()
+    of a detached item is a misleading 0."""
+
+    def test_detach_keeps_values_tags_and_addressability(self):
+        tree = FakeTreeview()
+        item = tree.insert("", "end", values=("a",), tags=("diff_Hard",))
+        tree.detach(item)
+        self.assertEqual(tree.get_children(), ())
+        self.assertTrue(tree.exists(item))
+        self.assertEqual(tree.item(item, "values"), ("a",))
+        self.assertEqual(tree.item(item, "tags"), ("diff_Hard",))
+
+    def test_detach_drops_the_item_from_the_selection(self):
+        tree = FakeTreeview()
+        item = tree.insert("", "end", values=("a",))
+        tree.selection_add(item)
+        tree.detach(item)
+        self.assertEqual(tree.selection(), ())
+        # The drop is permanent, not just hidden while detached:
+        # reattaching the item must not bring the selection back.
+        tree.move(item, "", 0)
+        self.assertEqual(tree.selection(), ())
+
+    def test_move_reattaches_a_detached_item(self):
+        tree = FakeTreeview()
+        first = tree.insert("", "end", values=("a",))
+        second = tree.insert("", "end", values=("b",))
+        tree.detach(first)
+        tree.move(first, "", 0)
+        self.assertEqual(tree.get_children(), (first, second))
+        tree.detach(first)
+        tree.move(first, "", "end")
+        self.assertEqual(tree.get_children(), (second, first))
+
+    def test_index_of_a_detached_item_is_zero(self):
+        tree = FakeTreeview()
+        first = tree.insert("", "end", values=("a",))
+        middle = tree.insert("", "end", values=("b",))
+        last = tree.insert("", "end", values=("c",))
+        tree.detach(middle)
+        self.assertEqual(tree.index(middle), 0)
+        self.assertEqual(tree.index(last), 1)
+
+    def test_set_children_reattaches_and_detaches(self):
+        tree = FakeTreeview()
+        first = tree.insert("", "end", values=("a",))
+        second = tree.insert("", "end", values=("b",))
+        tree.detach(first)
+        tree.set_children("", second, first)
+        self.assertEqual(tree.get_children(), (second, first))
+        tree.set_children("", first)
+        self.assertEqual(tree.get_children(), (first,))
+        self.assertTrue(tree.exists(second))
+        self.assertEqual(tree.index(second), 0)
+
+    def test_focus_setter_getter_and_delete_clearing(self):
+        tree = FakeTreeview()
+        first = tree.insert("", "end", values=("a",))
+        second = tree.insert("", "end", values=("b",))
+        self.assertEqual(tree.focus(), "")
+        tree.focus(first)
+        self.assertEqual(tree.focus(), first)
+        tree.delete(first)
+        self.assertEqual(tree.focus(), "")
+
+
+class DetachDifferentialTests(unittest.TestCase):
+    """A filter toggle round trip detaches and reattaches the same
+    items (Proposal 0021, §6): same item ids, same order, same
+    values and tags — no insert runs on the widen."""
+
+    def test_filter_toggle_round_trip_keeps_identity_order_and_values(self):
+        rows = detach_spec_rows(6, easy_indices={1, 3, 5})
+        table, tree = load_detach_table(rows)
+        before_items = list(tree._order)
+        before_values = tree.shown_values()
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        self.assertEqual(tree.shown_rows(table),
+                         [rows[1], rows[3], rows[5]])
+        self.assertEqual(table._tree_item_detached,
+                         {before_items[0], before_items[2],
+                          before_items[4]})
+        inserts = len(tree.insert_calls)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("All difficulties")
+
+        self.assertEqual(tree._order, before_items)
+        self.assertEqual(tree.shown_values(), before_values)
+        self.assertEqual(table._tree_item_detached, set())
+        self.assertEqual(len(tree.insert_calls), inserts)
+        assert_detach_invariants(self, table, tree)
+
+    def test_changed_filter_value_in_between(self):
+        rows = detach_spec_rows(6, easy_indices={1, 3, 5})
+        table, tree = load_detach_table(rows)
+        before_items = list(tree._order)
+        inserts = len(tree.insert_calls)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Hard")
+        self.assertEqual(tree.shown_rows(table),
+                         [rows[0], rows[2], rows[4]])
+        self.assertEqual(table._tree_item_detached,
+                         {before_items[1], before_items[3],
+                          before_items[5]})
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("All difficulties")
+
+        self.assertEqual(tree._order, before_items)
+        self.assertEqual(table._tree_item_detached, set())
+        self.assertEqual(len(tree.insert_calls), inserts)
+        assert_detach_invariants(self, table, tree)
+
+
+class DetachDeleteVsDetachTests(unittest.TestCase):
+    """A load dropping a song deletes its items from every map, while
+    a filter hiding the same song detaches them (Proposal 0021, §6):
+    the hidden rows stay owned and reattachable."""
+
+    def test_load_dropping_a_song_deletes_its_items_everywhere(self):
+        rows = detach_spec_rows(3)
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.set_rows(rows[:2])
+
+        self.assertEqual(tree.shown_rows(table), rows[:2])
+        self.assertEqual(tree._order, before[:2])
+        self.assertNotIn(before[2], tree._items)
+        self.assertNotIn(before[2], table._tree_item_rows)
+        self.assertNotIn(before[2], table._tree_item_display)
+        self.assertNotIn(before[2], table._tree_item_detached)
+        assert_detach_invariants(self, table, tree)
+
+    def test_filter_hiding_a_song_detaches_and_widen_reattaches(self):
+        rows = detach_spec_rows(3, easy_indices={1})
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+        inserts = len(tree.insert_calls)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        self.assertEqual(tree.shown_rows(table), [rows[1]])
+        self.assertIn(before[0], tree._items)
+        self.assertIn(before[2], tree._items)
+        self.assertEqual(table._tree_item_detached,
+                         {before[0], before[2]})
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("All difficulties")
+
+        self.assertEqual(tree._order, before)
+        self.assertEqual(len(tree.insert_calls), inserts)
+        assert_detach_invariants(self, table, tree)
+
+    def test_true_deletion_removes_the_iid_from_every_structure(self):
+        rows = detach_spec_rows(3, easy_indices={1})
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+        # Select the row that is about to be deleted, so its tint
+        # entry is live too.
+        tree.selection_add(before[2])
+        table._tree_tint.note_selected(before[2])
+        tree.focus(before[2])
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.set_rows(rows[:2])
+
+        self.assertNotIn(before[2], tree._items)
+        self.assertNotIn(before[2], table._tree_item_rows)
+        self.assertNotIn(before[2], table._tree_item_display)
+        self.assertNotIn(before[2], table._tree_item_detached)
+        self.assertNotIn(before[2], tree.selection())
+        self.assertNotIn(before[2], table._tree_tint.items)
+        self.assertNotEqual(tree.focus(), before[2])
+        assert_detach_invariants(self, table, tree)
+
+class DetachSelectionTests(unittest.TestCase):
+    """Selection and tint around detach (Proposal 0021, §6): a
+    detached selected row leaves the selection and the tint, and
+    returns unselected; a visible row keeps its selection across a
+    preserve-selection refresh; a colliding song re-inserts fresh
+    across the round trip."""
+
+    def test_detached_selected_row_leaves_selection_and_tint(self):
+        rows = detach_spec_rows(3, easy_indices={1})
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+        tree.selection_add(before[0])
+        table._tree_tint.on_select()
+        self.assertIn(row_tints.SELECTED_ROW_TAG,
+                      tree.item(before[0], "tags"))
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+
+        self.assertEqual(tree.selection(), ())
+        self.assertEqual(table._tree_tint.items, set())
+        # forget() takes the white tag off while the iid is still
+        # addressable: the reset at the end of the refresh only
+        # replaces the tracked set, it never touches a tag — so
+        # without the forget the tag would survive on the detached
+        # item and come back with it on the widen.
+        self.assertNotIn(row_tints.SELECTED_ROW_TAG,
+                         tree.item(before[0], "tags"))
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("All difficulties")
+
+        # The same item id comes back, but unselected: the selection
+        # was dropped at detach, not remembered — and the white tag
+        # does not come back with it.
+        self.assertEqual(tree._order, before)
+        self.assertEqual(tree.selection(), ())
+        self.assertEqual(table._tree_tint.items, set())
+        self.assertNotIn(row_tints.SELECTED_ROW_TAG,
+                         tree.item(before[0], "tags"))
+        assert_detach_invariants(self, table, tree)
+
+    def test_visible_row_keeps_selection_across_a_sync(self):
+        rows = detach_spec_rows(3, easy_indices={1})
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+        tree.selection_add(before[1])
+        table._tree_tint.note_selected(before[1])
+
+        instance = object.__new__(app.LibraryApp)
+        instance._table = table
+        instance._filter = table._filter
+        instance.course_builder = None
+        _, changed = merge_scores(
+            rows, {(f"p{i:03d}/1", "dance-single", "hard"): {
+                "Grade": "AAA", "Score": "9,876,543", "Best%": "99.00"}
+                   for i in range(3)})
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            instance._on_library_changed(rows, preserve_selection=True,
+                                         changed_keys=changed)
+
+        self.assertEqual(tree.selection(), (before[1],))
+        self.assertEqual(table._tree_tint.items, {before[1]})
+        assert_detach_invariants(self, table, tree)
+
+    def test_colliding_song_reinserts_fresh_across_the_round_trip(self):
+        rows = diff_rows(("A/1", "dance-single", "Hard", ""),
+                         ("A/1", "dance-single", "Hard", ""),
+                         ("B/2", "dance-single", "Easy", ""))
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+        inserts = len(tree.insert_calls)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        # The colliding song's rows are gone from the tree entirely
+        # (deleted as a block, D8), not detached — and the survivor
+        # is visible, so nothing is detached at all.
+        self.assertEqual(tree.shown_rows(table), [rows[2]])
+        self.assertNotIn(before[0], tree._items)
+        self.assertNotIn(before[1], tree._items)
+        self.assertEqual(table._tree_item_detached, set())
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("All difficulties")
+
+        # The colliding song comes back as fresh items; the survivor
+        # keeps its item id.
+        after = list(tree._order)
+        self.assertNotEqual(after[0], before[0])
+        self.assertNotEqual(after[1], before[1])
+        self.assertEqual(after[2], before[2])
+        self.assertEqual(len(tree.insert_calls), inserts + 2)
+        assert_detach_invariants(self, table, tree)
+
+
+class DetachFocusTests(unittest.TestCase):
+    """Focus around detach (Proposal 0021, §6): detaching the
+    focused row relocates focus and Enter opens nothing; the row is
+    openable again once reattached."""
+
+    def test_detaching_the_focused_row_relocates_focus(self):
+        rows = detach_spec_rows(3, easy_indices={1})
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+        tree.focus(before[0])
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        # Focus moves to the first visible row, not to the detached
+        # one — and Enter on that visible row opens it, which the
+        # openable-again test below covers.
+        self.assertNotEqual(tree.focus(), before[0])
+        self.assertEqual(tree.focus(), before[1])
+
+    def test_row_is_openable_again_once_reattached(self):
+        rows = detach_spec_rows(3, easy_indices={1})
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+        tree.focus(before[0])
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("All difficulties")
+        tree.focus(before[0])
+        open_row = Mock()
+        table._on_open_row = open_row
+        table._invoke_open_row()
+        open_row.assert_called_once_with(rows[0])
+
+    def test_focus_on_a_detached_item_opens_nothing(self):
+        rows = detach_spec_rows(3, easy_indices={1})
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        # The focus gate: even if a stale focus lands on a detached
+        # item, Enter must not open it.
+        tree.focus(before[0])
+        open_row = Mock()
+        table._on_open_row = open_row
+        table._invoke_open_row()
+        open_row.assert_not_called()
+
+
+class DetachOnlyDetachedTests(unittest.TestCase):
+    """A filter hiding every row takes the diff path, not the full
+    insert (Proposal 0021, §6): the detached set holds all owned
+    items, and the widen reattaches the same ones."""
+
+    def test_filter_hiding_every_row_detaches_all_of_them(self):
+        rows = detach_spec_rows(4, easy_indices={0, 1})
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+        inserts = len(tree.insert_calls)
+        tree.focus(before[0])
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Challenge")
+        self.assertEqual(tree.shown_rows(table), [])
+        self.assertEqual(tree.get_children(), ())
+        self.assertEqual(table._tree_item_detached, set(before))
+        self.assertEqual(len(table._tree_item_rows), 4)
+        table.count_label.set.assert_called_with("0 charts shown · 4 total")
+        # No visible row is left to focus, so focus is empty and
+        # Enter opens nothing.
+        self.assertEqual(tree.focus(), "")
+        open_row = Mock()
+        table._on_open_row = open_row
+        table._invoke_open_row()
+        open_row.assert_not_called()
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("All difficulties")
+
+        self.assertEqual(tree._order, before)
+        self.assertEqual(table._tree_item_detached, set())
+        self.assertEqual(len(tree.insert_calls), inserts)
+        assert_detach_invariants(self, table, tree)
+
+class DetachSyncLoadTests(unittest.TestCase):
+    """Scores change under detached rows (Proposal 0021, §6): a sync
+    while rows are hidden shows the new scores on widen, and a load
+    while rows are hidden reattaches the survivors with fresh row
+    bindings while the gone songs are deleted."""
+
+    def test_sync_while_detached_shows_new_scores_on_widen(self):
+        rows = detach_spec_rows(4, easy_indices={2, 3})
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        instance = object.__new__(app.LibraryApp)
+        instance._table = table
+        instance._filter = table._filter
+        instance.course_builder = None
+        _, changed = merge_scores(
+            rows, {("p000/1", "dance-single", "hard"): {
+                       "Grade": "AA", "Score": "5,555,555",
+                       "Best%": "97.50"},
+                   ("p002/1", "dance-single", "easy"): {
+                       "Grade": "AAA", "Score": "9,999,999",
+                       "Best%": "99.90"}})
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            instance._on_library_changed(rows, preserve_selection=True,
+                                         changed_keys=changed)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("All difficulties")
+
+        self.assertEqual(tree._order, before)
+        shown = tree.shown_values()
+        self.assertEqual(shown[0][HEADERS.index("Grade")],
+                         "AA")
+        self.assertEqual(shown[2][HEADERS.index("Grade")],
+                         "AAA")
+        assert_detach_invariants(self, table, tree)
+
+    def test_load_while_detached_reattaches_survivors_with_fresh_bindings(self):
+        rows = detach_spec_rows(4, easy_indices={2, 3})
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        # A fresh load: P01 is gone, the survivors are fresh dicts
+        # with a changed Meter on P00.
+        fresh = [dict(rows[0], Meter=12), rows[2], rows[3]]
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.set_rows(fresh)
+
+        # P01's item is deleted outright — it is not in the new
+        # library. P00 stays detached (still hidden) but is rebound.
+        self.assertNotIn(before[1], tree._items)
+        self.assertNotIn(before[1], table._tree_item_rows)
+        self.assertEqual(table._tree_item_rows[before[0]], fresh[0])
+        self.assertIs(table._tree_item_rows[before[0]], fresh[0])
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("All difficulties")
+
+        self.assertEqual(tree._order, [before[0], before[2], before[3]])
+        self.assertIs(table._tree_item_rows[before[0]], fresh[0])
+        shown = tree.shown_values()
+        self.assertEqual(shown[0][HEADERS.index("Meter")], 12)
+        assert_detach_invariants(self, table, tree)
+
+    def test_reattach_writes_only_on_a_difference(self):
+        rows = detach_spec_rows(3, easy_indices={1})
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        writes = []
+        real_item = tree.item
+
+        def counting_item(item, option=None, **kwargs):
+            if kwargs:
+                writes.append(item)
+            return real_item(item, option, **kwargs)
+
+        with patch.object(tree, "item", counting_item), patch.object(
+                table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("All difficulties")
+        self.assertEqual(writes, [])
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        rows[0]["Grade"] = "AA"
+        writes.clear()
+        with patch.object(tree, "item", counting_item), patch.object(
+                table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("All difficulties")
+        self.assertEqual(writes, [before[0]])
+        shown = tree.shown_values()
+        self.assertEqual(shown[0][HEADERS.index("Grade")],
+                         "AA")
+        assert_detach_invariants(self, table, tree)
+
+    def test_reattach_rebinds_a_stale_stored_binding(self):
+        # Revision 3: the walk rebinds the item to the row at its
+        # position when it recomputes the tuple. The §4.2 build runs
+        # before the detach arm and rebinds only items already
+        # detached, so an item detached by a load keeps its old row
+        # dict — plant that stale binding here and assert the reattach
+        # refreshes it to the current row, so the open path reads the
+        # row the item is showing, not the one it showed before.
+        rows = detach_spec_rows(3, easy_indices={1})
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        table._tree_item_rows[before[0]] = dict(rows[0], Meter=99)
+
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("All difficulties")
+
+        self.assertIs(table._tree_item_rows[before[0]], rows[0])
+        shown = tree.shown_values()
+        self.assertEqual(shown[0][HEADERS.index("Meter")], 10)
+        assert_detach_invariants(self, table, tree)
+
+
+class DetachCancellationTests(unittest.TestCase):
+    """A large restore cancelled mid-walk by a superseding refresh
+    leaves a consistent state (Proposal 0021, §6): under the deferred
+    arm the tree's children, the order list and the detached set are
+    unchanged by the stale continuation, and under the fallback arm no
+    item is attached-while-detached or detached-while-in-visible-order."""
+
+    @staticmethod
+    def make_cancel_table(deferred):
+        # P00–P49 Hard, P50–P59 Easy: the widen's first position is a
+        # reattach, so a zero budget stops after one reattached item.
+        rows = detach_spec_rows(60, easy_indices=set(range(50, 60)))
+        table, tree = load_detach_table(rows)
+        table._reattach_deferred = deferred
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        return table, tree, rows
+
+    def _cancel_and_supersede(self, deferred):
+        table, tree, rows = self.make_cancel_table(deferred)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 0):
+            table._filter.diff_var.set("All difficulties")
+        # The widen stopped after one reattach and scheduled a
+        # continuation; a superseding refresh narrows to Hard instead
+        # of finishing the widen. The stale continuation is for the
+        # all-difficulties list, so if it ran it would put the Easy
+        # rows back — the generation guard is what stops it.
+        continuation = table._parent.after.call_args.args[1]
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Hard")
+        children = list(tree.get_children())
+        order = list(table._tree_item_order)
+        detached = set(table._tree_item_detached)
+        continuation()
+        return table, tree, rows, children, order, detached
+
+    def test_cancelled_deferred_restore_leaves_state_unchanged(self):
+        table, tree, rows, children, order, detached = \
+            self._cancel_and_supersede(deferred=True)
+        self.assertEqual(tree.shown_rows(table), rows[:50])
+        self.assertEqual(len(detached), 10)
+        self.assertEqual(list(tree.get_children()), children)
+        self.assertEqual(table._tree_item_order, order)
+        self.assertEqual(table._tree_item_detached, detached)
+        assert_detach_invariants(self, table, tree)
+
+    def test_cancelled_fallback_restore_keeps_no_half_attached_item(self):
+        table, tree, rows, children, order, detached = \
+            self._cancel_and_supersede(deferred=False)
+        self.assertEqual(tree.shown_rows(table), rows[:50])
+        self.assertEqual(len(detached), 10)
+        self.assertEqual(list(tree.get_children()), children)
+        self.assertEqual(table._tree_item_order, order)
+        self.assertEqual(table._tree_item_detached, detached)
+        for item in tree.get_children():
+            self.assertNotIn(item, table._tree_item_detached)
+        for item in table._tree_item_detached:
+            self.assertNotIn(item, tree.get_children())
+            key = table_module._chart_key(table._tree_item_rows[item])
+            self.assertNotIn(key, table._tree_item_order)
+        assert_detach_invariants(self, table, tree)
+
+class DetachTriggerTests(unittest.TestCase):
+    """The large-restore trigger (Proposal 0021, §6): a widen past
+    the placement threshold takes one set_children, the deferred arm
+    makes no per-item move, the fallback arm moves to "end" only, and
+    a small restore moves to index with no set_children — in both the
+    interleaved case and the tail case."""
+
+    @staticmethod
+    def widen_and_count(table, tree):
+        """Widen from Easy to all difficulties and return the call
+        deltas the walk made."""
+        before = (len(tree.set_children_calls), len(tree.move_calls),
+                  len(tree.index_calls), len(tree.insert_calls))
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("All difficulties")
+        after = (len(tree.set_children_calls), len(tree.move_calls),
+                 len(tree.index_calls), len(tree.insert_calls))
+        return tuple(b - a for a, b in zip(before, after))
+
+    def test_interleaved_widen_deferred(self):
+        rows = detach_spec_rows(120, easy_indices=set(range(1, 120, 2)))
+        table, tree = load_detach_table(rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        tree.set_children_calls.clear()
+        tree.move_calls.clear()
+        tree.index_calls.clear()
+        tree.insert_calls.clear()
+
+        set_children, moves, index_reads, inserts = \
+            self.widen_and_count(table, tree)
+        self.assertEqual((set_children, moves, index_reads, inserts),
+                         (1, 0, 0, 0))
+        self.assertEqual(tree.shown_rows(table), rows)
+        assert_detach_invariants(self, table, tree)
+
+    def test_tail_widen_deferred(self):
+        rows = detach_spec_rows(110, easy_indices=set(range(10)))
+        table, tree = load_detach_table(rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+
+        set_children, moves, index_reads, inserts = \
+            self.widen_and_count(table, tree)
+        self.assertEqual((set_children, moves, index_reads, inserts),
+                         (1, 0, 0, 0))
+        self.assertEqual(tree.shown_rows(table), rows)
+        assert_detach_invariants(self, table, tree)
+
+    def test_interleaved_widen_fallback(self):
+        rows = detach_spec_rows(120, easy_indices=set(range(1, 120, 2)))
+        table, tree = load_detach_table(rows)
+        table._reattach_deferred = False
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        moves_before = len(tree.move_calls)
+
+        set_children, moves, index_reads, inserts = \
+            self.widen_and_count(table, tree)
+        self.assertEqual((set_children, index_reads, inserts), (1, 0, 0))
+        self.assertEqual(moves, 60)
+        self.assertTrue(all(index == "end" for _, index in
+                            tree.move_calls[moves_before:]))
+        self.assertEqual(tree.shown_rows(table), rows)
+        assert_detach_invariants(self, table, tree)
+
+    def test_tail_widen_fallback(self):
+        rows = detach_spec_rows(110, easy_indices=set(range(10)))
+        table, tree = load_detach_table(rows)
+        table._reattach_deferred = False
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        moves_before = len(tree.move_calls)
+
+        set_children, moves, index_reads, inserts = \
+            self.widen_and_count(table, tree)
+        self.assertEqual((set_children, index_reads, inserts), (1, 0, 0))
+        self.assertEqual(moves, 100)
+        self.assertTrue(all(index == "end" for _, index in
+                            tree.move_calls[moves_before:]))
+        self.assertEqual(tree.shown_rows(table), rows)
+        assert_detach_invariants(self, table, tree)
+
+    def test_small_restore_moves_to_index_without_set_children(self):
+        rows = detach_spec_rows(3, easy_indices={1})
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        moves_before = len(tree.move_calls)
+
+        set_children, moves, index_reads, inserts = \
+            self.widen_and_count(table, tree)
+        self.assertEqual((set_children, index_reads, inserts), (0, 0, 0))
+        self.assertEqual(moves, 2)
+        self.assertEqual(tree.move_calls[moves_before:],
+                         [(before[0], 0), (before[2], 2)])
+        self.assertEqual(tree._order, before)
+        assert_detach_invariants(self, table, tree)
+
+
+class DetachResetTests(unittest.TestCase):
+    """The driver's reset (Proposal 0021, §4.4): reset_table_state
+    empties the owned maps, the detached set, the tree and the tint
+    after detaches, so the next trial starts from a clean table."""
+
+    def test_reset_table_state_empties_everything_after_detaches(self):
+        rows = detach_spec_rows(4, easy_indices={1, 3})
+        table, tree = load_detach_table(rows)
+        before = list(tree._order)
+        tree.selection_add(before[1])
+        table._tree_tint.note_selected(before[1])
+        tree.focus(before[1])
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+
+        table.reset_table_state()
+
+        self.assertEqual(tree.get_children(), ())
+        self.assertEqual(tree._items, {})
+        self.assertEqual(table._tree_item_rows, {})
+        self.assertEqual(table._tree_item_order, [])
+        self.assertEqual(table._tree_item_display, {})
+        self.assertEqual(table._tree_item_detached, set())
+        self.assertEqual(table._tree_tint.items, set())
+        self.assertEqual(tree.focus(), "")
+        self.assertEqual(tree.selection(), ())
+
+
+class DetachCountLabelTests(unittest.TestCase):
+    """The count label on a large restore (Proposal 0021, §6): the
+    walk shows "Loading…" while it runs and settles on the final
+    count, and an unchanged refresh shows none."""
+
+    def test_large_restore_shows_loading_then_settles(self):
+        rows = detach_spec_rows(110, easy_indices=set(range(10)))
+        table, tree = load_detach_table(rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        table.count_label.set.reset_mock()
+        # A zero budget stops after the first position, so the
+        # "Loading…" label is visible mid-walk.
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 0):
+            table._filter.diff_var.set("All difficulties")
+        table.count_label.set.assert_called_with("Loading 1 of 110 charts…")
+        continuation = table._parent.after.call_args.args[1]
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            continuation()
+        table.count_label.set.assert_called_with(
+            "110 charts shown · 110 total")
+        assert_detach_invariants(self, table, tree)

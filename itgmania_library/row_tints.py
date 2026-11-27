@@ -71,6 +71,23 @@ class SelectedRowTint:
         """Record a row that was inserted already carrying the white tag."""
         self.items.add(item)
 
+    def forget(self, item):
+        """Drop a row from the tracking and take its white tag off.
+
+        Called when a row leaves the table without a selection event
+        (Proposal 0021, D4): detaching a selected row fires no
+        <<TreeviewSelect>> event, so on_select never runs for it — and
+        the item stays addressable, so the stale tag would survive
+        until it is reattached. A deleted row needs no forget: the
+        tree drops its tags with it, and the next reset replaces the
+        tracked set.
+        """
+        if item not in self.items:
+            return
+        self.items.discard(item)
+        if self._tree is not None and self._tree.exists(item):
+            self._set(item, False)
+
     def reset(self, items=()):
         """Replace the tracked rows, e.g. after a refresh rebuilt the tree."""
         self.items = set(items)
