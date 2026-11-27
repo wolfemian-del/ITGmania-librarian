@@ -110,14 +110,30 @@ class SelectedRowTintTests(unittest.TestCase):
         self.assertEqual(store["1"], ("diff_Hard",))
         self.assertEqual(tint.items, set())
 
-    def test_forget_of_an_untracked_row_is_a_no_op(self):
+    def test_forget_of_an_untracked_row_without_the_tag_changes_nothing(self):
+        # PR #283 Revision 1: forget() now reads the item's tags to
+        # check for a stale white tag, so tree.item is called — but
+        # nothing changes: no tag is written and the tracking is empty.
         tint, tree, store = self._tint_with_store()
 
         tint.forget("0")
 
         self.assertEqual(store["0"], ("diff_Hard",))
         self.assertEqual(tint.items, set())
-        tree.item.assert_not_called()
+
+    def test_forget_of_an_untracked_row_with_the_tag_clears_it(self):
+        # PR #283 Revision 1 (Claude's fuzz finding): a row selected
+        # while a refresh walk is still running is dropped from the
+        # tracking by the walk's final reset, so by detach time the
+        # tracker has already lost it — forget() must still take its
+        # white tag off, or the row comes back white while unselected.
+        tint, tree, store = self._tint_with_store()
+        store["0"] = ("diff_Hard", row_tints.SELECTED_ROW_TAG)
+
+        tint.forget("0")
+
+        self.assertEqual(store["0"], ("diff_Hard",))
+        self.assertEqual(tint.items, set())
 
     def test_forget_of_a_removed_row_drops_the_tracking_only(self):
         tint, tree, _store = self._tint_with_store()

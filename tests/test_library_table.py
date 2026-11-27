@@ -211,8 +211,14 @@ class FakeTreeview:
     def set_children(self, parent, *items):
         """Reorder the level in one call, like the real Treeview: items
         omitted from the list are detached, not destroyed, so they keep
-        their values, tags and selection state."""
+        their values and tags — but detachment drops their selection,
+        as the probe establishes, so an omitted item that was selected
+        does not come back selected if a later set_children reattaches
+        it (CoPilot review, PR #283 Revision 1)."""
         self.set_children_calls.append(tuple(items))
+        for item in self._order:
+            if item not in items:
+                self._selection.discard(item)
         self._order = list(items)
 
     def index(self, item):
@@ -2206,6 +2212,20 @@ class DetachFakeTests(unittest.TestCase):
         self.assertTrue(tree.exists(second))
         self.assertEqual(tree.index(second), 0)
 
+    def test_set_children_omission_drops_selection_permanently(self):
+        # CoPilot review, PR #283 Revision 1: omitting an item from
+        # set_children detaches it in real Tk, and detachment drops
+        # its selection — so a later set_children that reattaches it
+        # must not bring the selection back.
+        tree = FakeTreeview()
+        first = tree.insert("", "end", values=("a",))
+        second = tree.insert("", "end", values=("b",))
+        tree.selection_add(second)
+        tree.set_children("", first)
+        self.assertEqual(tree.selection(), ())
+        tree.set_children("", first, second)
+        self.assertEqual(tree.selection(), ())
+
     def test_focus_setter_getter_and_delete_clearing(self):
         tree = FakeTreeview()
         first = tree.insert("", "end", values=("a",))
@@ -2373,6 +2393,54 @@ class DetachSelectionTests(unittest.TestCase):
                          tree.item(before[0], "tags"))
         assert_detach_invariants(self, table, tree)
 
+    def test_row_selected_mid_walk_comes_back_untagged(self):
+        # PR #283 Revision 1 (Claude's fuzz finding, verified by
+        # Muse): a row selected while a refresh walk is still running
+        # is dropped from the tint tracking by the walk's final reset,
+        # so by the time a later refresh detaches it, forget() used to
+        # early-return and leave its white tag on — and the reattach's
+        # compare-then-write saw no difference, so the row came back
+        # white while unselected.
+        rows = detach_spec_rows(60, easy_indices=set(range(50, 60)))
+        table, tree = load_detach_table(rows)
+        victim = next(item for item, row in table._tree_item_rows.items()
+                      if row is rows[10])
+        # Narrow to Hard with a zero budget: the walk places one item
+        # and schedules a continuation — the walk is now in flight.
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 0):
+            table._filter.diff_var.set("Hard")
+        continuation = table._parent.after.call_args.args[1]
+        # Select the victim mid-walk, the way a user click would (real
+        # Tk fires <<TreeviewSelect>>; the fake has no event dispatch,
+        # so drive on_select directly).
+        tree.selection_add(victim)
+        table._tree_tint.on_select()
+        self.assertIn(row_tints.SELECTED_ROW_TAG,
+                      tree.item(victim, "tags"))
+        # Run the continuation: the walk finishes and resets the tint
+        # tracking to the selection as it was when the refresh started,
+        # so the tracker loses the victim while the tag stays.
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            continuation()
+        self.assertNotIn(victim, table._tree_tint.items)
+        self.assertIn(row_tints.SELECTED_ROW_TAG,
+                      tree.item(victim, "tags"))
+        # Narrow to Easy: the victim is detached. forget() must take
+        # the tag off even though the tracker no longer knows it.
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+        self.assertIn(victim, table._tree_item_detached)
+        self.assertNotIn(row_tints.SELECTED_ROW_TAG,
+                         tree.item(victim, "tags"))
+        # Widen to All: the victim comes back unselected and untagged.
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("All difficulties")
+        self.assertIn(victim, tree.get_children())
+        self.assertNotIn(victim, tree.selection())
+        self.assertNotIn(row_tints.SELECTED_ROW_TAG,
+                         tree.item(victim, "tags"))
+        assert_detach_invariants(self, table, tree)
+
     def test_visible_row_keeps_selection_across_a_sync(self):
         rows = detach_spec_rows(3, easy_indices={1})
         table, tree = load_detach_table(rows)
@@ -2423,6 +2491,38 @@ class DetachSelectionTests(unittest.TestCase):
         self.assertNotEqual(after[1], before[1])
         self.assertEqual(after[2], before[2])
         self.assertEqual(len(tree.insert_calls), inserts + 2)
+        assert_detach_invariants(self, table, tree)
+
+    def test_narrow_splitting_duplicate_keys_deletes_the_block(self):
+        # ChatGPT-6's detached-duplicate sequence (PR #283 review):
+        # two rows share a chart key but differ in Meter, so a Meter
+        # search shows one and hides the other. The tree-side
+        # collision scan sees the key twice among attached items, so
+        # the song collides and both rows are deleted as a block — the
+        # hidden one is deleted, not detached, so no detached duplicate
+        # survives for a later load to resurrect.
+        rows = diff_rows(("A/1", "dance-single", "Edit", "Same"),
+                         ("A/1", "dance-single", "Edit", "Same"),
+                         ("B/2", "dance-single", "Hard", ""))
+        rows[0]["Meter"] = 10
+        rows[1]["Meter"] = 12
+        table, tree = load_detach_table(rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.search_var.set("meter:10")
+            table.refresh_table()
+        self.assertEqual(tree.shown_rows(table), [rows[0], rows[2]])
+        self.assertEqual(len(table._tree_item_rows), 2)
+        self.assertEqual(len(tree.get_children()), 2)
+        self.assertEqual(table._tree_item_detached, set())
+        self.assertNotIn(rows[1], table._tree_item_rows.values())
+        # A later load with only one of the two rows stays clean.
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.set_rows([dict(rows[0]), rows[2]])
+        self.assertEqual([(r["Title"], r["Meter"])
+                         for r in tree.shown_rows(table)],
+                         [("1", 10), ("2", 10)])
+        self.assertEqual(len(table._tree_item_rows), 2)
+        self.assertEqual(table._tree_item_detached, set())
         assert_detach_invariants(self, table, tree)
 
 
@@ -2644,9 +2744,13 @@ class DetachCancellationTests(unittest.TestCase):
 
     @staticmethod
     def make_cancel_table(deferred):
-        # P00–P49 Hard, P50–P59 Easy: the widen's first position is a
-        # reattach, so a zero budget stops after one reattached item.
-        rows = detach_spec_rows(60, easy_indices=set(range(50, 60)))
+        # P00–P50 Hard, P51–P60 Easy: the widen restores 51 detached
+        # rows, so the trigger (strictly greater than 50) takes the
+        # large arm — the old 60-row fixture restored exactly 50 and
+        # took the small per-index path under both arms (ChatGPT-6,
+        # PR #283 review). The widen's first position is a reattach,
+        # so a zero budget stops after one reattached item.
+        rows = detach_spec_rows(61, easy_indices=set(range(51, 61)))
         table, tree = load_detach_table(rows)
         table._reattach_deferred = deferred
         with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
@@ -2655,6 +2759,8 @@ class DetachCancellationTests(unittest.TestCase):
 
     def _cancel_and_supersede(self, deferred):
         table, tree, rows = self.make_cancel_table(deferred)
+        moves_before = len(tree.move_calls)
+        set_children_before = len(tree.set_children_calls)
         with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 0):
             table._filter.diff_var.set("All difficulties")
         # The widen stopped after one reattach and scheduled a
@@ -2662,6 +2768,10 @@ class DetachCancellationTests(unittest.TestCase):
         # of finishing the widen. The stale continuation is for the
         # all-difficulties list, so if it ran it would put the Easy
         # rows back — the generation guard is what stops it.
+        widen_moves = tree.move_calls[moves_before:]
+        widen_set_children = tree.set_children_calls[set_children_before:]
+        first_item = next(item for item, row in
+                          table._tree_item_rows.items() if row is rows[0])
         continuation = table._parent.after.call_args.args[1]
         with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
             table._filter.diff_var.set("Hard")
@@ -2669,12 +2779,18 @@ class DetachCancellationTests(unittest.TestCase):
         order = list(table._tree_item_order)
         detached = set(table._tree_item_detached)
         continuation()
-        return table, tree, rows, children, order, detached
+        return (table, tree, rows, children, order, detached,
+                widen_moves, widen_set_children, first_item)
 
     def test_cancelled_deferred_restore_leaves_state_unchanged(self):
-        table, tree, rows, children, order, detached = \
+        (table, tree, rows, children, order, detached, widen_moves,
+         widen_set_children, _first_item) = \
             self._cancel_and_supersede(deferred=True)
-        self.assertEqual(tree.shown_rows(table), rows[:50])
+        # The one reattach the widen processed made no tree call: the
+        # deferred arm places it without touching the widget.
+        self.assertEqual(widen_moves, [])
+        self.assertEqual(widen_set_children, [])
+        self.assertEqual(tree.shown_rows(table), rows[:51])
         self.assertEqual(len(detached), 10)
         self.assertEqual(list(tree.get_children()), children)
         self.assertEqual(table._tree_item_order, order)
@@ -2682,9 +2798,14 @@ class DetachCancellationTests(unittest.TestCase):
         assert_detach_invariants(self, table, tree)
 
     def test_cancelled_fallback_restore_keeps_no_half_attached_item(self):
-        table, tree, rows, children, order, detached = \
+        (table, tree, rows, children, order, detached, widen_moves,
+         widen_set_children, first_item) = \
             self._cancel_and_supersede(deferred=False)
-        self.assertEqual(tree.shown_rows(table), rows[:50])
+        # The one reattach the widen processed moved to "end" in its
+        # own iteration, so it is attached and ordered together.
+        self.assertEqual(widen_moves, [(first_item, "end")])
+        self.assertEqual(widen_set_children, [])
+        self.assertEqual(tree.shown_rows(table), rows[:51])
         self.assertEqual(len(detached), 10)
         self.assertEqual(list(tree.get_children()), children)
         self.assertEqual(table._tree_item_order, order)
@@ -2795,6 +2916,37 @@ class DetachTriggerTests(unittest.TestCase):
         self.assertEqual(tree.move_calls[moves_before:],
                          [(before[0], 0), (before[2], 2)])
         self.assertEqual(tree._order, before)
+        assert_detach_invariants(self, table, tree)
+
+    def test_fifty_reattachments_take_the_small_path(self):
+        # The trigger is strictly greater than the threshold, so
+        # exactly 50 reattachments do not pass it: the walk moves each
+        # one to its index, with no set_children.
+        rows = detach_spec_rows(60, easy_indices=set(range(50, 60)))
+        table, tree = load_detach_table(rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+
+        set_children, moves, index_reads, inserts = \
+            self.widen_and_count(table, tree)
+        self.assertEqual((set_children, index_reads, inserts), (0, 0, 0))
+        self.assertEqual(moves, 50)
+        self.assertEqual(tree.shown_rows(table), rows)
+        assert_detach_invariants(self, table, tree)
+
+    def test_fifty_one_reattachments_take_the_large_path(self):
+        # One more reattachment passes the trigger, so the walk takes
+        # one set_children and no per-item move.
+        rows = detach_spec_rows(61, easy_indices=set(range(51, 61)))
+        table, tree = load_detach_table(rows)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.diff_var.set("Easy")
+
+        set_children, moves, index_reads, inserts = \
+            self.widen_and_count(table, tree)
+        self.assertEqual((set_children, moves, index_reads, inserts),
+                         (1, 0, 0, 0))
+        self.assertEqual(tree.shown_rows(table), rows)
         assert_detach_invariants(self, table, tree)
 
 

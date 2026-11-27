@@ -289,13 +289,17 @@ def main():
     print(f"filter_rows: {filter_s:.2f} s")
     print(f"no-change refresh (filter + sorts + diff + panel push): {refresh_s:.2f} s")
 
-    # tree.delete of every item, timed on its own.
+    # The reset, timed on its own: it deletes every owned item — the
+    # same tree.delete the old timed delete did — and clears the saved
+    # maps together, so the full inserts below start from a clean
+    # reset instead of deleting the same ids twice (Greptile P1,
+    # PR #283 Revision 1).
     start = time.perf_counter()
-    table.tree.delete(*table.tree.get_children())
+    reset_table_state(table)
     delete_s = time.perf_counter() - start
-    print(f"tree.delete of {len(visible):,} items: {delete_s:.2f} s")
+    print(f"reset_table_state of {len(visible):,} items: {delete_s:.2f} s")
 
-    # The full insert at each budget (the tree is empty after the delete,
+    # The full insert at each budget (the tree is empty after the reset,
     # so each refresh streams in through _insert_batch).
     insert_total_12 = None
     for budget_ms in BUDGETS_MS:
