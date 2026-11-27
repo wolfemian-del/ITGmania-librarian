@@ -154,11 +154,10 @@ class FakeTreeview:
         self._focus = ""
         self._counter = 0
         # How the table reordered rows: a test reads these to pin the
-        # move arm (per-item moves for a small reorder, one set_children
+        # move arm (per-item moves to index for a small reorder, none
         # for a large one) and the insert arm (at-index for a small
         # placement, at "end" for a large one). move_calls records
-        # (item, index) so a test can pin that a fallback reattach moves
-        # to "end" only, never to an index.
+        # (item, index) so a test can pin where each move went.
         self.move_calls = []
         self.set_children_calls = []
         self.insert_calls = []
@@ -2734,31 +2733,65 @@ class DetachSyncLoadTests(unittest.TestCase):
         self.assertEqual(shown[0][HEADERS.index("Meter")], 10)
         assert_detach_invariants(self, table, tree)
 
+    def test_reattach_rebinds_after_a_load_detaches_the_row(self):
+        # PR #283 Revision 2 (Claude's finding 3, verified by Muse):
+        # the test above pins the rebind line but plants the stale
+        # binding by hand. This one walks the reachable path: a load
+        # un-scores half the rows, so they are detached by that load's
+        # own refresh — the §4.2 build runs before the detach loop,
+        # so they keep their old row dicts — and a plain filter edit
+        # shows them again. The walk must rebind each one to the row
+        # the library holds now, so the open path reads the fresh
+        # dict, not the one it showed before the load.
+        rows = detach_spec_rows(40)
+        for row in rows:
+            row["Grade"] = "AAA"
+        table, tree = load_detach_table(rows)
+        items_by_key = {table_module._chart_key(row): item
+                        for item, row in table._tree_item_rows.items()}
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.scored_var.set(True)
+        self.assertEqual(len(tree.get_children()), 40)
+        fresh = [dict(row) for row in rows]
+        for row in fresh[:20]:
+            row["Grade"] = ""
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.set_rows(fresh)
+        self.assertEqual(len(tree.get_children()), 20)
+        self.assertEqual(len(table._tree_item_detached), 20)
+        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
+            table._filter.scored_var.set(False)
+        self.assertEqual(len(tree.get_children()), 40)
+        for row in fresh[:20]:
+            item = items_by_key[table_module._chart_key(row)]
+            self.assertIs(table._tree_item_rows[item], row)
+        assert_detach_invariants(self, table, tree)
+
 
 class DetachCancellationTests(unittest.TestCase):
     """A large restore cancelled mid-walk by a superseding refresh
-    leaves a consistent state (Proposal 0021, §6): under the deferred
-    arm the tree's children, the order list and the detached set are
-    unchanged by the stale continuation, and under the fallback arm no
-    item is attached-while-detached or detached-while-in-visible-order."""
+    leaves a consistent state (Proposal 0021, §6): the tree's
+    children, the order list and the detached set are unchanged by
+    the stale continuation, because the reattach makes no tree call
+    per item and the subset discard lands only with the final
+    set_children, which a cancelled walk never reaches."""
 
     @staticmethod
-    def make_cancel_table(deferred):
+    def make_cancel_table():
         # P00–P50 Hard, P51–P60 Easy: the widen restores 51 detached
         # rows, so the trigger (strictly greater than 50) takes the
         # large arm — the old 60-row fixture restored exactly 50 and
-        # took the small per-index path under both arms (ChatGPT-6,
-        # PR #283 review). The widen's first position is a reattach,
-        # so a zero budget stops after one reattached item.
+        # took the small per-index path (ChatGPT-6, PR #283 review).
+        # The widen's first position is a reattach, so a zero budget
+        # stops after one reattached item.
         rows = detach_spec_rows(61, easy_indices=set(range(51, 61)))
         table, tree = load_detach_table(rows)
-        table._reattach_deferred = deferred
         with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
             table._filter.diff_var.set("Easy")
         return table, tree, rows
 
-    def _cancel_and_supersede(self, deferred):
-        table, tree, rows = self.make_cancel_table(deferred)
+    def _cancel_and_supersede(self):
+        table, tree, rows = self.make_cancel_table()
         moves_before = len(tree.move_calls)
         set_children_before = len(tree.set_children_calls)
         with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 0):
@@ -2782,10 +2815,10 @@ class DetachCancellationTests(unittest.TestCase):
         return (table, tree, rows, children, order, detached,
                 widen_moves, widen_set_children, first_item)
 
-    def test_cancelled_deferred_restore_leaves_state_unchanged(self):
+    def test_cancelled_large_restore_leaves_state_unchanged(self):
         (table, tree, rows, children, order, detached, widen_moves,
          widen_set_children, _first_item) = \
-            self._cancel_and_supersede(deferred=True)
+            self._cancel_and_supersede()
         # The one reattach the widen processed made no tree call: the
         # deferred arm places it without touching the widget.
         self.assertEqual(widen_moves, [])
@@ -2797,33 +2830,11 @@ class DetachCancellationTests(unittest.TestCase):
         self.assertEqual(table._tree_item_detached, detached)
         assert_detach_invariants(self, table, tree)
 
-    def test_cancelled_fallback_restore_keeps_no_half_attached_item(self):
-        (table, tree, rows, children, order, detached, widen_moves,
-         widen_set_children, first_item) = \
-            self._cancel_and_supersede(deferred=False)
-        # The one reattach the widen processed moved to "end" in its
-        # own iteration, so it is attached and ordered together.
-        self.assertEqual(widen_moves, [(first_item, "end")])
-        self.assertEqual(widen_set_children, [])
-        self.assertEqual(tree.shown_rows(table), rows[:51])
-        self.assertEqual(len(detached), 10)
-        self.assertEqual(list(tree.get_children()), children)
-        self.assertEqual(table._tree_item_order, order)
-        self.assertEqual(table._tree_item_detached, detached)
-        for item in tree.get_children():
-            self.assertNotIn(item, table._tree_item_detached)
-        for item in table._tree_item_detached:
-            self.assertNotIn(item, tree.get_children())
-            key = table_module._chart_key(table._tree_item_rows[item])
-            self.assertNotIn(key, table._tree_item_order)
-        assert_detach_invariants(self, table, tree)
-
 class DetachTriggerTests(unittest.TestCase):
     """The large-restore trigger (Proposal 0021, §6): a widen past
-    the placement threshold takes one set_children, the deferred arm
-    makes no per-item move, the fallback arm moves to "end" only, and
-    a small restore moves to index with no set_children — in both the
-    interleaved case and the tail case."""
+    the placement threshold takes one set_children with no per-item
+    move, and a small restore moves to index with no set_children —
+    in both the interleaved case and the tail case."""
 
     @staticmethod
     def widen_and_count(table, tree):
@@ -2837,7 +2848,7 @@ class DetachTriggerTests(unittest.TestCase):
                  len(tree.index_calls), len(tree.insert_calls))
         return tuple(b - a for a, b in zip(before, after))
 
-    def test_interleaved_widen_deferred(self):
+    def test_interleaved_widen(self):
         rows = detach_spec_rows(120, easy_indices=set(range(1, 120, 2)))
         table, tree = load_detach_table(rows)
         with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
@@ -2854,7 +2865,7 @@ class DetachTriggerTests(unittest.TestCase):
         self.assertEqual(tree.shown_rows(table), rows)
         assert_detach_invariants(self, table, tree)
 
-    def test_tail_widen_deferred(self):
+    def test_tail_widen(self):
         rows = detach_spec_rows(110, easy_indices=set(range(10)))
         table, tree = load_detach_table(rows)
         with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
@@ -2864,40 +2875,6 @@ class DetachTriggerTests(unittest.TestCase):
             self.widen_and_count(table, tree)
         self.assertEqual((set_children, moves, index_reads, inserts),
                          (1, 0, 0, 0))
-        self.assertEqual(tree.shown_rows(table), rows)
-        assert_detach_invariants(self, table, tree)
-
-    def test_interleaved_widen_fallback(self):
-        rows = detach_spec_rows(120, easy_indices=set(range(1, 120, 2)))
-        table, tree = load_detach_table(rows)
-        table._reattach_deferred = False
-        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
-            table._filter.diff_var.set("Easy")
-        moves_before = len(tree.move_calls)
-
-        set_children, moves, index_reads, inserts = \
-            self.widen_and_count(table, tree)
-        self.assertEqual((set_children, index_reads, inserts), (1, 0, 0))
-        self.assertEqual(moves, 60)
-        self.assertTrue(all(index == "end" for _, index in
-                            tree.move_calls[moves_before:]))
-        self.assertEqual(tree.shown_rows(table), rows)
-        assert_detach_invariants(self, table, tree)
-
-    def test_tail_widen_fallback(self):
-        rows = detach_spec_rows(110, easy_indices=set(range(10)))
-        table, tree = load_detach_table(rows)
-        table._reattach_deferred = False
-        with patch.object(table_module, "ROW_INSERT_BUDGET_SECONDS", 60):
-            table._filter.diff_var.set("Easy")
-        moves_before = len(tree.move_calls)
-
-        set_children, moves, index_reads, inserts = \
-            self.widen_and_count(table, tree)
-        self.assertEqual((set_children, index_reads, inserts), (1, 0, 0))
-        self.assertEqual(moves, 100)
-        self.assertTrue(all(index == "end" for _, index in
-                            tree.move_calls[moves_before:]))
         self.assertEqual(tree.shown_rows(table), rows)
         assert_detach_invariants(self, table, tree)
 

@@ -133,18 +133,16 @@ def time_filter_toggle(root, table, filt, visible_count, rows):
     return narrow_s, widen_s, narrowed, pick
 
 
-def time_raw_arm(root, row_count, deferred, budget_ms=12):
-    """Time one raw reattach arm in a disposable Treeview (Proposal
-    0021, D7): detach every row, then reattach them the way the arm
-    does — the deferred arm with one set_children call, the
-    self-contained arm with a move to "end" per item plus one
-    set_children. The moves run in budget-sized batches with the event
-    loop pumped between them, the way _apply_diff_batch yields, so a
-    small budget pays the between-batch cost the arm's batches incur;
-    the deferred arm takes one batch whatever the budget. No
-    LibraryTable bookkeeping exists here, so no saved state can be
-    corrupted — the comparison is bare Tk only. Returns (seconds,
-    batches)."""
+def time_raw_deferred_reattach(root, row_count):
+    """Time the raw deferred reattach in a disposable Treeview
+    (Proposal 0021, D7): detach every row, then reattach them with
+    one set_children call, the way the table's large-restore arm
+    does. The self-contained fallback was removed in Revision 2
+    after the driver settled D7 on the owner's machine (deferred
+    0.01 s against the fallback's 0.09 s), so only the deferred
+    variant is timed. No LibraryTable bookkeeping exists here, so no
+    saved state can be corrupted — the timing is bare Tk only.
+    Returns (seconds, batches)."""
     tree = tk.ttk.Treeview(root)
     for _ in range(row_count):
         tree.insert("", "end")
@@ -153,26 +151,12 @@ def time_raw_arm(root, row_count, deferred, budget_ms=12):
     for item in children:
         tree.detach(item)
     root.update()
-    batches = 0
     started = time.perf_counter()
-    if deferred:
-        tree.set_children("", *children)
-        batches = 1
-    else:
-        budget = budget_ms / 1000
-        index = 0
-        while index < len(children):
-            batches += 1
-            deadline = time.perf_counter() + budget
-            while index < len(children) and time.perf_counter() < deadline:
-                tree.move(children[index], "", "end")
-                index += 1
-            root.update()
-        tree.set_children("", *children)
+    tree.set_children("", *children)
     root.update()
     total = time.perf_counter() - started
     tree.destroy()
-    return total, batches
+    return total, 1
 
 
 def time_raw_small_reattach(root, row_count, count):
@@ -352,25 +336,15 @@ def main():
           f"{raw_delete_total:.2f} s (delete {raw_delete_s:.2f} s, "
           f"insert {raw_insert_s:.2f} s); ratio {ratio:.1f}x")
 
-    # The raw variants for both reattach arms (Proposal 0021, D7):
-    # the deferred arm (one set_children) against the self-contained
-    # fallback (a move to "end" per item, then one set_children),
-    # the fallback at both the app's 12 ms budget and a larger one —
-    # the comparison measures an arm, not a budget. The deferred arm
-    # stays unless a variant shows the fallback faster, or the
-    # cancellation test fails against it.
-    deferred_s, deferred_batches = time_raw_arm(
-        root, len(visible), deferred=True)
-    fallback_12_s, fallback_12_batches = time_raw_arm(
-        root, len(visible), deferred=False, budget_ms=12)
-    fallback_200_s, fallback_200_batches = time_raw_arm(
-        root, len(visible), deferred=False, budget_ms=200)
+    # The raw deferred reattach (Proposal 0021, D7): one set_children
+    # for the whole level. The self-contained fallback was removed in
+    # Revision 2 after the driver settled D7 on the owner's machine
+    # (deferred 0.01 s against the fallback's 0.09 s), so only the
+    # deferred variant is timed.
+    deferred_s, deferred_batches = time_raw_deferred_reattach(
+        root, len(visible))
     print(f"raw deferred reattach at {len(visible):,} rows: "
           f"{deferred_s:.2f} s ({deferred_batches} batch)")
-    print(f"raw self-contained reattach at {len(visible):,} rows: "
-          f"{fallback_12_s:.2f} s at 12 ms "
-          f"({fallback_12_batches} batches), {fallback_200_s:.2f} s "
-          f"at 200 ms ({fallback_200_batches} batches)")
     for count in (1, 10, 50):
         small_s = time_raw_small_reattach(root, len(visible), count)
         print(f"raw small reattach, {count} rows near the end: "

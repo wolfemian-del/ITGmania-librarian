@@ -51,14 +51,6 @@ ROW_INSERT_BUDGET_SECONDS = 0.012
 # widen inserts thousands of rows without displacing any survivor.
 SET_CHILDREN_PLACEMENT_THRESHOLD = 50
 
-# Which large-restore arm the reattach branch takes (Proposal 0021, D5):
-# True is the deferred arm — no tree call per item, the subset discard
-# and the order assignment land with the final set_children. False is
-# the self-contained fallback — each item is moved to "end" in its own
-# iteration. The §6 driver times both raw variants on the owner's
-# machine, and the implementation keeps only the arm it settles on.
-REATTACH_DEFERRED = True
-
 
 def _chart_key_tuple(row):
     """The key tuple itself: the scores join key plus the chart
@@ -197,10 +189,11 @@ class LibraryTable:
         # The detached subset (Proposal 0021, D3): the item ids the
         # table owns but is not showing. _tree_item_rows holds every
         # owned item, visible or detached; _tree_item_order stays
-        # visible-only. The reattach arm is the deferred one unless
-        # the driver settles the fallback (see REATTACH_DEFERRED).
+        # visible-only. A large restore reattaches with the deferred
+        # arm (Proposal 0021, D5): no tree call per item, the subset
+        # discard and the order assignment land with the final
+        # set_children.
         self._tree_item_detached = set()
-        self._reattach_deferred = REATTACH_DEFERRED
         self._dragged_column = None
         self._drag_start_x = None
         self._tree_tint = None
@@ -863,11 +856,10 @@ class LibraryTable:
         detached there, or inserts a fresh one. The reattach branch is
         checked before the move branch, and never reads tree.index: a
         detached item's index() is a misleading 0 (Proposal 0021,
-        §4.3). On a large restore the deferred arm (the primary) makes
-        no tree call per reattached item — the subset discard and the
-        order assignment land with the final set_children — while the
-        self-contained fallback moves each one to "end" in its own
-        iteration. On a large placement the walk skips the per-item
+        §4.3). On a large restore the deferred arm makes no tree call
+        per reattached item — the subset discard and the order
+        assignment land with the final set_children. On a large
+        placement the walk skips the per-item
         moves and the per-item inserts at index — both are O(position)
         in Tk — and collects the items in visible order instead,
         appending new rows at the end; the last batch reorders the
@@ -945,22 +937,12 @@ class LibraryTable:
                     self.tree.item(item, values=shown[0], tags=shown[1])
                     self._tree_item_display[item] = shown
                 if large_reorder:
-                    if self._reattach_deferred:
-                        # Deferred (primary): no tree call per item and
-                        # no flag change — the item joins placed, and
-                        # the subset discard and the order assignment
-                        # land with the final set_children below.
-                        placed.append(item)
-                    else:
-                        # Self-contained (fallback): attach now, at
-                        # the end, and discard from the subset in the
-                        # same iteration — the transition completes
-                        # before the deadline check, so a cancelled
-                        # walk cannot leave it half done.
-                        self._tree_item_detached.discard(item)
-                        self.tree.move(item, "", "end")
-                        self._tree_item_order.append(key)
-                        placed.append(item)
+                    # Deferred arm (Proposal 0021, D5): no tree call
+                    # per item and no flag change — the item joins
+                    # placed, and the subset discard and the order
+                    # assignment land with the final set_children
+                    # below.
+                    placed.append(item)
                 else:
                     # Small restore: move to its index now.
                     self._tree_item_detached.discard(item)
@@ -993,19 +975,17 @@ class LibraryTable:
                 self.tree.set_children("", *placed)
                 self._tree_item_order = [
                     _chart_key(row, key_cache) for row in visible]
-                if self._reattach_deferred:
-                    # Deferred (primary): the subset discard lands
-                    # here, with the order assignment, in the same
-                    # synchronous step as the set_children — a
-                    # cancelled walk never reaches this, so no item
-                    # is ever marked visible while still detached.
-                    # The reattached items are exactly the detached
-                    # ones in placed; the stored rebind is not part
-                    # of this step, it already happened per item at
-                    # the recompute above.
-                    self._tree_item_detached.difference_update(
-                        item for item in placed
-                        if item in self._tree_item_detached)
+                # The subset discard lands here, with the order
+                # assignment, in the same synchronous step as the
+                # set_children — a cancelled walk never reaches this,
+                # so no item is ever marked visible while still
+                # detached. The reattached items are exactly the
+                # detached ones in placed; the stored rebind is not
+                # part of this step, it already happened per item at
+                # the recompute above.
+                self._tree_item_detached.difference_update(
+                    item for item in placed
+                    if item in self._tree_item_detached)
             self._set_final_count(visible)
             self._tree_tint.reset(selected_items)
 
