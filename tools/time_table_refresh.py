@@ -22,6 +22,7 @@ contradicts it. If the redraw or the batch scheduling dominates instead,
 
 import sys
 import time
+from collections import Counter
 from pathlib import Path
 from unittest.mock import patch
 
@@ -56,19 +57,14 @@ def wait_for_settled(root, table, visible_count, timeout=180):
 
 
 def reset_table_state(table):
-    """Empty the tree and clear the table's saved diff state together
-    (Greptile P1 #1): deleting the items without clearing
-    _tree_item_rows/_tree_item_order/_tree_item_display leaves the diff
-    thinking every row is already showing, so the next refresh skips
-    every insert and the trial waits the full deadline. The tint tracker
-    and the focus go with them, so no stale tag or focused row survives
-    the reset."""
-    table.tree.delete(*table.tree.get_children())
-    table._tree_item_rows.clear()
-    table._tree_item_order.clear()
-    table._tree_item_display.clear()
-    table._tree_tint.reset()
-    table.tree.focus("")
+    """Empty the tree and clear the table's saved diff state together.
+
+    Delegates to LibraryTable.reset_table_state (Proposal 0021,
+    §4.4): the table owns the maps, so it owns the reset — and a
+    reset through get_children() alone would leave detached items
+    orphaned in the widget while the maps are cleared.
+    """
+    table.reset_table_state()
 
 
 def time_full_insert(root, table, visible_count, budget_ms):
@@ -135,6 +131,56 @@ def time_filter_toggle(root, table, filt, visible_count, rows):
     wait_for_settled(root, table, visible_count)
     widen_s = time.perf_counter() - started
     return narrow_s, widen_s, narrowed, pick
+
+
+def time_raw_deferred_reattach(root, row_count):
+    """Time the raw deferred reattach in a disposable Treeview
+    (Proposal 0021, D7): detach every row, then reattach them with
+    one set_children call, the way the table's large-restore arm
+    does. The self-contained fallback was removed in Revision 2
+    after the driver settled D7 on the owner's machine (deferred
+    0.01 s against the fallback's 0.09 s), so only the deferred
+    variant is timed. No LibraryTable bookkeeping exists here, so no
+    saved state can be corrupted — the timing is bare Tk only.
+    Returns (seconds, batches)."""
+    tree = tk.ttk.Treeview(root)
+    for _ in range(row_count):
+        tree.insert("", "end")
+    root.update()
+    children = list(tree.get_children())
+    for item in children:
+        tree.detach(item)
+    root.update()
+    started = time.perf_counter()
+    tree.set_children("", *children)
+    root.update()
+    total = time.perf_counter() - started
+    tree.destroy()
+    return total, 1
+
+
+def time_raw_small_reattach(root, row_count, count):
+    """Time a small restore in a disposable Treeview (Proposal 0021,
+    §6): detach `count` rows near the end of the tree, then move each
+    back to its index — the per-item arm the walk takes under the
+    placement threshold, at the high indices where move-to-index costs
+    most. Returns seconds."""
+    tree = tk.ttk.Treeview(root)
+    for _ in range(row_count):
+        tree.insert("", "end")
+    root.update()
+    children = list(tree.get_children())
+    targets = children[-count:] if count else []
+    for item in targets:
+        tree.detach(item)
+    root.update()
+    started = time.perf_counter()
+    for index, item in enumerate(targets, start=len(children) - count):
+        tree.move(item, "", index)
+    root.update()
+    total = time.perf_counter() - started
+    tree.destroy()
+    return total
 
 
 def time_raw_detach_reattach(root, row_count):
@@ -227,13 +273,17 @@ def main():
     print(f"filter_rows: {filter_s:.2f} s")
     print(f"no-change refresh (filter + sorts + diff + panel push): {refresh_s:.2f} s")
 
-    # tree.delete of every item, timed on its own.
+    # The reset, timed on its own: it deletes every owned item — the
+    # same tree.delete the old timed delete did — and clears the saved
+    # maps together, so the full inserts below start from a clean
+    # reset instead of deleting the same ids twice (Greptile P1,
+    # PR #283 Revision 1).
     start = time.perf_counter()
-    table.tree.delete(*table.tree.get_children())
+    reset_table_state(table)
     delete_s = time.perf_counter() - start
-    print(f"tree.delete of {len(visible):,} items: {delete_s:.2f} s")
+    print(f"reset_table_state of {len(visible):,} items: {delete_s:.2f} s")
 
-    # The full insert at each budget (the tree is empty after the delete,
+    # The full insert at each budget (the tree is empty after the reset,
     # so each refresh streams in through _insert_batch).
     insert_total_12 = None
     for budget_ms in BUDGETS_MS:
@@ -285,6 +335,28 @@ def main():
           f"reattach {reattach_s:.2f} s); delete+insert: "
           f"{raw_delete_total:.2f} s (delete {raw_delete_s:.2f} s, "
           f"insert {raw_insert_s:.2f} s); ratio {ratio:.1f}x")
+
+    # The raw deferred reattach (Proposal 0021, D7): one set_children
+    # for the whole level. The self-contained fallback was removed in
+    # Revision 2 after the driver settled D7 on the owner's machine
+    # (deferred 0.01 s against the fallback's 0.09 s), so only the
+    # deferred variant is timed.
+    deferred_s, deferred_batches = time_raw_deferred_reattach(
+        root, len(visible))
+    print(f"raw deferred reattach at {len(visible):,} rows: "
+          f"{deferred_s:.2f} s ({deferred_batches} batch)")
+    for count in (1, 10, 50):
+        small_s = time_raw_small_reattach(root, len(visible), count)
+        print(f"raw small reattach, {count} rows near the end: "
+              f"{small_s:.3f} s")
+    # Colliding songs and rows (Proposal 0021, Q8): whether the
+    # delete-and-reinsert fallback for colliding songs is worth
+    # extending to detach is settled on this count.
+    key_counts = Counter(table_module._chart_key(row) for row in rows)
+    colliding_songs = {key[0] for key, n in key_counts.items() if n > 1}
+    colliding_rows = sum(n for n in key_counts.values() if n > 1)
+    print(f"colliding songs: {len(colliding_songs)} "
+          f"({colliding_rows} rows)")
 
     print()
     # refresh_s already includes one redraw (refresh_table pushes the

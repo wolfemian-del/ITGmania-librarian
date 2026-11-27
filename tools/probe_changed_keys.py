@@ -283,8 +283,14 @@ def trace(label, **extra):
 
 
 def find(title, diff, chart=None):
-    for item, row in table._tree_item_rows.items():
-        if (row.get("Title") == title and row.get("Difficulty") == diff
+    # Visible items only (Proposal 0021, §4.4): _tree_item_rows holds
+    # detached items too, and selection_set on a detached item selects
+    # nothing, so a lookup that returned one would silently select no
+    # row at all.
+    for item in table.tree.get_children():
+        row = table._tree_item_rows.get(item)
+        if (row is not None and row.get("Title") == title
+                and row.get("Difficulty") == diff
                 and (chart is None or row.get("Chart") == chart)):
             return item
     raise KeyError((title, diff, chart))
@@ -350,8 +356,10 @@ def scenario_main():
     twin = ("Songs/Alpha Pack/Twins", "Edit", "Same")
     STATE_C[twin] = entry(9, "2026-11-21", 0.95, "Tier02", 300)
     write_stats(STATE_C)
-    twin_items = [i for i, r in table._tree_item_rows.items()
-                  if r.get("Title") == "Twins" and r.get("Difficulty") == "Edit"]
+    twin_items = [i for i in table.tree.get_children()
+                  if (r := table._tree_item_rows.get(i)) is not None
+                  and r.get("Title") == "Twins"
+                  and r.get("Difficulty") == "Edit"]
     loader.sync_scores()
     trace("14 sync C: two rows share one chart key, both change",
           twin_rows_before=len(twin_items))

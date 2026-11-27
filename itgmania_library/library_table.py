@@ -186,6 +186,14 @@ class LibraryTable:
         # and move paths — nothing else mutates the tree.
         self._tree_item_order = []
         self._tree_item_display = {}
+        # The detached subset (Proposal 0021, D3): the item ids the
+        # table owns but is not showing. _tree_item_rows holds every
+        # owned item, visible or detached; _tree_item_order stays
+        # visible-only. A large restore reattaches with the deferred
+        # arm (Proposal 0021, D5): no tree call per item, the subset
+        # discard and the order assignment land with the final
+        # set_children.
+        self._tree_item_detached = set()
         self._dragged_column = None
         self._drag_start_x = None
         self._tree_tint = None
@@ -417,13 +425,60 @@ class LibraryTable:
         self._invoke_open_row()
 
     def _invoke_open_row(self):
-        """Call on_open_row with the focused row, if there is one."""
+        """Call on_open_row with the focused row, if there is one.
+
+        The focused item must be visible, not merely owned (Proposal
+        0021, D4): a detached row keeps its stored binding, so without
+        the gate Enter on a filter-hidden row would open it. The
+        detach step normally relocates focus first; the gate is the
+        defense for any path that did not.
+        """
         if self._on_open_row is None:
             return
         focused = self.tree.focus()
-        row = self._tree_item_rows.get(focused) if focused else None
+        if not focused or focused in self._tree_item_detached:
+            return
+        row = self._tree_item_rows.get(focused)
         if row is not None:
             self._on_open_row(row)
+
+    def reset_table_state(self):
+        """Empty the tree and clear the table's saved diff state together.
+
+        The timing driver's reset (Proposal 0021, §4.4): deleting the
+        items without clearing the maps leaves the diff thinking every
+        row is already showing, so the next refresh skips every insert.
+        Detached items are not children, so they are deleted from the
+        owned set, not from get_children() — a reset through
+        get_children() alone would orphan them invisibly while the
+        maps are cleared. The tint tracker and the focus go with them,
+        so no stale tag or focused row survives the reset.
+        """
+        self.tree.delete(*self._tree_item_rows)
+        self._tree_item_rows.clear()
+        self._tree_item_order.clear()
+        self._tree_item_display.clear()
+        self._tree_item_detached.clear()
+        self._tree_tint.reset()
+        self.tree.focus("")
+
+    def _detach_item(self, item, selected_items):
+        """Detach one owned item: it leaves the tree but stays owned.
+
+        (Proposal 0021, D4.) The selection and the tint are synced
+        here, explicitly — detaching fires no <<TreeviewSelect>> event,
+        so the tracker would never hear about it otherwise, and the
+        item stays addressable, so a stale white tag would survive
+        until it is reattached. The key leaves the order list in
+        _apply_diff's one-pass rebuild, not here: removing it per item
+        is O(n) per key, the cost the rebuild exists to avoid.
+        """
+        if item in selected_items:
+            self.tree.selection_remove(item)
+            selected_items.discard(item)
+        self._tree_tint.forget(item)
+        self.tree.detach(item)
+        self._tree_item_detached.add(item)
 
     def _select_all_rows(self, _event=None):
         """Ctrl+A in the table (issue #36): select every displayed row.
@@ -488,7 +543,10 @@ class LibraryTable:
         empty set means nothing changed. Callers that know: a sync
         passes the set merge_scores reports; a sort passes an empty
         set; the filter subscription decides from rows_replaced (see
-        refresh_on_filter_change).
+        refresh_on_filter_change). A set also means membership is
+        unchanged (Proposal 0021, D2): only a load can remove a song
+        from the library, so only a load (None) builds the library
+        key-to-row dict the diff uses to tell a detach from a delete.
         """
         # One key cache for the whole refresh (see _chart_key): the diff
         # asks for the same row's key a dozen times, and the cache is
@@ -529,10 +587,13 @@ class LibraryTable:
                     reverse=descending)
             visible = present + missing
         if not self._tree_item_rows:
-            # The tree starts empty (first load, or the last refresh
+            # The table owns nothing (first load, or the last refresh
             # emptied it): a full insert, streaming in through the
-            # existing batched inserter. The selection bridges by key
-            # back to the row ids the inserter keeps.
+            # existing batched inserter. This is an ownership-empty
+            # test, not a "tree empty" test — a table that owns only
+            # detached items has something to reattach, so it takes
+            # the diff path below (Proposal 0021, §4.1). The selection
+            # bridges by key back to the row ids the inserter keeps.
             selected_rows = {
                 id(row) for row in visible
                 if _chart_key(row, key_cache) in selected_keys
@@ -568,7 +629,20 @@ class LibraryTable:
         Deletes and in-place value updates run synchronously here — they
         are cheap Tcl calls. Inserts and moves run in time-boxed batches
         through _apply_diff_batch, reusing _insert_batch's shape. The
-        count label and the tint reset land when the last batch does."""
+        count label and the tint reset land when the last batch does.
+
+        A row that leaves the visible set is detached, not deleted,
+        when its key is still in the library (Proposal 0021, D2): the
+        item stays owned, keeps its row and display tuple, and the
+        batch walk reattaches it when it comes back. Only a load can
+        remove a song from the library, so the library key-to-row dict
+        is built only when changed_keys is None; a sort, a sync, or a
+        filter edit passes a set, and on those refreshes every leaving
+        item is detached. Every loop below that reads the survivors
+        splits visible-owned from detached-owned: the tree-side
+        collision scan, the selection sync, the update loop, and the
+        order rebuild all take visible-owned items only.
+        """
 
         new_keys = set()
         new_by_key = {}
@@ -581,11 +655,36 @@ class LibraryTable:
                 colliding_songs.add(key[0])
             new_keys.add(key)
             new_by_key.setdefault(key, row)
+        # The library membership check (Proposal 0021, D2): only a load
+        # builds the key-to-row dict, and it rebinds detached items to
+        # their current row dicts on the spot. On any other refresh the
+        # dict stays None, meaning membership is unchanged and every
+        # leaving item is detached. The build runs before the detach
+        # arm below, so it rebinds only items already detached — an
+        # item detached by this refresh keeps its old row dict until
+        # the batch walk rebinds it at the recompute (§4.3).
+        library_by_key = None
+        if changed_keys is None:
+            library_by_key = {}
+            for row in self._filter.library_rows():
+                library_by_key.setdefault(_chart_key(row, key_cache), row)
+            for item in list(self._tree_item_detached):
+                row = self._tree_item_rows.get(item)
+                if row is not None:
+                    current = library_by_key.get(
+                        _chart_key(row, key_cache))
+                    if current is not None:
+                        self._tree_item_rows[item] = current
         # A key the current tree holds twice is a collision too: the
         # previous refresh re-inserted that song as a block, so both of
-        # its items share the key, and neither may be matched.
+        # its items share the key, and neither may be matched. Only
+        # visible-owned items count here (Proposal 0021, D8): two
+        # hidden rows sharing a key must not keep their song colliding
+        # and delete the song's visible rows.
         seen_keys = set()
-        for row in self._tree_item_rows.values():
+        for item, row in self._tree_item_rows.items():
+            if item in self._tree_item_detached:
+                continue
             key = _chart_key(row, key_cache)
             if key in seen_keys:
                 colliding_songs.add(key[0])
@@ -593,11 +692,41 @@ class LibraryTable:
         selected_items = set(self.tree.selection())
         for item, row in list(self._tree_item_rows.items()):
             key = _chart_key(row, key_cache)
-            if key[0] in colliding_songs or key not in new_keys:
+            if key[0] in colliding_songs:
+                # A colliding song is deleted as a block, detached or
+                # not (Proposal 0021, D8): its rows are re-inserted
+                # fresh by the walk.
                 self.tree.delete(item)
                 del self._tree_item_rows[item]
                 del self._tree_item_display[item]
+                self._tree_item_detached.discard(item)
                 selected_items.discard(item)
+            elif key not in new_keys:
+                if (library_by_key is not None
+                        and key not in library_by_key):
+                    # A load, and the song is gone from the library:
+                    # a true deletion, not a detach.
+                    self.tree.delete(item)
+                    del self._tree_item_rows[item]
+                    del self._tree_item_display[item]
+                    self._tree_item_detached.discard(item)
+                    selected_items.discard(item)
+                elif item not in self._tree_item_detached:
+                    self._detach_item(item, selected_items)
+                # Else already detached and still hidden: a no-op —
+                # it is not re-detached, and its key is already out
+                # of the order list.
+        # Focus follows the detach (Proposal 0021, D4): if the focused
+        # row was hidden, focus moves to the first visible row, or
+        # clears when none is showing. Once, after the loop, not per
+        # item — a per-item relocation would chase a moving neighbour
+        # through a large detach block. _invoke_open_row is gated on
+        # visibility as well, so a stale focus can never open a
+        # hidden row.
+        focused = self.tree.focus()
+        if focused and focused in self._tree_item_detached:
+            children = self.tree.get_children()
+            self.tree.focus(children[0] if children else "")
         # The order list is rebuilt in one pass from the survivors,
         # never edited item by item: removing each deleted key from the
         # list is O(n) per key, so a narrow that drops 31,591 rows
@@ -606,13 +735,32 @@ class LibraryTable:
         # keep their relative order, and a key a deleted item shared
         # with a survivor cannot occur — a colliding song is deleted
         # as a block — so filtering on the survivor keys is exact.
-        survivor_keys = {_chart_key(row, key_cache)
-                         for row in self._tree_item_rows.values()}
+        # Two key sets pin the trigger's terms (Proposal 0021, §4.2):
+        # owned keys are every item in _tree_item_rows, detached or
+        # visible; attached keys are the visible-owned items only. The
+        # order list is visible-only, so the rebuild filters on
+        # attached keys — a detached item stays in _tree_item_rows, so
+        # its key would otherwise remain in the list. Detaching
+        # removes the key from the order list here, in this one pass,
+        # not per item in the detach step.
+        owned_keys = {_chart_key(row, key_cache)
+                      for row in self._tree_item_rows.values()}
+        attached_keys = {_chart_key(row, key_cache)
+                         for item, row in self._tree_item_rows.items()
+                         if item not in self._tree_item_detached}
+        detached_keys = {_chart_key(row, key_cache)
+                         for item, row in self._tree_item_rows.items()
+                         if item in self._tree_item_detached}
         self._tree_item_order = [key for key in self._tree_item_order
-                                 if key in survivor_keys]
+                                 if key in attached_keys]
         # Selection first, so the tags the update below writes already
-        # agree with the selection the tree shows.
+        # agree with the selection the tree shows. Visible-owned items
+        # only (Proposal 0021, D4): selection_add on a detached item
+        # does not raise and may set the selected bit invisibly, so a
+        # detached iid must never reach it.
         for item, row in self._tree_item_rows.items():
+            if item in self._tree_item_detached:
+                continue
             key = _chart_key(row, key_cache)
             if key in selected_keys and item not in selected_items:
                 self.tree.selection_add(item)
@@ -636,7 +784,14 @@ class LibraryTable:
         # behind, so force a rewrite of every item the tint tracker or
         # the selection touches, even when its saved tuple matches.
         forced = set(self._tree_tint.items) | selected_items
+        # Visible-owned items only: new_by_key holds only the new
+        # visible rows, so a detached item's key raises KeyError here.
+        # A detached item keeps its saved display tuple until it is
+        # reattached, when its tuple is recomputed and its row binding
+        # is refreshed (§4.3).
         for item, row in list(self._tree_item_rows.items()):
+            if item in self._tree_item_detached:
+                continue
             key = _chart_key(row, key_cache)
             row = new_by_key[key]
             self._tree_item_rows[item] = row
@@ -653,26 +808,35 @@ class LibraryTable:
         # The reorder plan (PR #271 Lane A, finding 2, and the §6
         # widen): per-item tree.index/tree.move and insert-at-index
         # are O(n^2), so a large placement goes through one
-        # set_children call instead. Displaced counts the surviving
-        # rows out of place against the order they should appear in;
-        # inserts counts the rows the walk must add. The trigger is
-        # total placements, not displaced rows alone: a filter widen
-        # inserts thousands of rows while displacing no survivor, so
-        # a displaced-only trigger never fires for it — and the widen
-        # is where the insert arm is slowest. The walk also needs to
-        # know whether there is anything to place at all, so a refresh
-        # with nothing to insert or move does not show a "Loading …"
-        # progress count (the owner's smoke check).
+        # set_children call instead. Displaced counts the attached
+        # survivors out of place against the order they should appear
+        # in; inserts counts the visible rows the walk must add; and
+        # reattaches counts the visible rows whose key is owned but
+        # detached (Proposal 0021, §4.2). The trigger is total
+        # placements, not displaced rows alone: a filter widen inserts
+        # thousands of rows while displacing no survivor, so a
+        # displaced-only trigger never fires for it — and the widen is
+        # where the insert arm is slowest. A pure reattach widen has
+        # inserts = 0 and, under an unchanged sort, displaced = 0, so
+        # without the reattaches term it would fall through to
+        # per-item moves at full scale. The walk also needs to know
+        # whether there is anything to place at all, so a refresh with
+        # nothing to insert, move, or reattach does not show a
+        # "Loading …" progress count (the owner's smoke check). The
+        # counts are taken after the delete loop, so a colliding
+        # song's detached items (deleted as a block, D8) count as
+        # inserts, not reattaches.
         target_order = [_chart_key(row, key_cache) for row in visible
-                        if _chart_key(row, key_cache) in survivor_keys]
+                        if _chart_key(row, key_cache) in attached_keys]
         displaced = sum(1 for a, b in zip(self._tree_item_order,
                                           target_order) if a != b)
         inserts = sum(1 for row in visible
-                      if _chart_key(row, key_cache) not in survivor_keys)
-        inserts_pending = inserts > 0
-        large_reorder = (displaced + inserts
+                      if _chart_key(row, key_cache) not in owned_keys)
+        reattaches = sum(1 for row in visible
+                         if _chart_key(row, key_cache) in detached_keys)
+        large_reorder = (displaced + inserts + reattaches
                          > SET_CHILDREN_PLACEMENT_THRESHOLD)
-        show_progress = inserts_pending or displaced > 0
+        show_progress = inserts > 0 or displaced > 0 or reattaches > 0
         placed = [] if large_reorder else None
         self._apply_diff_batch(visible, 0, generation, selected_keys,
                                key_to_item, selected_items,
@@ -688,17 +852,21 @@ class LibraryTable:
         Deletes and in-place updates already ran synchronously in
         _apply_diff, so this walk only places rows: for each position in
         `visible` order it leaves the item that is already there, moves
-        the item that belongs there, or inserts a fresh one. The order
-        list is the table's own record of the tree order, so the
-        already-there check is a list lookup, not a tree call; tree.index
-        is only asked when a row actually has to move. On a large
-        placement the walk skips the per-item moves and the per-item
-        inserts at index — both are O(position) in Tk — and collects
-        the items in visible order instead, appending new rows at the
-        end; the last batch reorders the whole level with one
-        set_children call. The order list mirrors the tree throughout
-        the walk (a new row is appended to both), so a refresh that
-        supersedes a half-finished walk still reads a true tree order.
+        the item that belongs there, reattaches the item that is
+        detached there, or inserts a fresh one. The reattach branch is
+        checked before the move branch, and never reads tree.index: a
+        detached item's index() is a misleading 0 (Proposal 0021,
+        §4.3). On a large restore the deferred arm makes no tree call
+        per reattached item — the subset discard and the order
+        assignment land with the final set_children. On a large
+        placement the walk skips the per-item
+        moves and the per-item inserts at index — both are O(position)
+        in Tk — and collects the items in visible order instead,
+        appending new rows at the end; the last batch reorders the
+        whole level with one set_children call. The order list mirrors
+        the tree throughout the walk (a new row is appended to both),
+        so a refresh that supersedes a half-finished walk still reads
+        a true tree order.
         """
 
         if generation != self._render_generation:
@@ -747,6 +915,39 @@ class LibraryTable:
                     self.tree.selection_add(item)
                     selected_items.add(item)
                     self._tree_tint.note_selected(item)
+            elif key_to_item[key] in self._tree_item_detached:
+                # Reattach (Proposal 0021, §4.3): the key is owned but
+                # its item is detached, so the move branch below must
+                # never see it — that branch reads the item's position
+                # with tree.index, and a detached item's index() is a
+                # misleading 0, so its pop would remove the wrong key
+                # and corrupt the order list. The tuple is recomputed
+                # from the row at this position and the item is
+                # re-bound to it at the same moment; the saved tuple
+                # is written only on a difference, and updated at the
+                # moment of each write, so it always equals what the
+                # widget holds. The rebind rides with the recompute
+                # because the stored binding can be stale: an item
+                # detached during a load keeps its old row dict, and
+                # the open path reads the stored binding.
+                item = key_to_item[key]
+                shown = _display_tuple(row, key in selected_keys)
+                self._tree_item_rows[item] = row
+                if shown != self._tree_item_display.get(item):
+                    self.tree.item(item, values=shown[0], tags=shown[1])
+                    self._tree_item_display[item] = shown
+                if large_reorder:
+                    # Deferred arm (Proposal 0021, D5): no tree call
+                    # per item and no flag change — the item joins
+                    # placed, and the subset discard and the order
+                    # assignment land with the final set_children
+                    # below.
+                    placed.append(item)
+                else:
+                    # Small restore: move to its index now.
+                    self._tree_item_detached.discard(item)
+                    self.tree.move(item, "", index)
+                    self._tree_item_order.insert(index, key)
             elif (index >= len(self._tree_item_order)
                     or self._tree_item_order[index] != key):
                 item = key_to_item[key]
@@ -774,6 +975,17 @@ class LibraryTable:
                 self.tree.set_children("", *placed)
                 self._tree_item_order = [
                     _chart_key(row, key_cache) for row in visible]
+                # The subset discard lands here, with the order
+                # assignment, in the same synchronous step as the
+                # set_children — a cancelled walk never reaches this,
+                # so no item is ever marked visible while still
+                # detached. The reattached items are exactly the
+                # detached ones in placed; the stored rebind is not
+                # part of this step, it already happened per item at
+                # the recompute above.
+                self._tree_item_detached.difference_update(
+                    item for item in placed
+                    if item in self._tree_item_detached)
             self._set_final_count(visible)
             self._tree_tint.reset(selected_items)
 

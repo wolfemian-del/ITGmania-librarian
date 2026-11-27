@@ -71,6 +71,39 @@ class SelectedRowTint:
         """Record a row that was inserted already carrying the white tag."""
         self.items.add(item)
 
+    def forget(self, item):
+        """Drop a row from the tracking and take its white tag off.
+
+        Called when a row leaves the table without a selection event
+        (Proposal 0021, D4): detaching a selected row fires no
+        <<TreeviewSelect>> event, so on_select never runs for it — and
+        the item stays addressable, so the stale tag would survive
+        until it is reattached. A deleted row needs no forget: the
+        tree drops its tags with it, and the next reset replaces the
+        tracked set.
+
+        The tag comes off whether or not the tracker knows the item
+        (PR #283 Revision 1): a row selected while a refresh walk is
+        still running is dropped from the tracking by the walk's final
+        reset, so by detach time the tracker has already lost it — the
+        old early return left its white tag on, and the row came back
+        white while unselected. The tag is only written when it is
+        actually there, so forgetting an untracked row without the tag
+        changes nothing.
+        """
+        self.items.discard(item)
+        if self._tree is None or not self._tree.exists(item):
+            return
+        # Read the item's tags rather than trusting the tracking: a
+        # row selected while a walk is still running is dropped from
+        # the tracking by the walk's final reset, so the tracker may
+        # not know the item carries the tag. The tag is only cleared
+        # when the tree actually reports it — a tree that returns
+        # something other than a tag list has nothing to clear.
+        tags = self._tree.item(item, "tags")
+        if isinstance(tags, (tuple, list)) and SELECTED_ROW_TAG in tags:
+            self._set(item, False)
+
     def reset(self, items=()):
         """Replace the tracked rows, e.g. after a refresh rebuilt the tree."""
         self.items = set(items)
