@@ -63,10 +63,17 @@ from itgmania_library.distribution_panel import DistributionPanel
 from itgmania_library.library_constants import (
     APP_NAME, COLUMN_GROUPS, DEFAULT_VISIBLE_COLUMNS, HEADERS)
 from itgmania_library.library_geometry import (
+    canonical_geometry,
+    decide_main_window_save,
     declare_dpi_awareness,
     dpi_scale_factor,
+    opening_geometry,
+    parse_window_geometry,
+    parse_window_size,
+    saved_geometry_visible,
     scale_geometry,
     scale_pixels,
+    work_area_of,
 )
 from itgmania_library.library_fonts import load_fonts
 from itgmania_library.window_placement import WindowPlacement
@@ -88,11 +95,26 @@ class LibraryApp:
     # The display scale factor (1.0 at 100% DPI): bare instances in tests
     # have no window to measure, so they read canonical units as-is.
     _dpi_scale = 1.0
+    # The main window's remembered place (Proposal 0023): the saved
+    # geometry and maximized flag, loaded at startup and written at
+    # exit; the tracked last-normal-geometry, last-shown-maximized and
+    # opening baseline, seeded by the placement step. The <Configure>
+    # binding keeps the tracked value current; the <Map> binding
+    # settles the baseline once, when the window is first shown.
+    # Bare instances in tests have no window to place, so these read
+    # as "never placed".
+    main_window_geometry = None
+    main_window_maximized = False
+    _main_window_last_geometry = None
+    _main_window_last_maximized = False
+    _main_window_opening_geometry = None
+    _main_window_baseline_settled = False
 
     def __init__(self, root: tk.Tk):
         self.root = root
         self._init_window()
         self._init_stores()
+        self._place_main_window()
         self._init_variables()
         self._declare_late_state()
         self._init_dialog()
@@ -104,14 +126,15 @@ class LibraryApp:
         """Set up the main window itself.
 
         Needs: self.root. Provides: the title, the DPI scale factor
-        (self._dpi_scale), the geometry and minimum size, the background.
+        (self._dpi_scale), the minimum size, the background. The opening
+        geometry is set by _place_main_window, once the settings exist,
+        not here (Proposal 0023).
         """
         self.root.title(APP_NAME)
         # The display scale factor (issue #51): 1.0 at 100% DPI, 1.5 at
         # 150%. Every pixel number below is stored in canonical 100%
         # units and scaled here, at the point it reaches the window.
         self._dpi_scale = dpi_scale_factor(self.root.winfo_fpixels("1i"))
-        self.root.geometry(scale_geometry(theme.WINDOW_DEFAULT_GEOMETRY, self._dpi_scale))
         self.root.minsize(scale_pixels(theme.WINDOW_MIN_SIZE[0], self._dpi_scale),
                           scale_pixels(theme.WINDOW_MIN_SIZE[1], self._dpi_scale))
         self.root.configure(bg=theme.BG_WINDOW)
@@ -142,6 +165,139 @@ class LibraryApp:
         # status line exists.
         self._settings_store = SettingsStore(self.settings_path)
         self.saved_settings = self._settings_store.load()
+
+    def _place_main_window(self):
+        """Place the main window where it was left, or centered in the work area.
+
+        Needs: self.root, self._dpi_scale, self.saved_settings. Provides:
+        the root's opening geometry and maximized state, the saved
+        main-window attributes, and the tracked last-normal-geometry,
+        last-shown-state and opening-baseline attributes. Runs immediately
+        after _init_stores, before _init_variables, so the geometry is set
+        before any widget is built (Proposal 0023). The root is not mapped
+        until mainloop, so placing it here shows no flash.
+        """
+        saved = self._valid_main_window_geometry(
+            self.saved_settings.get("main_window_geometry"))
+        saved_maximized = bool(self.saved_settings.get("main_window_maximized", False))
+        self.main_window_geometry = saved
+        self.main_window_maximized = saved_maximized
+        # The desktop box, from the root's virtual-desktop readings (the
+        # same readings WindowPlacement._surroundings uses for the dialogs).
+        left = self.root.winfo_vrootx()
+        top = self.root.winfo_vrooty()
+        desktop = (left, top, left + self.root.winfo_vrootwidth(),
+                   top + self.root.winfo_vrootheight())
+        # The work area: the monitor holding the saved place when it is
+        # visible there, the primary's when it is not or nothing is saved
+        # (Proposal 0023, D3). The saved point is in canonical 100%
+        # units; MonitorFromPoint takes physical pixels, so it is scaled
+        # first. Off Windows the lookup returns None and the opening
+        # rule falls back to the desktop.
+        work_area = work_area_of()
+        if saved is not None:
+            parsed = parse_window_geometry(saved)
+            if parsed is not None:
+                point = (scale_pixels(parsed[2], self._dpi_scale),
+                         scale_pixels(parsed[3], self._dpi_scale))
+                saved_work_area = work_area_of(point=point)
+                if saved_geometry_visible(saved, desktop, self._dpi_scale,
+                                          saved_work_area, theme.WINDOW_MIN_SIZE):
+                    work_area = saved_work_area
+        default_size = parse_window_size(
+            scale_geometry(theme.WINDOW_DEFAULT_GEOMETRY, self._dpi_scale))
+        geometry = opening_geometry(
+            saved, default_size, desktop, self._dpi_scale, anchor=None,
+            work=work_area or desktop, min_size=theme.WINDOW_MIN_SIZE)
+        self.root.geometry(geometry)
+        if saved_maximized:
+            # After the geometry is set, so the restored normal geometry
+            # is the one behind the maximized window. Some platforms
+            # maximize through an attribute, not a state (Proposal 0023,
+            # item 5): a saved maximized flag copied to such a machine
+            # must not crash startup.
+            try:
+                self.root.state("zoomed")
+            except tk.TclError:
+                pass
+        canonical = canonical_geometry(geometry, self._dpi_scale)
+        self._main_window_opening_geometry = canonical
+        self._main_window_last_geometry = canonical
+        self._main_window_last_maximized = saved_maximized
+        self._main_window_baseline_settled = False
+        self.root.bind("<Configure>", self._on_main_window_configure)
+        self.root.bind("<Map>", self._on_main_window_map)
+
+    def _on_main_window_configure(self, event):
+        """Track the main window's place and shown state (Proposal 0023, D4).
+
+        A binding on the root also receives every descendant's Configure
+        events, so only the root's own events count; a resize drag costs
+        one assignment per event and no I/O, and nothing is written here.
+        The baseline is not touched here: the first normal Configure
+        can be the owner's first move, and refining the baseline to it
+        would lose the move. An unsettled (1x1) reading records
+        nothing. Nothing is tracked before the first Map settles the
+        baseline: the placement Configure fires while the window is
+        still unmapped and can report "normal" (on Windows), which
+        would clear the maximized flag seeded from a saved maximized
+        launch. The Map settles before the owner can act, so nothing
+        the owner does is lost.
+        """
+        if (event.widget is not self.root
+                or not self._main_window_baseline_settled):
+            return
+        state = self.root.state()
+        if state == "normal":
+            geometry = self.root.geometry()
+            parsed = parse_window_geometry(geometry)
+            if parsed is None or parsed[0] <= 1 or parsed[1] <= 1:
+                return
+            self._main_window_last_geometry = canonical_geometry(
+                geometry, self._dpi_scale)
+            self._main_window_last_maximized = False
+        elif state == "zoomed":
+            self._main_window_last_maximized = True
+        # "iconic" (minimized) records nothing: minimizing does not clear
+        # a saved maximized flag.
+
+    def _on_main_window_map(self, event):
+        """Settle the opening baseline when the window is first shown.
+
+        The geometry the window manager actually gives can differ from
+        the geometry requested (Proposal 0023, D4): the baseline — and
+        the tracked last-normal-geometry, which at the opening is the
+        same geometry — must be the geometry the window opened with, so
+        a close without a move compares against the placed geometry,
+        not the requested one. The proposal sketched this at first
+        idle, but before the content is laid out geometry() still reads
+        1x1, and an idle callback that reschedules until the size
+        settles spins the idle queue without end (observed under Xvfb);
+        a <Configure> is no better, because the placement Configure
+        fires while the window is still unmapped and no Configure
+        follows the mapping. The <Map> event fires once, when the
+        window becomes visible, with the state normal and the geometry
+        settled — the window actually placed. Only while normal: the
+        geometry() reading of a zoomed root is the stale pre-maximize
+        value, so for a window that opens maximized the seeded values
+        stand. The baseline settles on the first Map either way, so a
+        later Map (after a minimize and restore) never redefines it
+        to a place the owner moved to.
+        """
+        if event.widget is not self.root:
+            return
+        if self._main_window_baseline_settled:
+            return
+        self._main_window_baseline_settled = True
+        if self.root.state() != "normal":
+            return
+        geometry = self.root.geometry()
+        parsed = parse_window_geometry(geometry)
+        if parsed is None or parsed[0] <= 1 or parsed[1] <= 1:
+            return
+        canonical = canonical_geometry(geometry, self._dpi_scale)
+        self._main_window_opening_geometry = canonical
+        self._main_window_last_geometry = canonical
 
     def _init_variables(self):
         """Create the Tk variables, seeded from the saved settings.
@@ -465,7 +621,9 @@ class LibraryApp:
         the app stays exactly as it was. An approved exit with the dialog
         open also captures the dialog's geometry for next time (issue #25).
         The Advanced Search dialog needs no prompt; its geometry is
-        captured the same way (issue #98)."""
+        captured the same way (issue #98). The main window's own place is
+        captured the same way (Proposal 0023): only when the owner moved,
+        resized or maximized it since it opened."""
         if self.course_builder is not None:
             if not self.course_builder.confirm_discard_for_app_exit():
                 return
@@ -474,6 +632,7 @@ class LibraryApp:
             self.advanced_search.save_window_geometry()
         if self.song_page is not None:
             self.song_page.save_window_geometry()
+        self._save_main_window_geometry()
         if getattr(self, "_loader", None) is not None:
             # Stop a scan still parsing: without this the window is
             # gone but the process waits for the queued pool work to
@@ -482,6 +641,27 @@ class LibraryApp:
             # because bare test instances skip __init__.
             self._loader.cancel_scan()
         self.root.destroy()
+
+    def _save_main_window_geometry(self):
+        """Store the main window's place if the owner moved, resized
+        or maximized it (Proposal 0023, D5).
+
+        The tracked values are compared against the opening baseline and
+        the saved flag; only what changed is stored, and only then is
+        _save_settings called, so closing untouched writes nothing. A
+        bare instance in tests has never been placed, so the decision is
+        None and nothing is saved.
+        """
+        decision = decide_main_window_save(
+            self._main_window_last_geometry, self._main_window_opening_geometry,
+            self._main_window_last_maximized, self.main_window_maximized)
+        if decision is None:
+            return
+        if "main_window_geometry" in decision:
+            self.main_window_geometry = decision["main_window_geometry"]
+        if "main_window_maximized" in decision:
+            self.main_window_maximized = decision["main_window_maximized"]
+        self._save_settings()
 
     def _course_geometry_changed(self, geometry):
         """The course window closed with a new geometry (issue #25): remember it in settings."""
@@ -591,6 +771,17 @@ class LibraryApp:
         return (_valid_window_geometry(value, theme.SONG_PAGE_MIN_SIZE)
                 or _valid_window_position(value))
 
+    @staticmethod
+    def _valid_main_window_geometry(value):
+        """The canonical geometry string to restore the main window with, or None (Proposal 0023).
+
+        The full "WxH+X+Y" form only, at least the main window's minimum
+        size — a position alone is not a place the main window can open
+        at, since it has a fixed default size. Anything else is dropped,
+        as for the other windows.
+        """
+        return _valid_window_geometry(value, theme.WINDOW_MIN_SIZE)
+
     def _report_discarded_settings(self):
         """Append the discarded-settings note to the status line, once.
 
@@ -643,6 +834,18 @@ class LibraryApp:
         # once resized, a position alone once only moved.
         if self.song_page_geometry is not None:
             settings["song_page_geometry"] = self.song_page_geometry
+        # The main window's place (Proposal 0023): the full geometry once
+        # the owner has placed the window, and the maximized flag once
+        # the window has been placed in any way — moved, resized, or
+        # maximized. The flag is also re-emitted when it was already in
+        # the file at startup, so un-maximizing after a past maximize
+        # still clears it; a bare instance in tests has no saved
+        # settings, which reads as "never set".
+        if self.main_window_geometry is not None:
+            settings["main_window_geometry"] = self.main_window_geometry
+        if (self.main_window_maximized or self.main_window_geometry is not None
+                or getattr(self, "saved_settings", {}).get("main_window_maximized", False)):
+            settings["main_window_maximized"] = self.main_window_maximized
         # The store owns the dedup baseline and the atomic write (proposal
         # 0008); a failed write raises OSError, which the store leaves for
         # the app to report — and the baseline stays stale so the next

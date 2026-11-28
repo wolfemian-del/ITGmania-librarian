@@ -88,6 +88,9 @@ class ImportSurfaceTests(unittest.TestCase):
     def test_geometry_names_resolve(self):
         # Re-pointed to library_geometry.py at Step 4.
         self._assert_resolve((
+            "WINDOW_FRAME",
+            "canonical_geometry",
+            "decide_main_window_save",
             "declare_dpi_awareness",
             "dpi_scale_factor",
             "format_geometry",
@@ -95,10 +98,10 @@ class ImportSurfaceTests(unittest.TestCase):
             "parse_window_geometry",
             "parse_window_position",
             "parse_window_size",
+            "saved_geometry_visible",
             "scale_geometry",
             "scale_pixels",
             "work_area_of",
-            "WINDOW_FRAME",
         ), module=library_geometry)
 
     def test_window_placement_names_resolve(self):

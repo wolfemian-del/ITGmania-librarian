@@ -2059,6 +2059,648 @@ class SongPageGeometrySettingsTests(unittest.TestCase):
         instance._save_settings.assert_called_once_with()
 
 
+class MainWindowGeometryValidatorTests(unittest.TestCase):
+    """The main window's remembered place in settings (Proposal 0023, D1)."""
+
+    def test_full_geometry_at_and_above_the_minimum_is_accepted(self):
+        valid = app.LibraryApp._valid_main_window_geometry
+        self.assertEqual(valid("1500x850+10+10"), "1500x850+10+10")
+        self.assertEqual(valid("900x550+0+0"), "900x550+0+0")
+        self.assertEqual(valid("1500x850-8+100"), "1500x850+-8+100")
+
+    def test_a_smaller_geometry_a_position_only_value_and_garbage_are_dropped(self):
+        valid = app.LibraryApp._valid_main_window_geometry
+        for value in (None, 42, "garbage", "1500x850", "899x550+0+0",
+                      "900x549+0+0", "1x1+0+0", "+100+50"):
+            with self.subTest(value=value):
+                self.assertIsNone(valid(value))
+
+    def test_the_floor_is_the_main_windows_own_minimum(self):
+        # Big enough for the song page (560x420) but below the main
+        # window's floor (900 wide).
+        self.assertIsNone(app.LibraryApp._valid_main_window_geometry("600x500+10+10"))
+        self.assertEqual(app.LibraryApp._valid_song_page_geometry("600x500+10+10"),
+                         "600x500+10+10")
+
+
+class MainWindowPlacementTests(unittest.TestCase):
+    """The placement step (Proposal 0023, D2/D3): where the main window opens."""
+
+    DESKTOP = (0, 0, 1920, 1080)
+
+    @staticmethod
+    def make_root(vroot=(0, 0, 1920, 1080)):
+        root = Mock()
+        root.winfo_vrootx.return_value = vroot[0]
+        root.winfo_vrooty.return_value = vroot[1]
+        root.winfo_vrootwidth.return_value = vroot[2]
+        root.winfo_vrootheight.return_value = vroot[3]
+        root.state.return_value = "normal"
+        root.winfo_exists.return_value = True
+        return root
+
+    @staticmethod
+    def make_app(root, saved_settings=None, dpi_scale=1.0):
+        instance = object.__new__(app.LibraryApp)
+        instance.root = root
+        instance._dpi_scale = dpi_scale
+        instance.saved_settings = saved_settings or {}
+        return instance
+
+    def place(self, root, saved_settings=None, dpi_scale=1.0, work_area=None):
+        instance = self.make_app(root, saved_settings, dpi_scale)
+        # The real lookup asks Windows, so on a Windows machine the
+        # answer depends on the display and the taskbar — the CI
+        # runner's small work area capped the geometry and failed
+        # these tests. With None the placement falls back to the
+        # virtual desktop and the expected numbers are the same
+        # everywhere (the no_work_area pattern).
+        if work_area is None:
+            work_area = lambda hwnd=None, point=None: None
+        patcher = patch.object(app, "work_area_of", side_effect=work_area)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        instance._place_main_window()
+        return instance
+
+    def test_no_saved_value_centers_the_default_in_the_work_area(self):
+        # The work-area lookup is mocked to return None (see place),
+        # so the opening rule falls back to the virtual desktop.
+        root = self.make_root()
+        self.place(root)
+        # Centered in the 1920x1080 desktop: x = (1920 - 1516) // 2,
+        # y = (1080 - 889) // 2.
+        root.geometry.assert_called_once_with("1500x850+202+95")
+        root.state.assert_not_called()
+        # The whole frame (16 by 39) is inside the desktop.
+        width, height, x, y = geometry.parse_window_geometry(
+            root.geometry.call_args.args[0])
+        self.assertGreaterEqual(x, 0)
+        self.assertGreaterEqual(y, 0)
+        self.assertLessEqual(x + width + 16, 1920)
+        self.assertLessEqual(y + height + 39, 1080)
+
+    def test_a_saved_value_is_restored_at_its_saved_size(self):
+        root = self.make_root()
+        instance = self.place(root, {"main_window_geometry": "1200x800+100+50"})
+        root.geometry.assert_called_once_with("1200x800+100+50")
+        root.state.assert_not_called()
+        self.assertEqual(instance.main_window_geometry, "1200x800+100+50")
+        self.assertFalse(instance.main_window_maximized)
+        self.assertEqual(instance._main_window_opening_geometry, "1200x800+100+50")
+        self.assertEqual(instance._main_window_last_geometry, "1200x800+100+50")
+        self.assertFalse(instance._main_window_last_maximized)
+
+    def test_a_saved_maximized_flag_restores_maximized_after_the_geometry(self):
+        # Wiring (Proposal 0023, §6 case 10): geometry(...) is called
+        # before state("zoomed"), so the restored normal geometry is the
+        # one behind the maximized window.
+        root = self.make_root()
+        instance = self.place(root, {"main_window_geometry": "1200x800+100+50",
+                                     "main_window_maximized": True})
+        names = [call[0] for call in root.mock_calls]
+        self.assertLess(names.index("geometry"), names.index("state"))
+        root.geometry.assert_called_once_with("1200x800+100+50")
+        root.state.assert_called_once_with("zoomed")
+        self.assertTrue(instance.main_window_maximized)
+        self.assertTrue(instance._main_window_last_maximized)
+
+    def test_a_saved_place_on_a_second_monitor_restores_there(self):
+        desktop = (0, 0, 3840, 1080)
+        primary = (0, 0, 1920, 1032)
+        second = (1920, 0, 3840, 1032)
+
+        def fake_work_area(hwnd=None, point=None):
+            return primary if point is None else second
+
+        root = self.make_root(vroot=desktop)
+        self.place(root, {"main_window_geometry": "1200x800+2000+100"},
+                   work_area=fake_work_area)
+        root.geometry.assert_called_once_with("1200x800+2000+100")
+
+    def test_a_saved_place_off_every_monitor_centers_on_the_primary(self):
+        desktop = (0, 0, 3840, 1080)
+        primary = (0, 0, 1920, 1032)
+        second = (1920, 0, 3840, 1032)
+
+        def fake_work_area(hwnd=None, point=None):
+            return primary if point is None else second
+
+        root = self.make_root(vroot=desktop)
+        self.place(root, {"main_window_geometry": "1200x800+5000+100"},
+                   work_area=fake_work_area)
+        # Centered in the primary work area: x = (1920 - 1216) // 2,
+        # y = (1032 - 839) // 2.
+        root.geometry.assert_called_once_with("1200x800+352+96")
+
+    def test_a_saved_place_is_scaled_from_canonical_units_before_the_lookup(self):
+        # At 150% the saved top-left (100, 50) is the physical point
+        # (150, 75); the lookup must see the physical point, not the
+        # canonical one.
+        seen = []
+
+        def fake_work_area(hwnd=None, point=None):
+            seen.append(point)
+            return None
+
+        root = self.make_root()
+        self.place(root, {"main_window_geometry": "1200x800+100+50"},
+                   dpi_scale=1.5, work_area=fake_work_area)
+        self.assertEqual(seen, [None, (150, 75)])
+
+    @unittest.skipIf(app.tk is None, "Tkinter is not installed")
+    def test_a_tcl_error_on_maximize_does_not_crash_startup(self):
+        # Proposal 0023, item 5: a saved maximized flag copied to a
+        # machine that maximizes through an attribute, not a state,
+        # must not crash startup. The geometry is still set and the
+        # attributes are still seeded.
+        root = self.make_root()
+        root.state.side_effect = app.tk.TclError("bad state")
+        instance = self.place(root, {"main_window_geometry": "1200x800+100+50",
+                                     "main_window_maximized": True})
+        root.geometry.assert_called_once_with("1200x800+100+50")
+        self.assertTrue(instance.main_window_maximized)
+        self.assertTrue(instance._main_window_last_maximized)
+        self.assertEqual(instance._main_window_opening_geometry, "1200x800+100+50")
+
+    def test_init_places_the_window_after_the_stores_and_before_the_variables(self):
+        # The placement step reads saved_settings, so it cannot run in
+        # _init_window; it runs before any widget is built (Proposal
+        # 0023, B1). The order is the contract.
+        events = []
+        instance = object.__new__(app.LibraryApp)
+        instance.root = Mock()
+        for name in ("_init_window", "_init_stores", "_place_main_window",
+                     "_init_variables", "_declare_late_state", "_init_dialog",
+                     "_style", "_build", "_init_loader"):
+            setattr(instance, name,
+                    Mock(side_effect=lambda n=name: events.append(n)))
+        app.LibraryApp.__init__(instance, instance.root)
+        self.assertEqual(events, ["_init_window", "_init_stores", "_place_main_window",
+                                  "_init_variables", "_declare_late_state", "_init_dialog",
+                                  "_style", "_build", "_init_loader"])
+
+
+class MainWindowConfigureTests(unittest.TestCase):
+    """The <Configure> tracking (Proposal 0023, D4): two attributes, one binding."""
+
+    @staticmethod
+    def make_app(root, dpi_scale=1.0):
+        instance = object.__new__(app.LibraryApp)
+        instance.root = root
+        instance._dpi_scale = dpi_scale
+        instance._main_window_last_geometry = "1500x850+202+95"
+        instance._main_window_last_maximized = False
+        # Configure tracking starts only once the first Map has settled
+        # the baseline, so the fixture is the post-Map state.
+        instance._main_window_baseline_settled = True
+        return instance
+
+    def test_a_normal_configure_updates_the_geometry_and_clears_maximized(self):
+        root = Mock()
+        root.state.return_value = "normal"
+        root.geometry.return_value = "1600x900+100+50"
+        instance = self.make_app(root)
+        event = Mock()
+        event.widget = root
+        instance._on_main_window_configure(event)
+        self.assertEqual(instance._main_window_last_geometry, "1600x900+100+50")
+        self.assertFalse(instance._main_window_last_maximized)
+
+    def test_a_zoomed_configure_sets_maximized_and_leaves_the_geometry(self):
+        root = Mock()
+        root.state.return_value = "zoomed"
+        instance = self.make_app(root)
+        event = Mock()
+        event.widget = root
+        instance._on_main_window_configure(event)
+        self.assertTrue(instance._main_window_last_maximized)
+        self.assertEqual(instance._main_window_last_geometry, "1500x850+202+95")
+
+    def test_a_minimized_configure_records_nothing(self):
+        root = Mock()
+        root.state.return_value = "iconic"
+        instance = self.make_app(root)
+        event = Mock()
+        event.widget = root
+        instance._on_main_window_configure(event)
+        self.assertFalse(instance._main_window_last_maximized)
+        self.assertEqual(instance._main_window_last_geometry, "1500x850+202+95")
+
+    def test_a_descendant_configure_is_ignored(self):
+        # A binding on the root also receives every descendant's
+        # Configure events; only the root's own events count. The
+        # handler must not even ask the root its state for one.
+        root = Mock()
+        instance = self.make_app(root)
+        event = Mock()
+        event.widget = Mock()  # a child widget, not the root
+        instance._on_main_window_configure(event)
+        root.state.assert_not_called()
+        self.assertEqual(instance._main_window_last_geometry, "1500x850+202+95")
+
+    def test_the_geometry_is_stored_in_canonical_units(self):
+        root = Mock()
+        root.state.return_value = "normal"
+        root.geometry.return_value = "2400x1350+150+75"
+        instance = self.make_app(root, dpi_scale=1.5)
+        event = Mock()
+        event.widget = root
+        instance._on_main_window_configure(event)
+        self.assertEqual(instance._main_window_last_geometry, "1600x900+100+50")
+
+    def test_a_configure_before_the_first_map_leaves_a_seeded_maximized_flag_alone(self):
+        # The placement Configure fires while the window is still
+        # unmapped and can report "normal" (on Windows); for a saved
+        # maximized launch that would clear the seeded flag before the
+        # window is ever shown, and an untouched close would write it
+        # false. Tracking starts only once the first Map has settled
+        # the baseline.
+        root = Mock()
+        root.state.return_value = "normal"
+        root.geometry.return_value = "1500x850+202+95"
+        instance = self.make_app(root)
+        instance._main_window_last_maximized = True
+        instance._main_window_baseline_settled = False
+        event = Mock()
+        event.widget = root
+        instance._on_main_window_configure(event)
+        self.assertTrue(instance._main_window_last_maximized)
+        self.assertEqual(instance._main_window_last_geometry, "1500x850+202+95")
+
+
+class MainWindowBaselineTests(unittest.TestCase):
+    """The opening-baseline refinement (Proposal 0023, D4).
+
+    The baseline settles on the first <Map>, when the window becomes
+    visible with the state normal and the geometry settled — not at
+    first idle as the proposal sketched, because geometry() still
+    reads 1x1 then and an idle callback that reschedules until the
+    size settles spins the idle queue without end (observed under
+    Xvfb), and not on <Configure>, because the placement Configure
+    fires while the window is still unmapped and no Configure follows
+    the mapping.
+    """
+
+    @staticmethod
+    def make_app(root, dpi_scale=1.0):
+        instance = object.__new__(app.LibraryApp)
+        instance.root = root
+        instance._dpi_scale = dpi_scale
+        instance._main_window_opening_geometry = "1500x850+202+95"
+        instance._main_window_last_geometry = "1500x850+202+95"
+        instance._main_window_last_maximized = False
+        instance._main_window_baseline_settled = False
+        return instance
+
+    @staticmethod
+    def map_window(instance, root):
+        event = Mock()
+        event.widget = root
+        instance._on_main_window_map(event)
+
+    @staticmethod
+    def configure(instance, root):
+        event = Mock()
+        event.widget = root
+        instance._on_main_window_configure(event)
+
+    def test_the_first_map_refines_the_baseline_to_the_placed_geometry(self):
+        # The geometry the window manager actually gives can differ
+        # from the geometry requested; the baseline — and the tracked
+        # last-normal-geometry, which at the opening is the same
+        # geometry — become the placed geometry.
+        root = Mock()
+        root.state.return_value = "normal"
+        root.geometry.return_value = "1561x885+171+77"
+        instance = self.make_app(root)
+        self.map_window(instance, root)
+        self.assertEqual(instance._main_window_opening_geometry, "1561x885+171+77")
+        self.assertEqual(instance._main_window_last_geometry, "1561x885+171+77")
+        self.assertTrue(instance._main_window_baseline_settled)
+
+    def test_a_later_map_never_redefines_the_baseline(self):
+        # A Map also fires after a minimize and restore; the baseline
+        # is the opening place, not a place the owner moved to since.
+        root = Mock()
+        root.state.return_value = "normal"
+        root.geometry.return_value = "1561x885+171+77"
+        instance = self.make_app(root)
+        self.map_window(instance, root)
+        root.geometry.return_value = "900x600+50+50"
+        self.map_window(instance, root)
+        self.assertEqual(instance._main_window_opening_geometry, "1561x885+171+77")
+        self.assertEqual(instance._main_window_last_geometry, "1561x885+171+77")
+
+    def test_a_maximized_open_keeps_the_seeded_baseline(self):
+        # The geometry() reading of a zoomed root is the stale
+        # pre-maximize value, so a window that opens maximized keeps
+        # the seeded values — and the baseline still settles, so a
+        # later Map after an un-maximize does not redefine it. The
+        # geometry is a valid, different place, so it is the
+        # "only while normal" guard — not the geometry-parse guard —
+        # that stops the refinement.
+        root = Mock()
+        root.state.return_value = "zoomed"
+        root.geometry.return_value = "900x600+50+50"
+        instance = self.make_app(root)
+        self.map_window(instance, root)
+        self.assertEqual(instance._main_window_opening_geometry, "1500x850+202+95")
+        self.assertTrue(instance._main_window_baseline_settled)
+        root.state.return_value = "normal"
+        root.geometry.return_value = "1500x850+202+95"
+        self.map_window(instance, root)
+        self.assertEqual(instance._main_window_opening_geometry, "1500x850+202+95")
+
+    def test_an_unsettled_map_keeps_the_seeded_baseline(self):
+        # Before the content is laid out the size still reads 1x1;
+        # that reading must not become the baseline, and the baseline
+        # still settles, so a later Map does not redefine it.
+        root = Mock()
+        root.state.return_value = "normal"
+        root.geometry.return_value = "1x1+171+77"
+        instance = self.make_app(root)
+        self.map_window(instance, root)
+        self.assertEqual(instance._main_window_opening_geometry, "1500x850+202+95")
+        self.assertTrue(instance._main_window_baseline_settled)
+        root.geometry.return_value = "1561x885+171+77"
+        self.map_window(instance, root)
+        self.assertEqual(instance._main_window_opening_geometry, "1500x850+202+95")
+
+    def test_a_configure_updates_the_tracked_value_not_the_baseline(self):
+        # The first normal Configure can be the owner's first move;
+        # refining the baseline to it would lose the move. Configure
+        # tracking starts only once the first Map has settled the
+        # baseline, so the Map comes first here; the Configure after
+        # it updates the tracked place and leaves the baseline alone.
+        root = Mock()
+        root.state.return_value = "normal"
+        root.geometry.return_value = "1561x885+171+77"
+        instance = self.make_app(root)
+        self.map_window(instance, root)
+        root.geometry.return_value = "900x600+50+50"
+        self.configure(instance, root)
+        self.assertEqual(instance._main_window_opening_geometry, "1561x885+171+77")
+        self.assertEqual(instance._main_window_last_geometry, "900x600+50+50")
+        self.assertTrue(instance._main_window_baseline_settled)
+
+
+class MainWindowExitSaveTests(unittest.TestCase):
+    """The exit save (Proposal 0023, §6 cases 8–10) and the settings re-emit (case 9)."""
+
+    OPENING = "1500x850+202+95"
+    MOVED = "1500x850+400+300"
+
+    @staticmethod
+    def make_saving_app(directory, main_window_geometry=None,
+                        main_window_maximized=False, saved_settings=None):
+        instance = object.__new__(app.LibraryApp)
+        instance.settings_path = Path(directory) / "settings.json"
+        instance.cache_var = Mock(get=Mock(return_value="/cache"))
+        instance.stats_var = Mock(get=Mock(return_value="/stats.xml"))
+        instance.column_visibility = {col: Mock(get=Mock(return_value=True)) for col in app.HEADERS}
+        instance._table = _mock_table()
+        instance.show_distribution_panel = Mock(get=Mock(return_value=False))
+        instance.distribution_metric = Mock(get=Mock(return_value="Meter"))
+        instance.pack_var = Mock(get=Mock(return_value="All packs"))
+        instance.type_var = Mock(get=Mock(return_value="All types"))
+        instance.diff_var = Mock(get=Mock(return_value="All difficulties"))
+        instance.course_geometry = None
+        instance.advanced_search_geometry = None
+        instance.song_page_geometry = None
+        instance.main_window_geometry = main_window_geometry
+        instance.main_window_maximized = main_window_maximized
+        instance.saved_settings = saved_settings or {}
+        instance._main_window_last_geometry = None
+        instance._main_window_opening_geometry = None
+        instance._main_window_last_maximized = False
+        instance._settings_store = stores.SettingsStore(instance.settings_path)
+        instance._settings_store.load()
+        return instance
+
+    def read_settings(self, directory):
+        return json.loads((Path(directory) / "settings.json").read_text(encoding="utf-8"))
+
+    def test_the_keys_join_only_once_the_window_has_been_placed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            instance = self.make_saving_app(directory)
+            instance._save_settings()
+            data = self.read_settings(directory)
+            self.assertNotIn("main_window_geometry", data)
+            self.assertNotIn("main_window_maximized", data)
+        with tempfile.TemporaryDirectory() as directory:
+            instance = self.make_saving_app(directory, main_window_geometry=self.MOVED)
+            instance._save_settings()
+            data = self.read_settings(directory)
+            self.assertEqual(data["main_window_geometry"], self.MOVED)
+            # A move places the window, so the flag joins too (false).
+            self.assertIs(data["main_window_maximized"], False)
+        with tempfile.TemporaryDirectory() as directory:
+            instance = self.make_saving_app(directory, main_window_maximized=True)
+            instance._save_settings()
+            data = self.read_settings(directory)
+            self.assertIs(data["main_window_maximized"], True)
+            self.assertNotIn("main_window_geometry", data)
+
+    def test_case_9_a_later_save_re_emits_both_keys_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            instance = self.make_saving_app(directory, main_window_geometry=self.MOVED,
+                                            main_window_maximized=True)
+            instance._save_settings()
+            instance._table.layout_state.return_value["column_widths"] = {
+                col: 150 for col in app.HEADERS}  # an unrelated change forces a rewrite
+            instance._save_settings()
+            data = self.read_settings(directory)
+            self.assertEqual(data["main_window_geometry"], self.MOVED)
+            self.assertIs(data["main_window_maximized"], True)
+
+    def test_un_maximizing_after_a_past_maximize_clears_the_flag(self):
+        # The file holds the flag true and no geometry (a first-ever
+        # maximize); the owner opens maximized, un-maximizes, and closes.
+        # The exit save must write the flag false, not leave true in place.
+        with tempfile.TemporaryDirectory() as directory:
+            instance = self.make_saving_app(
+                directory, main_window_maximized=True,
+                saved_settings={"main_window_maximized": True})
+            instance._main_window_last_geometry = self.OPENING
+            instance._main_window_opening_geometry = self.OPENING
+            instance._main_window_last_maximized = False
+            instance._save_main_window_geometry()
+            data = self.read_settings(directory)
+            self.assertIs(data["main_window_maximized"], False)
+            self.assertNotIn("main_window_geometry", data)
+
+    def test_a_minimized_window_keeps_the_tracked_maximized_flag(self):
+        # The exit save must use the tracked shown state, not a live
+        # state() read: a maximized window that is minimized when the
+        # app closes is still maximized, and the flag is written. The
+        # root reports "iconic" here, so reading state() instead of
+        # the tracked flag would write nothing — and no file at all.
+        with tempfile.TemporaryDirectory() as directory:
+            instance = self.make_saving_app(
+                directory, main_window_maximized=False,
+                saved_settings={})
+            instance.root = Mock()
+            instance.root.state.return_value = "iconic"
+            instance._main_window_last_geometry = self.OPENING
+            instance._main_window_opening_geometry = self.OPENING
+            instance._main_window_last_maximized = True
+            instance._save_main_window_geometry()
+            settings_file = Path(directory) / "settings.json"
+            self.assertTrue(settings_file.is_file(), "the exit save wrote the flag")
+            data = json.loads(settings_file.read_text(encoding="utf-8"))
+            self.assertIs(data["main_window_maximized"], True)
+            self.assertNotIn("main_window_geometry", data)
+
+    def test_case_8_a_cancelled_exit_writes_nothing(self):
+        instance = object.__new__(app.LibraryApp)
+        instance.root = Mock()
+        instance.course_builder = Mock()
+        instance.course_builder.confirm_discard_for_app_exit.return_value = False
+        instance.advanced_search = None
+        instance.song_page = None
+        instance.main_window_geometry = self.OPENING
+        instance._main_window_last_geometry = self.MOVED
+        instance._main_window_opening_geometry = self.OPENING
+        instance._main_window_last_maximized = False
+        instance.main_window_maximized = False
+        instance._save_settings = Mock()
+        instance._close_app()
+        instance._save_settings.assert_not_called()
+        self.assertEqual(instance.main_window_geometry, self.OPENING)
+        instance.root.destroy.assert_not_called()
+
+    def test_case_10_the_exit_save_runs_before_the_root_is_destroyed(self):
+        # Wiring (Proposal 0023, §6 case 10): the save runs before
+        # root.destroy, in the LibraryAppExitTests attach_mock pattern.
+        instance = object.__new__(app.LibraryApp)
+        instance.root = Mock()
+        instance.course_builder = None
+        instance.advanced_search = None
+        instance.song_page = None
+        instance._main_window_last_geometry = self.MOVED
+        instance._main_window_opening_geometry = self.OPENING
+        instance._main_window_last_maximized = False
+        instance.main_window_maximized = False
+        instance._save_settings = Mock()
+        manager = Mock()
+        manager.attach_mock(instance._save_settings, "save")
+        manager.attach_mock(instance.root, "root")
+        instance._close_app()
+        names = [call[0] for call in manager.mock_calls]
+        self.assertIn("save", names)
+        self.assertLess(names.index("save"), names.index("root.destroy"))
+        self.assertEqual(instance.main_window_geometry, self.MOVED)
+
+    def test_an_approved_exit_with_no_change_writes_nothing(self):
+        instance = object.__new__(app.LibraryApp)
+        instance.root = Mock()
+        instance.course_builder = None
+        instance.advanced_search = None
+        instance.song_page = None
+        instance._main_window_last_geometry = self.OPENING
+        instance._main_window_opening_geometry = self.OPENING
+        instance._main_window_last_maximized = False
+        instance.main_window_maximized = False
+        instance._save_settings = Mock()
+        instance._close_app()
+        instance._save_settings.assert_not_called()
+        instance.root.destroy.assert_called_once_with()
+
+
+class LiveMainWindowGeometryTests(unittest.TestCase):
+    """The main window's remembered place in a real window (Proposal 0023, §6)."""
+
+    def make_settings(self):
+        settings_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(settings_dir.cleanup)
+        settings_path = Path(settings_dir.name) / "settings.json"
+        patcher = patch.object(
+            app.LibraryApp, "_settings_file_path", staticmethod(lambda: settings_path))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return settings_path
+
+    @staticmethod
+    def make_root():
+        if app.tk is None:
+            raise unittest.SkipTest("Tkinter is not installed")
+        try:
+            root = app.tk.Tk()
+        except app.tk.TclError:
+            raise unittest.SkipTest("No display available for Tk")
+        return root
+
+    def test_first_open_is_centered_with_its_whole_frame_inside_the_desktop(self):
+        self.make_settings()
+        root = self.make_root()
+        try:
+            application = app.LibraryApp(root)
+            # Let the geometry manager settle the requested size before
+            # reading it back: an unmapped window still reports 1x1
+            # (the LiveDpiScaleTests note).
+            root.update_idletasks()
+            factor = application._dpi_scale
+            width, height, x, y = geometry.parse_window_geometry(root.geometry())
+            left = root.winfo_vrootx()
+            top = root.winfo_vrooty()
+            right = left + root.winfo_vrootwidth()
+            bottom = top + root.winfo_vrootheight()
+            frame_width, frame_height = (
+                geometry.scale_pixels(value, factor) for value in geometry.WINDOW_FRAME)
+            self.assertGreaterEqual(
+                width, geometry.scale_pixels(theme.WINDOW_MIN_SIZE[0], factor))
+            self.assertGreaterEqual(
+                height, geometry.scale_pixels(theme.WINDOW_MIN_SIZE[1], factor))
+            self.assertGreaterEqual(x, left)
+            self.assertGreaterEqual(y, top)
+            self.assertLessEqual(x + width + frame_width, right)
+            self.assertLessEqual(y + height + frame_height, bottom)
+        finally:
+            with contextlib.suppress(Exception):
+                root.destroy()
+
+    def test_a_move_survives_a_restart(self):
+        self.make_settings()
+        root = self.make_root()
+        try:
+            application = app.LibraryApp(root)
+            factor = application._dpi_scale
+            # Let the window be shown (the <Map> settles the opening
+            # baseline to the placed geometry) before moving, so the
+            # move is a change from it.
+            root.update_idletasks()
+            # A place that fits on a ~1024-wide display, so the window
+            # manager has nothing to clamp. The move is in physical
+            # pixels; what is saved is the canonical form of the
+            # geometry the window actually shows.
+            root.geometry("950x650+50+50")
+            root.update()
+            placed = root.geometry()
+            expected = geometry.canonical_geometry(placed, factor)
+            application._close_app()
+        finally:
+            with contextlib.suppress(Exception):
+                root.destroy()
+        # Reopen with the same settings file: the window comes back
+        # where it was left.
+        root2 = self.make_root()
+        try:
+            application2 = app.LibraryApp(root2)
+            root2.update_idletasks()
+            self.assertEqual(application2.main_window_geometry, expected)
+            # The reopened window's size can grow to fit its content
+            # under a bare X server, but its place is the saved one.
+            reopened = geometry.parse_window_geometry(
+                geometry.canonical_geometry(
+                    root2.geometry(), application2._dpi_scale))
+            saved = geometry.parse_window_geometry(expected)
+            self.assertEqual((reopened[2], reopened[3]), (saved[2], saved[3]))
+        finally:
+            with contextlib.suppress(Exception):
+                root2.destroy()
+
+
 class LiveDpiScaleTests(unittest.TestCase):
     """DPI awareness (issue #51) in a real window: the factor comes from the
     display, and the window, its minimum size, and its column widths are the

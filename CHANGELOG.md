@@ -9,14 +9,18 @@
 ### Faster refresh
 
 - Refreshing after changing a few songs now re-reads only the files that changed, instead of the whole library. The reading step of a warm refresh drops from about 29 seconds to about 1 second when little changed. (Proposal 0018, PR #269.)
-- The table no longer throws away every row and puts them all back on each refresh. It now changes only the rows that actually changed, so narrowing to one difficulty takes 0.62 seconds (was 10.01) and widening back takes 12.30 seconds (was 358.55) on a 42,375-row library. (Proposal 0019, PR #271.)
+- The table no longer throws away every row and puts them all back on each refresh. It now changes only the rows that actually changed. Together with Proposal 0022 below, narrowing to one difficulty takes 0.62 seconds (was 10.01) and widening back takes 12.30 seconds (was 358.55) on a 42,375-row library. (Proposal 0019, PR #271; Proposal 0022, PR #277.)
 - Clicking a column title to re-sort is faster: the table rebuilds the display text only for rows the loader says changed, so a title click now takes about 0.7 seconds end to end. (Proposal 0022, PR #277.)
 - When a lot of files changed and the app has to read them all again, it now spreads the reading across your processor's cores instead of reading one file at a time, so a full re-read is faster on a multi-core machine. (Proposal 0020, PR #281.)
 - Narrowing a filter and widening it back is faster still: the table now hides rows it is not showing instead of deleting them, so widening back takes 2.24 seconds (was 12.30) on a 42,375-row library. (Proposal 0021, PR #283.)
 
+### Main window
+
+- The main window now remembers where you left it: its size, position and maximized state are saved when you close the app and restored on the next open. The first time you open it, it starts centered in your work area instead of below the taskbar. (Proposal 0023.)
+
 ### Fixed
 
-- A failed Load no longer leaves old scores on screen: if a sync is retried after a failed load, the app now does a full refresh so stale scores cannot persist. (PR #277.)
+- A Load that interrupts a score sync and then fails no longer leaves old scores on screen: the app now redraws the table from the current scores when the Load fails, without needing another sync. (PR #277.)
 - A row you selected while the table was still redrawing no longer keeps its white selected text after it is hidden and shown again. (PR #283.)
 
 ## 1.4.0 - 2026-11-20
