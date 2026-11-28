@@ -94,11 +94,12 @@ This is an ownership move. The loader already writes every other status line and
 **Shell `__init__`** becomes named private steps, each with a one-paragraph docstring stating *needs* and *provides*:
 1. `_init_window()` (62–71)
 2. `_init_stores()` (72–84)
-3. `_init_variables()` (85–119)
-4. `_declare_late_state()` (120–155), grouped by the step that fills each name, now including `course_geometry`, `advanced_search_geometry` and `_file_menu`
-5. `_init_dialog()` (156–167)
-6. `_style()` then `_build()`
-7. `_init_loader()` (170–182), ending with `self._loader.start()`
+3. `_place_main_window()` — added by Proposal 0023, which places the main window where it was left (or centered on a first open) once the settings exist, before any variable or widget is built
+4. `_init_variables()` (85–119)
+5. `_declare_late_state()` (120–155), grouped by the step that fills each name, now including `course_geometry`, `advanced_search_geometry` and `_file_menu`
+6. `_init_dialog()` (156–167)
+7. `_style()` then `_build()`
+8. `_init_loader()` (170–182), ending with `self._loader.start()`
 
 The two dialog lambdas are replaced by `load_callback=self.load_data` (the existing delegate at 633) and a one-line `_paths_match_loaded` delegate. A comment above step 5 states the cycle once and lists the late-bound references: the dialog pair (L1, L2), the course builder's two delegates that read `_table` (L3), and the table-frame callable (L4, left alone). After construction, `self._loader` is read by four methods: `load_data`, `sync_scores`, `export_csv` and `_paths_match_loaded`. PR 2 confirms that with a grep. The stale comment at 127–129 is corrected.
 

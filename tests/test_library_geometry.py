@@ -312,6 +312,235 @@ class WorkAreaTests(unittest.TestCase):
             dll.return_value.MonitorFromWindow.return_value = 0  # no monitor
             self.assertIsNone(data.work_area_of(1234))
 
+    def test_a_point_is_accepted_and_ignored_off_windows(self):
+        # Proposal 0023: the point is the saved place's top-left, scaled
+        # to physical pixels; off Windows there is no monitor to ask, so
+        # the lookup reports "unknown" and the caller falls back to the
+        # virtual desktop.
+        with patch.object(data.sys, "platform", "linux"):
+            self.assertIsNone(data.work_area_of(point=(100, 100)))
+            self.assertIsNone(data.work_area_of(point=(5000, 5000)))
+
+    def test_a_point_asks_monitor_from_point_by_value(self):
+        # Proposal 0023, item 4: MonitorFromPoint takes a POINT by value,
+        # so argtypes is set on the private WinDLL handle, as for
+        # MonitorFromWindow. The call itself is pinned, not the rect: the
+        # real rect comes from Windows, which the sandbox cannot reach.
+        with patch.object(data.sys, "platform", "win32"), \
+                patch.object(data.ctypes, "WinDLL", create=True) as dll:
+            user32 = dll.return_value
+            user32.MonitorFromPoint.return_value = 7
+            result = data.work_area_of(point=(200, 100))
+            self.assertEqual(user32.MonitorFromPoint.call_count, 1)
+            point, flags = user32.MonitorFromPoint.call_args.args
+            self.assertEqual((point.x, point.y), (200, 100))
+            self.assertEqual(flags, 2)  # MONITOR_DEFAULTTONEAREST
+            self.assertEqual(user32.MonitorFromPoint.argtypes,
+                             [data.ctypes.wintypes.POINT, data.ctypes.wintypes.DWORD])
+            # The monitor was found and the info call answered: the work
+            # area is whatever rcWork holds (a Mock here, so only the
+            # shape is asserted).
+            self.assertEqual(len(result), 4)
+
+
+class CanonicalGeometryTests(unittest.TestCase):
+    """canonical_geometry (Proposal 0023): the inverse of scale_geometry."""
+
+    def test_scale_one_leaves_the_string_unchanged(self):
+        self.assertEqual(data.canonical_geometry("1500x850+100+50", 1.0),
+                         "1500x850+100+50")
+
+    def test_a_scaled_geometry_comes_back_to_canonical_units(self):
+        self.assertEqual(data.canonical_geometry("2250x1275+150+75", 1.5),
+                         "1500x850+100+50")
+        self.assertEqual(data.canonical_geometry("2250x1275", 1.5), "1500x850")
+        self.assertEqual(data.canonical_geometry("1500x930+-12+150", 1.5),
+                         "1000x620+-8+100")
+
+    def test_scaling_then_canonicalizing_round_trips(self):
+        for value in ("1000x620+10+10", "900x620+-8+100", "1500x850"):
+            for factor in (1.25, 1.5):
+                with self.subTest(value=value, factor=factor):
+                    self.assertEqual(
+                        data.canonical_geometry(data.scale_geometry(value, factor), factor),
+                        value)
+
+    def test_an_unusable_scale_leaves_the_string_unchanged(self):
+        for scale in (0, -1.5, float("inf"), float("nan")):
+            with self.subTest(scale=scale):
+                self.assertEqual(data.canonical_geometry("1000x620+10+10", scale),
+                                 "1000x620+10+10")
+
+    def test_an_unparseable_value_is_returned_unchanged(self):
+        self.assertEqual(data.canonical_geometry("banana", 1.5), "banana")
+
+
+class SavedGeometryVisibleTests(unittest.TestCase):
+    """saved_geometry_visible (Proposal 0023): the visibility half of opening_geometry's rule 2."""
+
+    DESKTOP = (0, 0, 1920, 1080)
+    WORK = (0, 0, 1920, 1032)
+    MIN_SIZE = (900, 550)
+
+    def visible(self, saved, desktop=DESKTOP, scale=1.0, work=WORK, min_size=MIN_SIZE):
+        return data.saved_geometry_visible(saved, desktop, scale, work, min_size)
+
+    def test_a_visible_saved_place_is_visible(self):
+        self.assertTrue(self.visible("900x620+30+40"))
+
+    def test_a_place_off_every_monitor_is_not_visible(self):
+        self.assertFalse(self.visible("900x620+5000+40"))
+
+    def test_width_threshold_exactly_100_pixels_visible(self):
+        self.assertTrue(self.visible("900x620+1820+40"))
+        self.assertFalse(self.visible("900x620+1821+40"))
+
+    def test_width_threshold_at_the_left_edge_pair(self):
+        self.assertTrue(self.visible("900x620+-800+40"))
+        self.assertFalse(self.visible("900x620+-801+40"))
+
+    def test_height_threshold_exactly_32_pixels_visible(self):
+        self.assertTrue(self.visible("900x620+40+1048"))
+        self.assertFalse(self.visible("900x620+40+1049"))
+
+    def test_title_bar_exactly_16_pixels_above_the_top_is_visible(self):
+        self.assertTrue(self.visible("900x620+100+-16"))
+        self.assertFalse(self.visible("900x620+100+-17"))
+
+    def test_a_missing_position_only_or_unparsable_value_is_not_visible(self):
+        for saved in (None, "", "garbage", "1000x620", "1000x620+10", "+10+10"):
+            with self.subTest(saved=saved):
+                self.assertFalse(self.visible(saved))
+
+    def test_no_work_area_falls_back_to_the_desktop(self):
+        # Off Windows the lookup returns None; the helper caps against
+        # the desktop, as opening_geometry does.
+        self.assertTrue(self.visible("900x620+30+40", work=None))
+        self.assertFalse(self.visible("900x620+5000+40", work=None))
+
+    def test_thresholds_scale_with_the_display(self):
+        # At 150% the strips are 150 and 48 pixels and the title
+        # allowance is 24, and the saved canonical values are scaled
+        # before the test, as in opening_geometry.
+        self.assertTrue(self.visible("900x620+1180+40", scale=1.5))
+        self.assertFalse(self.visible("900x620+1181+40", scale=1.5))
+        self.assertTrue(self.visible("900x620+100+-16", scale=1.5))
+        self.assertFalse(self.visible("900x620+100+-17", scale=1.5))
+
+
+class VisibilityAgreementTests(unittest.TestCase):
+    """saved_geometry_visible and opening_geometry agree (Proposal 0023, Claude note 1).
+
+    Both call the one shared _visible_saved_box, so a saved place cannot
+    be visible to one and invisible to the other. The grid asserts the
+    biconditional through opening_geometry's observable behaviour: a
+    visible place is restored at its saved position, an invisible one is
+    centered elsewhere. The centered position for a 900x620 window in
+    the 1920x1032 work area is (502, 186), which no grid position is,
+    so the two cases cannot be confused.
+    """
+
+    DESKTOP = (0, 0, 1920, 1080)
+    WORK = (0, 0, 1920, 1032)
+    MIN_SIZE = (900, 550)
+
+    def test_the_two_agree_over_a_grid_of_saved_places(self):
+        xs = (-1000, -800, -100, 0, 100, 500, 1000, 1500, 1820, 1821, 1900, 5000)
+        ys = (-100, -17, -16, 0, 100, 500, 700, 1048, 1049, 1080)
+        for x in xs:
+            for y in ys:
+                saved = f"900x620+{x}+{y}"
+                with self.subTest(saved=saved):
+                    visible = data.saved_geometry_visible(
+                        saved, self.DESKTOP, 1.0, self.WORK, self.MIN_SIZE)
+                    result = data.opening_geometry(
+                        saved, (1500, 850), self.DESKTOP, 1.0,
+                        work=self.WORK, min_size=self.MIN_SIZE)
+                    width, height, rx, ry = data.parse_window_geometry(result)
+                    if visible:
+                        self.assertEqual((rx, ry), (x, y))
+                        self.assertEqual((width, height), (900, 620))
+                    else:
+                        self.assertNotEqual((rx, ry), (x, y))
+
+    def test_the_two_agree_at_150_percent_and_on_a_second_monitor(self):
+        # At 150% the saved canonical values are scaled before the test.
+        self.assertTrue(data.saved_geometry_visible(
+            "900x620+1180+40", self.DESKTOP, 1.5, self.WORK, self.MIN_SIZE))
+        result = data.opening_geometry(
+            "900x620+1180+40", (1500, 850), self.DESKTOP, 1.5,
+            work=self.WORK, min_size=self.MIN_SIZE)
+        self.assertEqual(result, "1350x930+1770+60")
+        # A second monitor's work area: the same saved place is visible
+        # there and the rule restores it at its saved position.
+        desktop = (0, 0, 3840, 1080)
+        second = (1920, 0, 3840, 1032)
+        self.assertTrue(data.saved_geometry_visible(
+            "900x620+2000+100", desktop, 1.0, second, self.MIN_SIZE))
+        result = data.opening_geometry(
+            "900x620+2000+100", (1500, 850), desktop, 1.0,
+            work=second, min_size=self.MIN_SIZE)
+        self.assertEqual(result, "900x620+2000+100")
+
+
+class MainWindowSaveDecisionTests(unittest.TestCase):
+    """decide_main_window_save (Proposal 0023, §6): the ten save cases as a Tk-free pure function.
+
+    Cases (1)–(7) are the function alone; (8)–(10) are the shell's
+    wiring and live in tests/test_library_librarian.py.
+    """
+
+    OPENING = "1500x850+210+91"
+    MOVED = "1500x850+300+100"
+
+    def decide(self, last, opening, last_maximized, saved_maximized):
+        return data.decide_main_window_save(last, opening, last_maximized, saved_maximized)
+
+    def test_case_1_an_untouched_normal_session_writes_nothing(self):
+        self.assertIsNone(self.decide(self.OPENING, self.OPENING, False, False))
+
+    def test_case_2_a_moved_window_writes_the_geometry_only(self):
+        self.assertEqual(self.decide(self.MOVED, self.OPENING, False, False),
+                         {"main_window_geometry": self.MOVED})
+
+    def test_case_3_a_window_dragged_back_to_its_opening_place_writes_nothing(self):
+        # The function sees only the final values: moved and returned
+        # reads exactly as never moved.
+        self.assertIsNone(self.decide(self.OPENING, self.OPENING, False, False))
+
+    def test_case_4_opened_normal_maximized_closed_with_no_move_writes_the_flag_only(self):
+        # The last normal geometry is the opening geometry, so it equals
+        # the baseline and the saved geometry stays as it was.
+        self.assertEqual(self.decide(self.OPENING, self.OPENING, True, False),
+                         {"main_window_maximized": True})
+
+    def test_case_5_opened_maximized_closed_untouched_writes_nothing(self):
+        self.assertIsNone(self.decide(self.OPENING, self.OPENING, True, True))
+
+    def test_case_6_opened_maximized_un_maximized_closed_with_no_move_writes_the_flag_only(self):
+        # The window returns to the opening geometry, so it equals the
+        # baseline and the saved geometry stays as it was.
+        self.assertEqual(self.decide(self.OPENING, self.OPENING, False, True),
+                         {"main_window_maximized": False})
+
+    def test_case_7_minimizing_alone_changes_neither_input(self):
+        # Maximized then minimized: the shown state keeps its last shown
+        # value, so the flag is written.
+        self.assertEqual(self.decide(self.OPENING, self.OPENING, True, False),
+                         {"main_window_maximized": True})
+        # Normal then minimized: the flag stays false, so nothing is written.
+        self.assertIsNone(self.decide(self.OPENING, self.OPENING, False, False))
+
+    def test_both_changed_writes_both(self):
+        self.assertEqual(self.decide(self.MOVED, self.OPENING, True, False),
+                         {"main_window_geometry": self.MOVED,
+                          "main_window_maximized": True})
+
+    def test_a_window_never_placed_writes_no_geometry(self):
+        self.assertIsNone(self.decide(None, None, False, False))
+        self.assertEqual(self.decide(None, None, True, False),
+                         {"main_window_maximized": True})
+
 
 class DpiScaleTests(unittest.TestCase):
     """Display scaling (issue #51): the factor probe, pixel/geometry scaling, and the awareness call."""

@@ -161,6 +161,46 @@ def _visible_enough(desktop, x, y, width, height, scale) -> bool:
             and y >= top - scale_pixels(16, scale))
 
 
+def _enforced_size(width, height, work, frame, min_size, scale):
+    """The size a window actually opens with: capped to the work area
+    less the frame, and never below its minimum (issue #244).
+
+    When the work area is smaller than the minimum plus the frame, the
+    minimum wins and the window hangs off the work area; the clamp in
+    opening_geometry then keeps its left and top edges on screen.
+    """
+    frame_width = scale_pixels(frame[0], scale)
+    frame_height = scale_pixels(frame[1], scale)
+    min_width = scale_pixels(min_size[0], scale)
+    min_height = scale_pixels(min_size[1], scale)
+    work_left, work_top, work_right, work_bottom = work
+    max_width = max(1, (work_right - work_left) - frame_width)
+    max_height = max(1, (work_bottom - work_top) - frame_height)
+    return (max(min_width, min(width, max_width)),
+            max(min_height, min(height, max_height)))
+
+
+def _visible_saved_box(saved, desktop, scale, work, frame, min_size):
+    """The capped (width, height, x, y) of a saved full-form geometry
+    that is visible enough on the desktop, or None.
+
+    The shared parse, scale, cap and visibility step behind
+    opening_geometry's rule 2 and saved_geometry_visible (Proposal
+    0023): both call this one function, so a saved place cannot be
+    visible to one and invisible to the other. A missing, position-only
+    or unparsable value is not a full geometry, so it is not visible.
+    """
+    work = work or desktop
+    full = parse_window_geometry(saved)
+    if full is None:
+        return None
+    width, height, x, y = (scale_pixels(value, scale) for value in full)
+    width, height = _enforced_size(width, height, work, frame, min_size, scale)
+    if _visible_enough(desktop, x, y, width, height, scale):
+        return (width, height, x, y)
+    return None
+
+
 def opening_geometry(saved, size, desktop, scale, *, anchor=None, work=None,
                      frame=WINDOW_FRAME, min_size=(1, 1)) -> str:
     """The geometry string a window opens with (issues #25, #98, #103; Proposal 0016).
@@ -189,7 +229,8 @@ def opening_geometry(saved, size, desktop, scale, *, anchor=None, work=None,
        below 1.
     2. A full saved geometry whose capped box is visible enough (see
        _visible_enough) is returned as it is: a place the owner dragged to
-       is not second-guessed, so it is never clamped.
+       is not second-guessed, so it is never clamped. Rule 2 shares
+       _visible_saved_box with saved_geometry_visible (Proposal 0023).
     3. A position-only saved geometry whose capped box, at the saved
        position, is visible enough is kept, shifted if need be so the whole
        outer box (size plus frame) lies inside the work area.
@@ -201,33 +242,24 @@ def opening_geometry(saved, size, desktop, scale, *, anchor=None, work=None,
     work = work or desktop
     frame_width = scale_pixels(frame[0], scale)
     frame_height = scale_pixels(frame[1], scale)
-    min_width = scale_pixels(min_size[0], scale)
-    min_height = scale_pixels(min_size[1], scale)
     work_left, work_top, work_right, work_bottom = work
-    max_width = max(1, (work_right - work_left) - frame_width)
-    max_height = max(1, (work_bottom - work_top) - frame_height)
-
-    def enforced_size(width, height):
-        # The size the window will actually have: capped to the work area
-        # less the frame, and never below its minimum (issue #244). When
-        # the work area is smaller than the minimum plus the frame, the
-        # minimum wins and the window hangs off the work area; the clamp
-        # below then keeps its left and top edges on screen.
-        return (max(min_width, min(width, max_width)),
-                max(min_height, min(height, max_height)))
 
     def clamped(x, y, width, height):
         return (max(work_left, min(x, work_right - (width + frame_width))),
                 max(work_top, min(y, work_bottom - (height + frame_height))))
 
+    visible = _visible_saved_box(saved, desktop, scale, work, frame, min_size)
+    if visible is not None:
+        return format_geometry(*visible)
     full = parse_window_geometry(saved)
     if full is not None:
-        width, height, x, y = (scale_pixels(value, scale) for value in full)
-        width, height = enforced_size(width, height)
-        if _visible_enough(desktop, x, y, width, height, scale):
-            return format_geometry(width, height, x, y)
+        # Rule 4: a full saved geometry that is no longer visible keeps
+        # its (capped) size and loses only its position.
+        width, height = _enforced_size(
+            scale_pixels(full[0], scale), scale_pixels(full[1], scale),
+            work, frame, min_size, scale)
     else:
-        width, height = enforced_size(size[0], size[1])
+        width, height = _enforced_size(size[0], size[1], work, frame, min_size, scale)
         position = parse_window_position(saved)
         if position is not None:
             x, y = (scale_pixels(value, scale) for value in position)
@@ -243,16 +275,80 @@ def opening_geometry(saved, size, desktop, scale, *, anchor=None, work=None,
     return format_geometry(width, height, *clamped(x, y, width, height))
 
 
-def work_area_of(hwnd=None):
+def canonical_geometry(geometry, scale):
+    """A geometry string in canonical 100% units (Proposal 0023).
+
+    The window reports physical pixels; this is the inverse of
+    scale_geometry — the same conversion WindowPlacement._canonical
+    does for a window, as a public Tk-free function so the shell can
+    canonicalize the main window's geometry without a helper. A scale
+    that is not a positive finite number leaves the string unchanged
+    rather than scaling by nonsense.
+    """
+    try:
+        factor = 1.0 / float(scale)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return geometry
+    if not math.isfinite(factor) or factor <= 0:
+        return geometry
+    return scale_geometry(geometry, factor)
+
+
+def saved_geometry_visible(saved, desktop, scale, work, min_size=(1, 1)):
+    """Whether a saved full-form geometry is visible enough to restore (Proposal 0023).
+
+    The visibility half of opening_geometry's rule 2, as a Tk-free
+    helper the shell calls before choosing the work area: a saved place
+    on a second monitor selects that monitor's work area, and one that
+    is no longer visible selects the primary's. It shares
+    _visible_saved_box with opening_geometry, so the two cannot
+    disagree; min_size is the same minimum the opening call uses, so
+    the cap matches too. A missing, position-only or unparsable value
+    is not visible. The work area is the one to cap against; None falls
+    back to the desktop, as opening_geometry does.
+    """
+    return _visible_saved_box(saved, desktop, scale, work, WINDOW_FRAME, min_size) is not None
+
+
+def decide_main_window_save(last_geometry, opening_baseline, last_maximized, saved_maximized):
+    """The settings keys a closing main window writes, or None (Proposal 0023).
+
+    A Tk-free pure function: the shell compares what the window was
+    last doing against what it opened with and what the file holds.
+    The geometry is written exactly when the last normal geometry
+    differs from the opening baseline, and the flag exactly when the
+    last shown maximized state differs from the saved flag:
+
+    - both unchanged: nothing;
+    - geometry changed, flag unchanged: the geometry only;
+    - geometry unchanged, flag changed: the flag only;
+    - both changed: the geometry and the flag.
+
+    A last geometry of None (the window was never placed) writes no
+    geometry, and a baseline of None cannot be compared, so it writes
+    no geometry either. Minimizing alone changes neither input, so a
+    minimized window writes nothing on its own.
+    """
+    keys = {}
+    if (last_geometry is not None and opening_baseline is not None
+            and last_geometry != opening_baseline):
+        keys["main_window_geometry"] = last_geometry
+    if bool(last_maximized) != bool(saved_maximized):
+        keys["main_window_maximized"] = bool(last_maximized)
+    return keys or None
+
+
+def work_area_of(hwnd=None, point=None):
     """The work area of a monitor as (left, top, right, bottom), or None.
 
     The work area is the part of a monitor Windows leaves free of reserved
     areas such as the taskbar. With a window handle it is the work area of
     the monitor holding that window (the nearest monitor, should the window
-    be off every one); without one, the primary monitor's. Returns None
-    off Windows and when any call fails, and the caller falls back to the
-    virtual desktop. Windows only; not testable in the sandbox beyond that
-    fallback (Proposal 0016 D6).
+    be off every one); with a point, in physical pixels, it is the work
+    area of the monitor nearest that point (Proposal 0023); without either,
+    the primary monitor's. Returns None off Windows and when any call
+    fails, and the caller falls back to the virtual desktop. Windows only;
+    not testable in the sandbox beyond that fallback (Proposal 0016 D6).
     """
     if sys.platform != "win32":
         return None
@@ -266,23 +362,30 @@ def work_area_of(hwnd=None):
         # A private DLL handle, so setting argument types here cannot change
         # how any other code calls the same functions.
         user32 = ctypes.WinDLL("user32")
-        if hwnd:
+        user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MonitorInfo)]
+        if point is not None:
+            # MonitorFromPoint takes a POINT by value (Proposal 0023).
+            user32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+            user32.MonitorFromPoint.restype = wintypes.HANDLE
+            monitor = user32.MonitorFromPoint(
+                wintypes.POINT(point[0], point[1]), 2)  # MONITOR_DEFAULTTONEAREST
+        elif hwnd:
             user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
             user32.MonitorFromWindow.restype = wintypes.HANDLE
-            user32.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MonitorInfo)]
             monitor = user32.MonitorFromWindow(hwnd, 2)  # MONITOR_DEFAULTTONEAREST
-            info = MonitorInfo()
-            info.cbSize = ctypes.sizeof(MonitorInfo)
-            if not monitor or not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
-                return None
-            rect = info.rcWork
         else:
             rect = wintypes.RECT()
             # SPI_GETWORKAREA: the primary monitor's work area.
             if not user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
                 return None
+            return (rect.left, rect.top, rect.right, rect.bottom)
+        info = MonitorInfo()
+        info.cbSize = ctypes.sizeof(MonitorInfo)
+        if not monitor or not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return None
+        rect = info.rcWork
         return (rect.left, rect.top, rect.right, rect.bottom)
-    except (AttributeError, OSError, ValueError, TypeError, ctypes.ArgumentError):
+    except (AttributeError, IndexError, OSError, ValueError, TypeError, ctypes.ArgumentError):
         return None
 
 
@@ -308,6 +411,8 @@ def declare_dpi_awareness() -> None:
 
 __all__ = [
     "WINDOW_FRAME",
+    "canonical_geometry",
+    "decide_main_window_save",
     "declare_dpi_awareness",
     "dpi_scale_factor",
     "format_geometry",
@@ -315,6 +420,7 @@ __all__ = [
     "parse_window_geometry",
     "parse_window_position",
     "parse_window_size",
+    "saved_geometry_visible",
     "scale_geometry",
     "scale_pixels",
     "work_area_of",
