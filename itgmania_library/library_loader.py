@@ -480,12 +480,18 @@ class LibraryLoader:
                                   != stats_stat.st_mtime_ns
                                   or manifest_result.stats_size
                                   != stats_stat.st_size))
+            # Bound on every path, not only the incremental one below:
+            # the phase-1 reuse test reads both names under an
+            # `entry is not None` guard, which only holds when
+            # incremental is true — but the analyzer cannot see that,
+            # so the empty values are set here (pylint E0606).
+            groups = {}
+            duplicate_dirs = set()
             if incremental:
                 # Group the snapshot's rows by song directory, in snapshot
                 # order, and find the song directories two files claim:
                 # both of those files are always re-parsed, so no rows are
                 # lost to a duplicated cache file (proposal 0018, §4.2).
-                groups = {}
                 for row in snapshot_result.rows:
                     groups.setdefault(row["Course path"], []).append(row)
                 claimed = {}

@@ -163,11 +163,11 @@ class LibraryTable:
     filter.subscribe(table.refresh_on_filter_change).
     """
 
-    def __init__(self, parent, filter, dpi_scale, column_visibility,
+    def __init__(self, parent, library_filter, dpi_scale, column_visibility,
                  group_visibility, saved_layout, count_label, save_settings,
                  show_rows, on_open_row=None):
         self._parent = parent
-        self._filter = filter
+        self._filter = library_filter
         self._dpi_scale = dpi_scale
         self.column_visibility = column_visibility
         self.group_visibility = group_visibility
