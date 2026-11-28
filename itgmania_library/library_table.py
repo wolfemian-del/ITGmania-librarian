@@ -160,7 +160,7 @@ class LibraryTable:
 
     The table subscribes its own refresh to the filter's change
     notification: subscribe it once, after construction, with
-    filter.subscribe(table.refresh_on_filter_change).
+    library_filter.subscribe(table.refresh_on_filter_change).
     """
 
     def __init__(self, parent, library_filter, dpi_scale, column_visibility,
