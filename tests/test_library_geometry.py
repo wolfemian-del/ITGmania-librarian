@@ -482,6 +482,26 @@ class VisibilityAgreementTests(unittest.TestCase):
             work=second, min_size=self.MIN_SIZE)
         self.assertEqual(result, "900x620+2000+100")
 
+    def test_the_proposals_named_exception_different_work_areas_can_disagree(self):
+        # The proposal's documented exception: the shell calls the
+        # helper with the saved-point monitor's work area, and if it
+        # says invisible calls opening_geometry with the primary work
+        # area. A box left of the virtual-desktop edge can be invisible
+        # after the smaller saved-monitor cap but visible after the
+        # larger primary cap, so the two answers differ — by design,
+        # and the rule restores it at its saved position.
+        desktop = (-1920, 0, 1920, 1080)
+        saved_work = (-1920, 0, -640, 1032)
+        primary_work = (0, 0, 1920, 1032)
+        saved = "3000x620+-3200+40"
+        self.assertFalse(data.saved_geometry_visible(
+            saved, desktop, 1.0, saved_work, self.MIN_SIZE))
+        result = data.opening_geometry(
+            saved, (1500, 850), desktop, 1.0,
+            work=primary_work, min_size=self.MIN_SIZE)
+        width, height, rx, ry = data.parse_window_geometry(result)
+        self.assertEqual((rx, ry), (-3200, 40))
+
 
 class MainWindowSaveDecisionTests(unittest.TestCase):
     """decide_main_window_save (Proposal 0023, §6): the ten save cases as a Tk-free pure function.

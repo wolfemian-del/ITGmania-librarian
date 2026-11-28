@@ -2201,6 +2201,7 @@ class MainWindowPlacementTests(unittest.TestCase):
                    dpi_scale=1.5, work_area=fake_work_area)
         self.assertEqual(seen, [None, (150, 75)])
 
+    @unittest.skipIf(app.tk is None, "Tkinter is not installed")
     def test_a_tcl_error_on_maximize_does_not_crash_startup(self):
         # Proposal 0023, item 5: a saved maximized flag copied to a
         # machine that maximizes through an attribute, not a state,
@@ -2243,6 +2244,9 @@ class MainWindowConfigureTests(unittest.TestCase):
         instance._dpi_scale = dpi_scale
         instance._main_window_last_geometry = "1500x850+202+95"
         instance._main_window_last_maximized = False
+        # Configure tracking starts only once the first Map has settled
+        # the baseline, so the fixture is the post-Map state.
+        instance._main_window_baseline_settled = True
         return instance
 
     def test_a_normal_configure_updates_the_geometry_and_clears_maximized(self):
@@ -2297,6 +2301,25 @@ class MainWindowConfigureTests(unittest.TestCase):
         event.widget = root
         instance._on_main_window_configure(event)
         self.assertEqual(instance._main_window_last_geometry, "1600x900+100+50")
+
+    def test_a_configure_before_the_first_map_leaves_a_seeded_maximized_flag_alone(self):
+        # The placement Configure fires while the window is still
+        # unmapped and can report "normal" (on Windows); for a saved
+        # maximized launch that would clear the seeded flag before the
+        # window is ever shown, and an untouched close would write it
+        # false. Tracking starts only once the first Map has settled
+        # the baseline.
+        root = Mock()
+        root.state.return_value = "normal"
+        root.geometry.return_value = "1500x850+202+95"
+        instance = self.make_app(root)
+        instance._main_window_last_maximized = True
+        instance._main_window_baseline_settled = False
+        event = Mock()
+        event.widget = root
+        instance._on_main_window_configure(event)
+        self.assertTrue(instance._main_window_last_maximized)
+        self.assertEqual(instance._main_window_last_geometry, "1500x850+202+95")
 
 
 class MainWindowBaselineTests(unittest.TestCase):
@@ -2366,9 +2389,13 @@ class MainWindowBaselineTests(unittest.TestCase):
         # The geometry() reading of a zoomed root is the stale
         # pre-maximize value, so a window that opens maximized keeps
         # the seeded values — and the baseline still settles, so a
-        # later Map after an un-maximize does not redefine it.
+        # later Map after an un-maximize does not redefine it. The
+        # geometry is a valid, different place, so it is the
+        # "only while normal" guard — not the geometry-parse guard —
+        # that stops the refinement.
         root = Mock()
         root.state.return_value = "zoomed"
+        root.geometry.return_value = "900x600+50+50"
         instance = self.make_app(root)
         self.map_window(instance, root)
         self.assertEqual(instance._main_window_opening_geometry, "1500x850+202+95")
@@ -2395,15 +2422,20 @@ class MainWindowBaselineTests(unittest.TestCase):
 
     def test_a_configure_updates_the_tracked_value_not_the_baseline(self):
         # The first normal Configure can be the owner's first move;
-        # refining the baseline to it would lose the move.
+        # refining the baseline to it would lose the move. Configure
+        # tracking starts only once the first Map has settled the
+        # baseline, so the Map comes first here; the Configure after
+        # it updates the tracked place and leaves the baseline alone.
         root = Mock()
         root.state.return_value = "normal"
-        root.geometry.return_value = "900x600+50+50"
+        root.geometry.return_value = "1561x885+171+77"
         instance = self.make_app(root)
+        self.map_window(instance, root)
+        root.geometry.return_value = "900x600+50+50"
         self.configure(instance, root)
-        self.assertEqual(instance._main_window_opening_geometry, "1500x850+202+95")
+        self.assertEqual(instance._main_window_opening_geometry, "1561x885+171+77")
         self.assertEqual(instance._main_window_last_geometry, "900x600+50+50")
-        self.assertFalse(instance._main_window_baseline_settled)
+        self.assertTrue(instance._main_window_baseline_settled)
 
 
 class MainWindowExitSaveTests(unittest.TestCase):
@@ -2489,6 +2521,28 @@ class MainWindowExitSaveTests(unittest.TestCase):
             instance._save_main_window_geometry()
             data = self.read_settings(directory)
             self.assertIs(data["main_window_maximized"], False)
+            self.assertNotIn("main_window_geometry", data)
+
+    def test_a_minimized_window_keeps_the_tracked_maximized_flag(self):
+        # The exit save must use the tracked shown state, not a live
+        # state() read: a maximized window that is minimized when the
+        # app closes is still maximized, and the flag is written. The
+        # root reports "iconic" here, so reading state() instead of
+        # the tracked flag would write nothing — and no file at all.
+        with tempfile.TemporaryDirectory() as directory:
+            instance = self.make_saving_app(
+                directory, main_window_maximized=False,
+                saved_settings={})
+            instance.root = Mock()
+            instance.root.state.return_value = "iconic"
+            instance._main_window_last_geometry = self.OPENING
+            instance._main_window_opening_geometry = self.OPENING
+            instance._main_window_last_maximized = True
+            instance._save_main_window_geometry()
+            settings_file = Path(directory) / "settings.json"
+            self.assertTrue(settings_file.is_file(), "the exit save wrote the flag")
+            data = json.loads(settings_file.read_text(encoding="utf-8"))
+            self.assertIs(data["main_window_maximized"], True)
             self.assertNotIn("main_window_geometry", data)
 
     def test_case_8_a_cancelled_exit_writes_nothing(self):

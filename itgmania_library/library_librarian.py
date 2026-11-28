@@ -237,9 +237,15 @@ class LibraryApp:
         The baseline is not touched here: the first normal Configure
         can be the owner's first move, and refining the baseline to it
         would lose the move. An unsettled (1x1) reading records
-        nothing.
+        nothing. Nothing is tracked before the first Map settles the
+        baseline: the placement Configure fires while the window is
+        still unmapped and can report "normal" (on Windows), which
+        would clear the maximized flag seeded from a saved maximized
+        launch. The Map settles before the owner can act, so nothing
+        the owner does is lost.
         """
-        if event.widget is not self.root:
+        if (event.widget is not self.root
+                or not self._main_window_baseline_settled):
             return
         state = self.root.state()
         if state == "normal":
