@@ -29,3 +29,4 @@ line in each file's header is the record; this index summarizes it.
 | [0016](0016-window-placement.md) | One placement rule for the dialogs: centered over the main window, remembered once moved | Accepted 2026-11-19 | PRs #243, #245–#248 (merged 2026-11-21) |
 | [0017](0017-fonts-barlow-wendy.md) | Barlow Condensed body text and Wendy titles, bundled and loaded per-process | Accepted 2026-11-22 | PR #266 (merged 2026-11-22) |
 | [0018](0018-manifest-incremental-refresh.md) | P1 — manifest-based incremental refresh | Accepted 2026-11-22 | PR #269 (proposal #268; merged 2026-11-23) |
+| [0024](0024-clear-column-sort.md) | Clear the column sort back to unsorted | Draft — for review | – |
