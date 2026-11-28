@@ -2109,16 +2109,23 @@ class MainWindowPlacementTests(unittest.TestCase):
 
     def place(self, root, saved_settings=None, dpi_scale=1.0, work_area=None):
         instance = self.make_app(root, saved_settings, dpi_scale)
-        if work_area is not None:
-            patcher = patch.object(app, "work_area_of", side_effect=work_area)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        # The real lookup asks Windows, so on a Windows machine the
+        # answer depends on the display and the taskbar — the CI
+        # runner's small work area capped the geometry and failed
+        # these tests. With None the placement falls back to the
+        # virtual desktop and the expected numbers are the same
+        # everywhere (the no_work_area pattern).
+        if work_area is None:
+            work_area = lambda hwnd=None, point=None: None
+        patcher = patch.object(app, "work_area_of", side_effect=work_area)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         instance._place_main_window()
         return instance
 
     def test_no_saved_value_centers_the_default_in_the_work_area(self):
-        # Off Windows the work-area lookup returns None, so the opening
-        # rule falls back to the virtual desktop.
+        # The work-area lookup is mocked to return None (see place),
+        # so the opening rule falls back to the virtual desktop.
         root = self.make_root()
         self.place(root)
         # Centered in the 1920x1080 desktop: x = (1920 - 1516) // 2,
